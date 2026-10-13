@@ -1,16 +1,33 @@
+
 import logging
+import os
+import shutil
 import subprocess
 import time
+
 import requests
+
 from grading_agent.config.settings import HOST, PORT, MODEL
 
 logger = logging.getLogger(__name__)
 
+LLAMA_SERVER = os.getenv("LLAMA_SERVER", "llama-server")
+
 
 def initiate_server():
+    executable = shutil.which(LLAMA_SERVER)
+
+    if executable is None and os.path.isfile(LLAMA_SERVER):
+        executable = os.path.abspath(LLAMA_SERVER)
+
+    if executable is None:
+        raise FileNotFoundError(
+            "Cannot find llama-server. Install llama.cpp and add "
+            "llama-server.exe to PATH, or set LLAMA_SERVER to its full path."
+        )
+
     command = [
-        "llama",
-        "serve",
+        executable,
         "-hf",
         MODEL,
         "--host",
@@ -20,41 +37,46 @@ def initiate_server():
     ]
 
     logger.info("Starting llama-server...")
-    logger.info("Command:", " ".join(command))
+    logger.info("Command: %s", " ".join(command))
 
-    process = subprocess.Popen(
-        command,
-        stdout=None,
-        stderr=None,
-    )
+    process = subprocess.Popen(command)
 
-    logger.info(f"Waiting for llama-server at http://{HOST}:{PORT}...")
+    health_host = "127.0.0.1" if HOST in ("0.0.0.0", "::") else HOST
+    health_url = f"http://{health_host}:{PORT}/health"
+    deadline = time.monotonic() + 300
 
-    while True:
-        if process.poll() is not None:
-            raise RuntimeError(
-                f"llama-server exited with code {process.returncode}"
-            )
+    try:
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"llama-server exited with code {process.returncode}. "
+                    "Check the server output for details."
+                )
 
-        try:
-            response = requests.get(
-                f"http://{HOST}:{PORT}/health",
-                timeout=1,
-            )
+            try:
+                response = requests.get(health_url, timeout=1)
+                if response.status_code == 200:
+                    logger.info("llama-server is ready.")
+                    return process
+            except requests.exceptions.RequestException:
+                pass
 
-            if response.status_code == 200:
-                logger.info("llama-server is ready.")
-                return process
-            
-            else:
-                logger.warning(f"Health check returned non-200 status: {response.status_code}")
+            time.sleep(0.5)
 
-        except requests.exceptions.RequestException:
-            pass
+        raise TimeoutError(
+            f"llama-server did not become ready within 300 seconds: "
+            f"{health_url}"
+        )
 
-        time.sleep(0.5)
-
-    return 
+    except BaseException:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        raise
 
 
 if __name__ == "__main__":
@@ -62,8 +84,13 @@ if __name__ == "__main__":
 
     try:
         process.wait()
-
     except KeyboardInterrupt:
-        print("\nStopping llama-server...", flush=True)
-        process.terminate()
-        process.wait()
+        logger.warning("Stopping llama-server...")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
