@@ -19,6 +19,8 @@ def main():
     finally:
       process.terminate()
     
+    process.close()
+    
 
     # sandbox = DockerSandbox()
     # sandbox.start()
@@ -43,8 +45,7 @@ def main():
 
     # finally:
         # sandbox.close()
-    
-    process.close()
+
 
 
 
