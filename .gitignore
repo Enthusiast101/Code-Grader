@@ -1,0 +1,54 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging/build artifacts
+*.egg-info/
+build/
+dist/
+.eggs/
+wheels/
+
+# Virtual environments and local Conda environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+# Test, lint, and coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*~
+
+# Generated grader outputs and local workspaces
+reports/
+.grader-workspace/
+grader-workspace-*/
+student_program
+*.o
+
+# IDE/editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Operating-system files
+.DS_Store
+Thumbs.db

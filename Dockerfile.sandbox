@@ -1,10 +1,16 @@
+
 FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    bash \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 10001 sandbox
 
 WORKDIR /workspace
-
-RUN mkdir -p /workspace /tmp && chown -R sandbox:sandbox /workspace
 
 USER sandbox
 
