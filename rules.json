@@ -6,10 +6,19 @@
         {
             "name": "correctness",
             "analyzer": "io_tests",
-            "weight": 1.0,
+            "weight": 0.7,
             "params": {
                 "testset_path": "tests/sum/testcases.json",
                 "compile_timeout_s": 10
+            }
+        },
+        {
+            "name": "static_analysis",
+            "analyzer": "static_analysis",
+            "weight": 0.3,
+            "params": {
+                "timeout_s": 10,
+                "warning_penalty": 0.1
             }
         }
     ]
