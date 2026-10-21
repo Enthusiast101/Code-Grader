@@ -7,7 +7,7 @@ import time
 
 import requests
 
-from grading_agent.config.settings import HOST, PORT, MODEL
+from grading_agent.config.settings import HOST, PORT, MODEL, SEED, TEMPERATURE
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,11 @@ def initiate_server():
 
     command = [
         executable,
-        "-hf",
-        MODEL,
-        "--host",
-        HOST,
-        "--port",
-        str(PORT),
+        "-hf", str(MODEL),
+        "--temp", str(TEMPERATURE),
+        "--seed", str(SEED),
+        "--host", str(HOST),
+        "--port", str(PORT),
     ]
 
     logger.info("Starting llama-server...")

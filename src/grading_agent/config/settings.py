@@ -8,7 +8,8 @@ PORT = 8080
 LLAMA_BASE_URL = f"http://{HOST}:{PORT}"
 
 MODEL = "Qwen/Qwen3-8B-GGUF:Q4_K_M"
-TEMPERATURE = 0.2
+TEMPERATURE = 0
+SEED = 42
 MAX_TOKENS = 2048
 
 # ---------------------------------------------------------------------------
