@@ -6,6 +6,7 @@ src/code_grader.egg-info/dependency_links.txt
 src/code_grader.egg-info/requires.txt
 src/code_grader.egg-info/top_level.txt
 src/grading_agent/main.py
+src/grading_agent/analyzers/io_tests.py
 src/grading_agent/config/__init__.py
 src/grading_agent/config/settings.py
 src/grading_agent/llm/__init__.py

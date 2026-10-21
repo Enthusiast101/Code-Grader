@@ -1,1 +1,2 @@
 requests
+docker>=7.0.0

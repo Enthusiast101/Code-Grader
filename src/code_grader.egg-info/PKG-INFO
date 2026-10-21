@@ -4,3 +4,4 @@ Version: 0.1.0
 Summary: A local personal research assistant powered by a local SLM and MCP
 Requires-Python: >=3.11
 Requires-Dist: requests
+Requires-Dist: docker>=7.0.0
