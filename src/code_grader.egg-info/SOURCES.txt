@@ -7,9 +7,12 @@ src/code_grader.egg-info/requires.txt
 src/code_grader.egg-info/top_level.txt
 src/grading_agent/main.py
 src/grading_agent/analyzers/io_tests.py
+src/grading_agent/analyzers/memory_safety.py
+src/grading_agent/analyzers/static_analysis.py
 src/grading_agent/config/__init__.py
 src/grading_agent/config/settings.py
 src/grading_agent/llm/__init__.py
+src/grading_agent/llm/reviewer.py
 src/grading_agent/llm/server.py
 src/grading_agent/sandbox/__init__.py
 src/grading_agent/sandbox/docker_sandbox.py
