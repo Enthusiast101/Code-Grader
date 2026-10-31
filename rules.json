@@ -1,24 +1,30 @@
 {
     "problem": "sum_two_integers",
-    "time_limit_s": 1,
-    "memory_limit_mb": 64,
+    "time_limit_s": 2,
+    "memory_limit_mb": 512,
+
+    "submission": {
+        "language": "c",
+        "source_file": "examples/sum/main.c"
+    },
+
     "metrics": [
         {
             "name": "correctness",
             "analyzer": "io_tests",
-            "weight": 0.7,
+            "weight": 0.60,
+            "enabled": true,
             "params": {
-                "testset_path": "tests/sum/testcases.json",
-                "compile_timeout_s": 10
+                "testset_path": "tests/sum/testcases.json"
             }
         },
         {
-            "name": "static_analysis",
-            "analyzer": "static_analysis",
-            "weight": 0.3,
+            "name": "memory_safety",
+            "analyzer": "memory_safety",
+            "weight": 0.40,
+            "enabled": true,
             "params": {
-                "timeout_s": 10,
-                "warning_penalty": 0.1
+                "testset_path": "tests/sum/testcases.json"
             }
         }
     ]

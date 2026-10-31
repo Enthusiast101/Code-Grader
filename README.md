@@ -1,77 +1,77 @@
 # Code Checking Assistant
 
-A prototype automated C-code grader using Python, a local `llama.cpp` server, and Docker-based isolation.
+A Python-based C-program grading prototype using Docker isolation, GCC, Valgrind, configurable JSON rules, and a locally hosted `llama.cpp` model for evidence-based feedback.
 
 ## Prerequisites
 
-- Conda (or Python 3.11+)
-- `llama-server` installed and available on `PATH`
-- Docker installed and running (for sandbox development)
+- Python 3.11+
+- Docker Engine running
+- `llama-server` available on `PATH`, or set `LLAMA_SERVER` to its executable path
+- A compatible GGUF model or Hugging Face model supported by the installed `llama.cpp` build
 
 ## Install
 
-From the project root, create and activate the Conda environment (skip creation if it already exists):
+From the repository root:
 
 ```bash
-conda create -n code python=3.11 -y
-conda activate code
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e . docker
+python -m pip install -e .
 ```
 
-## Start the application
+## Build the sandbox image
 
-From the project root, run:
-
-```bash
-cd src
-python grading_agent/main.py
-```
-
-This starts the local Llama server. Press `Ctrl + C` to stop it. Configure the model, host, and port in `src/grading_agent/config/settings.py`; set `LLAMA_SERVER` if the executable is not on `PATH`.
-
-To build the current sandbox image, return to the project root and run:
+From the repository root:
 
 ```bash
-cd ..
 docker build -f Dockerfile.sandbox -t agent-sandbox:latest .
 ```
 
-## Troubleshooting
+The image includes GCC, Bash/coreutils, and Valgrind. Student programs run in a container with no network, a read-only root filesystem, restricted capabilities, and configured resource limits.
 
-- **Conda environment not found:** Create it with `conda create -n code python=3.11 -y`.
-- **Llama server fails to start:** Install `llama-server`, ensure it is on `PATH`, or set `LLAMA_SERVER` to its full path.
-- **Python module errors:** Activate `code` and install dependencies with `python -m pip install -e . docker` from the project root.
+## Configure grading
 
+Edit `rules.json` in the repository root. It selects the C source file, time and memory limits, enabled metrics, analyzer identifiers, weights, and analyzer parameters.
 
-## Planned Grading Workflow
+Currently supported analyzer identifiers:
 
-The flowchart below shows the intended end-to-end design. The grading coordinator and analyzers are **not implemented yet**; the current startup command launches the local Llama server.
+- `io_tests`: compile and execute the program against JSON input/expected-output tests.
+- `memory_safety`: one instructor metric that runs both Valgrind Memcheck on configured test inputs and an LLM source-code memory-safety audit. Raw Valgrind logs and parsed summaries are preserved. Its default component weights are 70% Valgrind and 30% LLM audit; supplying one component weight makes the other its complement.
+- `static_analysis`: GCC syntax/compiler diagnostics with a configurable warning penalty.
 
-```mermaid
-flowchart TD
-    A([Instructor provides rules.json + student.c]) --> B[Rule Loader: parse and validate rules]
-    B --> C{Rules valid?}
-    C -- No --> D[Report configuration error]
-    D --> Z([Stop])
-    C -- Yes --> E[Preflight checks]
-    E --> F[Compile C code in Docker]
-    F --> G{Compilation successful?}
-    G -- No --> H[Record compiler errors]
-    H --> M[Run applicable source-only analyzers]
-    G -- Yes --> I[Smoke test with time and memory limits]
-    I --> J{Execution safe?}
-    J -- No --> K[Record crash, timeout, or limit violation]
-    K --> M
-    J -- Yes --> L[Run configured analyzers]
-    L --> N[Collect structured evidence]
-    M --> N
-    N --> O[Python calculates weighted grade]
-    O --> P[Local Llama generates feedback from evidence]
-    P --> Q[Write JSON and text reports]
-    Q --> R([End])
+Enabled metric weights must sum to `1.0`. Test-set paths and source paths must remain inside the repository root. The composite `memory_safety` metric defaults to Valgrind weight `0.70` and LLM source-audit weight `0.30`; these can be overridden in that metric's `params`. If only one subweight is supplied, the other is set to its complement so both checks continue to run and the subweights sum to `1.0`. Severity penalties also have defaults in `config/settings.py` (critical: 40, high: 25, medium: 10, low: 3 points deducted per unique finding, capped at 100). If either sub-audit is missing or inconclusive, the composite memory-safety score is withheld rather than treating missing evidence as a clean result.
+
+## Run
+
+From the repository root:
+
+```bash
+python -m grading_agent.main
 ```
 
-## Current status
+The coordinator loads and validates `rules.json`, dispatches enabled analyzers, saves analyzer evidence, launches or reuses the local Llama server for feedback review, and writes a JSON report under `reports/`.
 
-This is an early scaffold. The full grading coordinator, rule loading, C compilation and execution, analyzers, scoring, and report generation still need implementation. The sandbox image is currently Python-only and does not yet include a C compiler or memory-analysis tools.
+Set `LLAMA_SERVER` if the executable is not on `PATH`. Model, host, port, sampling, and Docker defaults are in `src/grading_agent/config/settings.py`.
+
+## Current implementation status
+
+Implemented and integrated:
+
+- Docker sandbox with network disabled, read-only root filesystem, CPU/memory/PID restrictions, bounded command execution, and workspace file helpers.
+- External `rules.json` loading and validation, including supported analyzer names, path checks, test-case schema checks, and enabled-weight validation.
+- I/O correctness tests.
+- Composite memory-safety workflow: Valgrind Memcheck plus a dedicated LLM source audit, with configurable/default component weights and deterministic Python aggregation.
+- Valgrind raw logs and parsed summaries preserved as evidence.
+- GCC static compiler/syntax diagnostics.
+- Analyzer registry in `analyzers/registry.py`, currently exposing I/O tests, composite memory safety, and static compiler analysis.
+- Local Llama server lifecycle and evidence-review request.
+
+Still to implement:
+
+- Overall deterministic weighted scoring across all instructor-defined metrics and score calibration (the memory-safety subscore is implemented separately).
+- Structure, modularity, complexity, readability, and plagiarism/similarity analyzers.
+- FormAI benchmark ingestion, stratified evaluation, and comparison of tools-only, LLM-only, and hybrid configurations.
+- Final human-readable report generation and expanded failure/edge-case tests.
+
+The LLM identifies source-level risks and provides explanations; Python applies the configured severity-penalty rubric and combines the LLM-derived component with Valgrind using the instructor-defined subweights. The model does not directly choose the numerical score. Missing or inconclusive analyzer evidence withholds the composite memory-safety score rather than being treated as clean. The overall weighted grade across all top-level metrics is still pending.

@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "code-grader"
 version = "0.1.0"
-description = "A local personal research assistant powered by a local SLM and MCP"
+description = "Rule-driven C code grading with Docker isolation and local LLM feedback"
 requires-python = ">=3.11"
 
 dependencies = [
     "requests",
     "docker>=7.0.0",
+    "py-cpuinfo>=9.0.0",
 ]
 
 [tool.setuptools.packages.find]

@@ -23,7 +23,7 @@ def initiate_server():
     if executable is None:
         raise FileNotFoundError(
             "Cannot find llama-server. Install llama.cpp and add "
-            "llama-server.exe to PATH, or set LLAMA_SERVER to its full path."
+            "llama-server to PATH, or set LLAMA_SERVER to its full path."
         )
 
     command = [

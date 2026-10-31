@@ -36,3 +36,20 @@ DOCKER_MAX_TIMEOUT_S = 120
 DOCKER_MAX_OUTPUT_BYTES = 64 * 1024
 DOCKER_MAX_FILE_BYTES = 2 * 1024 * 1024
 DOCKER_WRITE_CHUNK_CHARS = 32 * 1024
+
+
+# ---------------------------------------------------------------------------
+# Composite memory-safety metric defaults
+# ---------------------------------------------------------------------------
+# The instructor enables one `memory_safety` metric. Both runtime Memcheck
+# and the LLM source audit run internally using these defaults unless weights
+# are overridden in rules.json.
+MEMORY_SAFETY_DEFAULT_VALGRIND_WEIGHT = 0.70
+MEMORY_SAFETY_DEFAULT_LLM_WEIGHT = 0.30
+MEMORY_SAFETY_DEFAULT_SEVERITY_PENALTIES = {
+    "critical": 40.0,
+    "high": 25.0,
+    "medium": 10.0,
+    "low": 3.0,
+}
+MEMORY_SAFETY_LLM_MAX_FINDINGS = 30
