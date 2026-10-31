@@ -84,7 +84,7 @@ def _llm_component_score(
     The LLM identifies findings and severity. Python applies the instructor's
     configured penalties; the model never returns the numeric component score.
     """
-    if audit.get("status") not in {"completed", "completed_with_warnings"}:
+    if audit.get("status") != "completed":
         return {
             "status": "inconclusive",
             "score": None,
@@ -148,10 +148,9 @@ def _llm_component_score(
     score = round(max(0.0, 100.0 - total_penalty), 2)
 
     return {
-        "status": "completed_with_warnings" if audit.get("status") == "completed_with_warnings" or payload.get("rejected_findings") else "completed",
+        "status": "completed",
         "score": score,
         "unique_findings": len(unique_findings),
-        "rejected_unscored_findings": len(payload.get("rejected_findings", [])),
         "penalties_applied": penalties_applied,
         "total_penalty": round(total_penalty, 2),
         "basis": "100 minus configured severity penalties for unique source-level findings",
@@ -191,19 +190,6 @@ def calculate_memory_safety_score(
     llm = _llm_component_score(llm_audit, severity_penalties)
 
     if runtime_component["score"] is None or llm["score"] is None:
-        missing_reasons = []
-        if runtime_component["score"] is None:
-            runtime_reason = runtime_component.get("reason") or valgrind.get("reason")
-            missing_reasons.append(
-                "Runtime memory checks are incomplete"
-                + (f": {runtime_reason}" if runtime_reason else ".")
-            )
-        if llm["score"] is None:
-            audit_reason = llm.get("reason") or llm_audit.get("error")
-            missing_reasons.append(
-                "LLM source audit is incomplete"
-                + (f": {audit_reason}" if audit_reason else ".")
-            )
         return {
             "status": "incomplete",
             "score": None,
@@ -215,7 +201,7 @@ def calculate_memory_safety_score(
             "runtime_tools": runtime_component,
             "valgrind": valgrind,
             "llm_source_audit": llm,
-            "reason": "; ".join(missing_reasons),
+            "reason": "Both Valgrind and LLM source audit must complete before a composite score is issued.",
         }
 
     score = round(
@@ -224,12 +210,8 @@ def calculate_memory_safety_score(
         2,
     )
 
-    warning_status = (
-        runtime_component.get("status") == "completed_with_warnings"
-        or llm.get("status") == "completed_with_warnings"
-    )
     return {
-        "status": "completed_with_warnings" if warning_status else "completed",
+        "status": "completed",
         "score": score,
         "scale": "0-100",
         "weights": {
@@ -241,43 +223,3 @@ def calculate_memory_safety_score(
         "llm_source_audit": llm,
         "formula": "valgrind_weight * runtime_tools_score + llm_audit_weight * llm_score",
     }
-
-
-def finalize_memory_safety_result(
-    memory_result: dict[str, Any],
-    llm_audit: dict[str, Any],
-    *,
-    valgrind_weight: float,
-    llm_audit_weight: float,
-    severity_penalties: dict[str, float],
-) -> dict[str, Any]:
-    """Attach the composite result and align the metric status with its score.
-
-    Runtime tools can complete while the required source audit remains
-    inconclusive. The top-level metric must then be incomplete, while nested
-    runtime-tools evidence remains available as completed.
-    """
-    composite = calculate_memory_safety_score(
-        memory_result,
-        llm_audit,
-        valgrind_weight=valgrind_weight,
-        llm_audit_weight=llm_audit_weight,
-        severity_penalties=severity_penalties,
-    )
-    memory_result["llm_source_audit"] = llm_audit
-    memory_result["composite_score"] = composite
-    memory_result["score"] = composite.get("score")
-    memory_result["score_scale"] = "0-100"
-
-    if composite.get("score") is None:
-        memory_result["status"] = "incomplete"
-        memory_result["reason"] = composite.get(
-            "reason", "Memory-safety composite could not be calculated."
-        )
-    elif composite.get("status") == "completed_with_warnings":
-        memory_result["status"] = "completed_with_warnings"
-        memory_result["reason"] = composite.get("reason", "Composite score includes reviewed, unscored LLM audit claims.")
-    else:
-        memory_result["status"] = "completed"
-        memory_result.pop("reason", None)
-    return memory_result

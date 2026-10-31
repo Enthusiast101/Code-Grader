@@ -4,20 +4,21 @@ import statistics
 import time
 from typing import Any
 from grading_agent.sandbox.docker_sandbox import DockerSandbox
+from grading_agent.config import settings
 
 
 def run_runtime_profile(
     sandbox: DockerSandbox,
     source_code: str,
     test_cases: list[dict[str, Any]],
-    filename: str = "main.c",
-    compile_timeout_s: int = 10,
-    run_timeout_s: float = 2.0,
-    target_runtime_ms: float = 50.0,
-    repetitions: int = 3,
+    filename: str = settings.DEFAULT_SOURCE_FILENAME,
+    compile_timeout_s: int = settings.ANALYZER_COMPILE_TIMEOUT_S,
+    run_timeout_s: float = settings.ANALYZER_RUNTIME_RUN_TIMEOUT_S,
+    target_runtime_ms: float = settings.ANALYZER_RUNTIME_TARGET_MS,
+    repetitions: int = settings.ANALYZER_RUNTIME_REPETITIONS,
 ) -> dict[str, Any]:
-    if repetitions < 1 or repetitions > 10:
-        raise ValueError("repetitions must be between 1 and 10.")
+    if repetitions < 1 or repetitions > settings.ANALYZER_RUNTIME_MAX_REPETITIONS:
+        raise ValueError(f"repetitions must be between 1 and {settings.ANALYZER_RUNTIME_MAX_REPETITIONS}.")
     if target_runtime_ms <= 0:
         raise ValueError("target_runtime_ms must be positive.")
     sandbox.write_file(filename, source_code)

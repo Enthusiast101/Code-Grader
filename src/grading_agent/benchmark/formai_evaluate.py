@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from grading_agent.config import settings
+
 
 def _iter_ground_truth(path: Path) -> Iterable[dict[str, Any]]:
     try:
@@ -85,7 +87,7 @@ def evaluate_mode(
     ground_truth_path: Path,
     predictions_path: Path,
     *,
-    line_tolerance: int = 0,
+    line_tolerance: int = settings.FORM_AI_LINE_TOLERANCE,
 ) -> dict[str, Any]:
     predictions = _load_predictions(predictions_path)
     tp = fp = fn = tn = 0
@@ -184,8 +186,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ground-truth", required=True, type=Path, help="Program-level FormAI labels JSON.")
     parser.add_argument("--predictions", required=True, action="append", metavar="MODE=JSONL", help="Repeat, e.g. tools_only=tools.jsonl")
-    parser.add_argument("--line-tolerance", type=int, default=0)
-    parser.add_argument("--output", type=Path, default=Path("formai-evaluation.json"))
+    parser.add_argument("--line-tolerance", type=int, default=settings.FORM_AI_LINE_TOLERANCE)
+    parser.add_argument("--output", type=Path, default=Path(settings.FORM_AI_EVALUATION_OUTPUT))
     args = parser.parse_args()
 
     if args.line_tolerance < 0:

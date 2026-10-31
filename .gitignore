@@ -38,7 +38,7 @@ data/
 *~
 
 # Generated grader outputs and local workspaces
-reports/
+# reports/
 .grader-workspace/
 grader-workspace-*/
 student_program

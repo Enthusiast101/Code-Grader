@@ -88,7 +88,7 @@ class RuleLoaderTests(unittest.TestCase):
             load_rules(self.rules_path, self.root)
 
 
-    def test_memory_safety_uses_default_component_weights(self):
+    def test_memory_safety_uses_valgrind_with_shared_metric_rsi(self):
         self.rules["metrics"][1]["analyzer"] = "memory_safety"
         self.rules["metrics"][1]["params"] = {
             "testset_path": "tests/sum/testcases.json"
@@ -97,51 +97,13 @@ class RuleLoaderTests(unittest.TestCase):
 
         loaded = load_rules(self.rules_path, self.root)
         memory_metric = loaded["metrics"][1]
-        self.assertAlmostEqual(
-            memory_metric["params"]["valgrind_weight"], 0.70
-        )
-        self.assertAlmostEqual(
-            memory_metric["params"]["llm_audit_weight"], 0.30
-        )
-        self.assertEqual(
-            memory_metric["params"]["severity_penalties"],
-            {
-                "critical": 40.0,
-                "high": 25.0,
-                "medium": 10.0,
-                "low": 3.0,
-            },
-        )
+        self.assertEqual(memory_metric["analyzer"], "memory_safety")
+        self.assertTrue(memory_metric["params"]["run_sanitizers"])
 
-    def test_memory_safety_complements_single_explicit_subweight(self):
-        self.rules["metrics"][1]["analyzer"] = "memory_safety"
-        self.rules["metrics"][1]["params"] = {
-            "testset_path": "tests/sum/testcases.json",
-            "valgrind_weight": 0.80,
-        }
-        self._write_rules()
-
-        loaded = load_rules(self.rules_path, self.root)
-        params = loaded["metrics"][1]["params"]
-        self.assertAlmostEqual(params["valgrind_weight"], 0.80)
-        self.assertAlmostEqual(params["llm_audit_weight"], 0.20)
-
-    def test_memory_safety_rejects_component_weights_not_summing_to_one(self):
-        self.rules["metrics"][1]["analyzer"] = "memory_safety"
-        self.rules["metrics"][1]["params"] = {
-            "testset_path": "tests/sum/testcases.json",
-            "valgrind_weight": 0.70,
-            "llm_audit_weight": 0.20,
-        }
-        self._write_rules()
-
-        with self.assertRaises(RuleValidationError):
-            load_rules(self.rules_path, self.root)
-
-    def test_legacy_valgrind_analyzer_is_normalized_to_composite(self):
+    def test_legacy_valgrind_analyzer_is_normalized(self):
         loaded = load_rules(self.rules_path, self.root)
         self.assertEqual(loaded["metrics"][1]["analyzer"], "memory_safety")
-        self.assertIn("llm_audit_weight", loaded["metrics"][1]["params"])
+        self.assertNotIn("llm_audit_weight", loaded["metrics"][1]["params"])
 
     def test_preserves_test_ids_descriptions_and_tags(self):
         (self.root / "tests/sum/testcases.json").write_text(

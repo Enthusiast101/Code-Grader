@@ -5,24 +5,17 @@ import re
 from typing import Any
 
 from grading_agent.sandbox.docker_sandbox import DockerSandbox
+from grading_agent.config import settings
 
 
 CPP_CHECK_LINE = re.compile(r"^.*?:\d+:\d+:\s*(error|warning|style|performance|portability|information):\s*(.*)$", re.I)
-DEFAULT_PENALTIES = {
-    "error": 25.0,
-    "warning": 10.0,
-    "style": 3.0,
-    "performance": 4.0,
-    "portability": 3.0,
-    "information": 0.5,
-}
 
 
 def run_static_analysis(
     sandbox: DockerSandbox,
     source_code: str,
-    filename: str = "main.c",
-    timeout_s: float = 15,
+    filename: str = settings.DEFAULT_SOURCE_FILENAME,
+    timeout_s: float = settings.ANALYZER_STATIC_TIMEOUT_S,
     severity_penalties: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     sandbox.write_file(filename, source_code)
@@ -37,7 +30,7 @@ def run_static_analysis(
     if result["timed_out"]:
         return {"status": "inconclusive", "score": None, "error": "cppcheck timed out.", "raw_output": result["output"]}
 
-    penalties = {**DEFAULT_PENALTIES, **(severity_penalties or {})}
+    penalties = {**settings.ANALYZER_STATIC_PENALTIES, **(severity_penalties or {})}
     findings: list[dict[str, str]] = []
     for line in result["output"].splitlines():
         match = CPP_CHECK_LINE.match(line.strip())

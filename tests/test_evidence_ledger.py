@@ -50,16 +50,6 @@ class EvidenceLedgerTests(unittest.TestCase):
             "evidence_references": ["E-LOGICAL-TEST-002"],
         }
 
-    def test_missing_io_status_is_inferred_from_completed_test_counts(self):
-        report = dict(self.report)
-        report["logical"] = dict(report["logical"])
-        report["logical"].pop("status", None)
-        report["logical"]["tests_passed"] = 2
-        report["logical"]["results"] = [dict(item, passed=True) for item in report["logical"]["results"]]
-        ledger = build_evidence_ledger(report, self.rules)
-        metric = next(item for item in ledger if item["id"] == "E-METRIC-LOGICAL-001")
-        self.assertEqual(metric["facts"]["status"], "completed")
-
     def test_ledger_classifies_overflow_test_and_has_stable_ids(self):
         record = self.by_id["E-LOGICAL-TEST-002"]
         self.assertIn("signed_int32_overflow", record["facts"]["tags"])
@@ -103,20 +93,6 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertEqual(validation["status"], "completed_with_warnings")
         self.assertEqual(cleaned["recommendations"], [])
         self.assertEqual(validation["rejected_claim_count"], 1)
-
-
-    def test_vague_modularity_recommendation_is_rejected_when_rubric_does_not_require_helpers(self):
-        review = self._review()
-        review["recommendations"] = [{
-            "text": "Ensure code remains modular.",
-            "basis": "optional",
-            "evidence_ids": ["E-RULE-MODULARITY-001", "E-MODULARITY-001", "E-METRIC-MODULARITY-001"],
-        }]
-        cleaned, validation = validate_review_payload(review, self.ledger, self.rules)
-        self.assertIsNotNone(cleaned)
-        self.assertEqual(cleaned["recommendations"], [])
-        self.assertEqual(validation["rejected_claim_count"], 1)
-        self.assertIn("does not require helper functions", cleaned["unverified_claims"][0]["reason"])
 
     def test_claim_with_unknown_evidence_is_rejected(self):
         review = self._review()

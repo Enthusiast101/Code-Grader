@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from grading_agent.config import settings
+
 
 _CONTROL_WORDS = {
     "if", "for", "while", "case", "catch", "switch", "sizeof",
@@ -89,7 +91,7 @@ def _lizard_metrics(filename: str, source: str) -> dict[str, Any] | None:
         return None
 
 
-def analyze_source(source: str, filename: str = "main.c") -> dict[str, Any]:
+def analyze_source(source: str, filename: str = settings.DEFAULT_SOURCE_FILENAME) -> dict[str, Any]:
     """Return heuristic function, complexity, line and identifier metrics."""
     clean = strip_comments_and_literals(source)
     lizard_result = _lizard_metrics(filename, source)
@@ -143,7 +145,7 @@ def analyze_source(source: str, filename: str = "main.c") -> dict[str, Any]:
         "max_function_length": max((item["length"] for item in functions), default=0),
         "identifier_count": len(identifiers),
         "single_character_identifier_count": sum(1 for item in identifiers if len(item) == 1),
-        "long_line_count": sum(1 for line in lines if len(line) > 100),
+        "long_line_count": sum(1 for line in lines if len(line) > settings.ANALYZER_MAX_LINE_LENGTH),
         "average_line_length": round(
             sum(len(line) for line in nonblank_lines) / len(nonblank_lines), 2
         ) if nonblank_lines else 0.0,

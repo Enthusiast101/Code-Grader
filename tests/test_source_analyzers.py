@@ -65,11 +65,12 @@ class OverallScoringTests(unittest.TestCase):
         score = calculate_overall_score(metrics, results)
         self.assertEqual(score["score"], 96.0)
 
-    def test_incomplete_metric_withholds_grade(self):
+    def test_missing_metric_uses_zero_and_still_returns_final_grade(self):
         metrics = [{"name": "similarity", "analyzer": "similarity_flag", "weight": 1.0, "enabled": True}]
         result = calculate_overall_score(metrics, {"similarity": {"status": "inconclusive", "score": None}})
-        self.assertIsNone(result["score"])
-        self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(result["score"], 0.0)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(result["warnings"]), 1)
 
 
 class FormAIEvaluatorTests(unittest.TestCase):

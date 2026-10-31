@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -12,37 +13,29 @@ from typing import Any
 
 from grading_agent.analyzers.registry import run_analyzer
 from grading_agent.config.rule_loader import load_rules
-from grading_agent.llm.reviewer import (
-    review_evidence, review_memory_safety_source, build_deterministic_evidence_review,
-)
+from grading_agent.llm.reviewer import evaluate_metrics_with_llm
 from grading_agent.llm.evidence import build_evidence_ledger
-from grading_agent.scoring.memory_safety import calculate_memory_safety_score
-from grading_agent.scoring.overall import calculate_overall_score
+from grading_agent.scoring.overall import apply_metric_scores, calculate_overall_score
 from grading_agent.reporting.text_report import render_text_report
 from grading_agent.llm.server import initiate_server
 from grading_agent.config import settings
-from grading_agent.sandbox.docker_sandbox import DockerSandbox
 from grading_agent.preflight import run_preflight
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT_APP)
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RULES_PATH = PROJECT_ROOT / "rules.json"
+PROJECT_ROOT = settings.PROJECT_ROOT
+RULES_PATH = settings.DEFAULT_RULES_PATH
 
 
 def _is_llm_server_ready() -> bool:
     """Return True when a compatible local llama-server is healthy."""
     import requests
 
-    host = "127.0.0.1" if settings.HOST in {"0.0.0.0", "::"} else settings.HOST
     try:
         response = requests.get(
-            f"http://{host}:{settings.PORT}/health",
-            timeout=2,
+            settings.LLAMA_HEALTH_URL,
+            timeout=settings.LLAMA_HEALTH_TIMEOUT_S,
         )
         return response.status_code == 200
     except requests.RequestException:
@@ -57,112 +50,29 @@ def _stop_llm_server(process: Any | None) -> None:
     logger.info("Stopping local Llama server...")
     process.terminate()
     try:
-        process.wait(timeout=10)
+        process.wait(timeout=settings.LLAMA_SHUTDOWN_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-
-
-def _record_unavailable_memory_audits(
-    report: dict[str, Any],
-    error: Exception,
-) -> None:
-    """Record an unavailable source audit and leave its score inconclusive."""
-    for metric in report.get("configuration", {}).get("enabled_metrics", []):
-        if metric.get("analyzer") != "memory_safety":
-            continue
-
-        memory_result = report.get(metric.get("name"))
-        if not isinstance(memory_result, dict):
-            continue
-
-        component_config = memory_result.get("component_config", {})
-        # A completed source audit remains valid even if the later general
-        # evidence-review request fails.
-        existing_audit = memory_result.get("llm_source_audit")
-        if existing_audit is not None:
-            continue
-
-        memory_result["llm_source_audit"] = {
-            "status": "unavailable",
-            "model": settings.MODEL,
-            "error": str(error),
-        }
-        if component_config:
-            memory_result["composite_score"] = calculate_memory_safety_score(
-                memory_result,
-                memory_result["llm_source_audit"],
-                valgrind_weight=component_config["valgrind_weight"],
-                llm_audit_weight=component_config["llm_audit_weight"],
-                severity_penalties=component_config["severity_penalties"],
-            )
-            memory_result["score"] = memory_result["composite_score"]["score"]
-            memory_result["score_scale"] = "0-100"
 
 
 def _review_with_local_llm(
     report: dict[str, Any],
     *,
     rules: dict[str, Any],
-    max_iterations: int = 3,
 ) -> dict[str, Any]:
-    """Run the dedicated memory source audit and general evidence review."""
+    """Start/reuse the local model and score every enabled metric with RSI."""
     process = None
     try:
         if not _is_llm_server_ready():
             logger.info("Starting local Llama server...")
-            # initiate_server() waits for /health and returns the Popen process.
             process = initiate_server()
         else:
             logger.info("Using an already-running local Llama server.")
-
-        # A single instructor metric triggers both Valgrind and this source
-        # audit. The source audit is independent of the executed test inputs.
-        for metric in report.get("configuration", {}).get("enabled_metrics", []):
-            if metric.get("analyzer") != "memory_safety":
-                continue
-
-            metric_name = metric["name"]
-            memory_result = report.get(metric_name)
-            if not isinstance(memory_result, dict):
-                continue
-
-            component_config = memory_result.get("component_config", {})
-            logger.info(
-                "Running LLM source-level memory audit for metric '%s'.",
-                metric_name,
-            )
-            try:
-                llm_audit = review_memory_safety_source(
-                    report["source_code"],
-                    max_findings=component_config.get(
-                        "llm_audit_max_findings", 30
-                    ),
-                )
-            except Exception as exc:
-                logger.exception("LLM memory source audit failed.")
-                llm_audit = {
-                    "status": "unavailable",
-                    "model": settings.MODEL,
-                    "error": str(exc),
-                }
-
-            memory_result["llm_source_audit"] = llm_audit
-            memory_result["composite_score"] = calculate_memory_safety_score(
-                memory_result,
-                llm_audit,
-                valgrind_weight=component_config["valgrind_weight"],
-                llm_audit_weight=component_config["llm_audit_weight"],
-                severity_penalties=component_config["severity_penalties"],
-            )
-            memory_result["score"] = memory_result["composite_score"]["score"]
-            memory_result["score_scale"] = "0-100"
-
-        # General evidence review sees the Valgrind logs, source-audit findings,
-        # and composite memory score. It does not set or change any score.
-        return review_evidence(report, rules=rules, max_iterations=max_iterations)
+        return evaluate_metrics_with_llm(report, rules)
     finally:
         _stop_llm_server(process)
+
 
 
 def _collect_tool_versions(sandbox: DockerSandbox) -> dict[str, str]:
@@ -174,7 +84,7 @@ def _collect_tool_versions(sandbox: DockerSandbox) -> dict[str, str]:
         "valgrind": ["valgrind", "--version"],
     }.items():
         try:
-            result = sandbox.run(command, timeout_s=3)
+            result = sandbox.run(command, timeout_s=settings.ANALYZER_TOOL_VERSION_TIMEOUT_S)
             versions[tool] = result["output"].splitlines()[0] if result["output"] else f"unavailable (exit {result['exit_code']})"
         except Exception as exc:
             versions[tool] = f"unavailable: {type(exc).__name__}: {exc}"
@@ -185,29 +95,47 @@ def _collect_tool_versions(sandbox: DockerSandbox) -> dict[str, str]:
     return versions
 
 
+DOCKER_ANALYZERS = {
+    "io_tests", "edge_case_runner", "runtime_profile", "compiler_diagnostics",
+    "static_analysis", "memory_safety",
+}
+EXECUTION_ANALYZERS = {"io_tests", "edge_case_runner", "runtime_profile", "memory_safety"}
+
+
+def _unavailable_metric(error: str) -> dict[str, Any]:
+    """Create a structured non-score result while keeping the report complete."""
+    result: dict[str, Any] = {
+        "status": "unavailable",
+        "score": None,
+        "score_scale": "0-100",
+        "reason": error,
+        "analysis_error": True,
+    }
+    return result
+
+
 def run_configured_analyzers(
     rules: dict[str, Any],
 ) -> dict[str, Any]:
-    """Dispatch currently implemented analyzers from validated rules."""
+    """Run each enabled analyzer independently; unavailable Docker never blocks LLM.
+
+    Source-only analyzers still run without Docker. Docker-dependent metrics get
+    explicit unavailable/inconclusive records, and all LLM work is performed
+    later by the coordinator regardless of those records.
+    """
     source_path = Path(rules["submission"]["resolved_source_path"])
     source_code = source_path.read_text(encoding="utf-8")
     source_filename = source_path.name
-
-    # The registry shares this cache across analyzers that use the same tests.
     test_case_cache: dict[str, list[dict[str, Any]]] = {}
-
-    enabled_metrics = [
-        metric for metric in rules["metrics"] if metric["enabled"]
-    ]
+    enabled_metrics = [metric for metric in rules["metrics"] if metric["enabled"]]
+    docker_needed = any(metric["analyzer"] in DOCKER_ANALYZERS for metric in enabled_metrics)
 
     report: dict[str, Any] = {
         "submission": source_filename,
         "source_code": source_code,
         "source_sha256": hashlib.sha256(source_code.encode("utf-8")).hexdigest(),
         "problem": rules["problem"],
-        "rules_hash": hashlib.sha256(
-            Path(rules["rules_path"]).read_bytes()
-        ).hexdigest(),
+        "rules_hash": hashlib.sha256(Path(rules["rules_path"]).read_bytes()).hexdigest(),
         "configuration": {
             "time_limit_s": rules["time_limit_s"],
             "memory_limit_mb": rules["memory_limit_mb"],
@@ -217,176 +145,160 @@ def run_configured_analyzers(
                     "name": metric["name"],
                     "analyzer": metric["analyzer"],
                     "weight": metric["weight"],
-                    **(
-                        {
-                            "component_weights": {
-                                "valgrind": metric["params"]["valgrind_weight"],
-                                "llm_source_audit": metric["params"]["llm_audit_weight"],
-                            }
-                        }
-                        if metric["analyzer"] == "memory_safety"
-                        else {}
-                    ),
                 }
                 for metric in enabled_metrics
             ],
         },
     }
 
-    memory_limit = f'{rules["memory_limit_mb"]}m'
+    sandbox_manager = None
+    sandbox = None
+    sandbox_error: str | None = None
+    if docker_needed:
+        try:
+            # Lazy import: a missing Docker SDK/daemon is a metric-level outage,
+            # not an import-time failure that prevents LLM source review.
+            from grading_agent.sandbox.docker_sandbox import DockerSandbox
+            sandbox_manager = DockerSandbox(memory_limit=f'{rules["memory_limit_mb"]}m')
+            sandbox = sandbox_manager.__enter__()
+            report["sandbox"] = {"status": "available", "image": sandbox_manager.image}
+        except Exception as exc:
+            sandbox = None
+            sandbox_error = f"{type(exc).__name__}: {exc}"
+            report["sandbox"] = {"status": "unavailable", "error": sandbox_error}
+            logger.warning("Docker sandbox unavailable; source analyzers and LLM RSI will still run: %s", sandbox_error)
 
-    logger.info(
-        "Starting Docker sandbox with memory limit %s.",
-        memory_limit,
-    )
+    try:
+        if sandbox is not None:
+            try:
+                report["tool_versions"] = _collect_tool_versions(sandbox)
+                report["preflight"] = run_preflight(
+                    sandbox,
+                    source_code=source_code,
+                    source_filename=source_filename,
+                    rules=rules,
+                )
+            except Exception as exc:
+                preflight_error = f"{type(exc).__name__}: {exc}"
+                report["preflight"] = {
+                    "status": "unavailable", "compiled": None,
+                    "smoke_tested": False, "error": preflight_error,
+                }
+                logger.warning("Preflight failed; individual analyzers will be attempted independently: %s", preflight_error)
+        elif docker_needed:
+            report["tool_versions"] = {tool: f"unavailable: {sandbox_error}" for tool in ("gcc", "cppcheck", "valgrind")}
+            report["preflight"] = {
+                "status": "unavailable", "compiled": None,
+                "smoke_tested": False,
+                "error": sandbox_error or "Docker sandbox unavailable.",
+            }
+        else:
+            report["sandbox"] = {"status": "not_required"}
+            report["preflight"] = {"status": "not_run", "compiled": None, "smoke_tested": False}
+            report["tool_versions"] = {}
 
-    with DockerSandbox(memory_limit=memory_limit) as sandbox:
-        logger.info("Docker sandbox started.")
-        report["tool_versions"] = _collect_tool_versions(sandbox)
-        logger.info("Running preflight compile and smoke checks.")
-        report["preflight"] = run_preflight(
-            sandbox,
-            source_code=source_code,
-            source_filename=source_filename,
-            rules=rules,
-        )
-        logger.info("Preflight status: %s.", report["preflight"]["status"])
-
-        execution_analyzers = {
-            "io_tests", "edge_case_runner", "runtime_profile", "memory_safety"
-        }
-        execution_blocked = report["preflight"]["status"] in {
+        execution_blocked = report["preflight"].get("status") in {
             "compile_failed", "compile_timeout", "timeout", "runtime_failure"
         }
 
         for metric in enabled_metrics:
             metric_name = metric["name"]
             analyzer_name = metric["analyzer"]
+            logger.info("Running metric '%s' using analyzer '%s'.", metric_name, analyzer_name)
 
-            logger.info(
-                "Running metric '%s' using analyzer '%s'.",
-                metric_name,
-                analyzer_name,
-            )
-
-            if execution_blocked and analyzer_name in execution_analyzers:
-                reason = (
-                    "Skipped after preflight reported "
-                    f"'{report['preflight']['status']}'."
+            if analyzer_name in DOCKER_ANALYZERS and sandbox is None:
+                result = _unavailable_metric(
+                    f"Docker-dependent analyzer '{analyzer_name}' unavailable: {sandbox_error or 'sandbox not initialized'}.",
                 )
-                result: dict[str, Any] = {
-                    "status": "inconclusive",
-                    "score": None,
-                    "score_scale": "0-100",
-                    "reason": reason,
-                    "skipped_after_preflight": True,
-                }
-                if analyzer_name == "memory_safety":
-                    result.update({
-                        "analyzer": analyzer_name,
-                        "compiled": False,
-                        "analysis_error": True,
-                        "tests_total": 0,
-                        "tests_checked": 0,
-                        "tests_clean": 0,
-                        "results": [],
-                        "runtime_tools": {
-                            "status": "inconclusive",
-                            "score": None,
-                            "valgrind_score": None,
-                            "asan_ubsan_score": None,
-                            "valgrind_results": [],
-                            "asan_ubsan_results": [],
-                            "scoring_note": reason,
-                        },
-                        "component_config": {
-                            "valgrind_weight": metric["params"]["valgrind_weight"],
-                            "llm_audit_weight": metric["params"]["llm_audit_weight"],
-                            "severity_penalties": metric["params"]["severity_penalties"],
-                            "llm_audit_max_findings": metric["params"]["llm_audit_max_findings"],
-                        },
-                    })
-                logger.warning("Skipping '%s': %s", metric_name, reason)
+            elif execution_blocked and analyzer_name in EXECUTION_ANALYZERS:
+                reason = f"Skipped after preflight reported '{report['preflight']['status']}'."
+                result = _unavailable_metric(reason)
+                result.update({"status": "inconclusive", "skipped_after_preflight": True})
             else:
-                result = run_analyzer(
-                    analyzer_name,
-                    sandbox=sandbox,
-                    metric=metric,
-                    rules=rules,
-                    source_code=source_code,
-                    source_filename=source_filename,
-                    test_case_cache=test_case_cache,
-                )
+                try:
+                    result = run_analyzer(
+                        analyzer_name,
+                        sandbox=sandbox,
+                        metric=metric,
+                        rules=rules,
+                        source_code=source_code,
+                        source_filename=source_filename,
+                        test_case_cache=test_case_cache,
+                    )
+                except Exception as exc:
+                    logger.warning("Analyzer '%s' failed; continuing with remaining metrics: %s", metric_name, exc)
+                    result = _unavailable_metric(f"{type(exc).__name__}: {exc}")
 
+            result.setdefault("status", "completed" if result.get("score") is not None else "unavailable")
             result["metric_name"] = metric_name
             result["analyzer"] = analyzer_name
             result["weight"] = metric["weight"]
             report[metric_name] = result
+            logger.info("Metric '%s' status: %s.", metric_name, result.get("status", "unknown"))
+    finally:
+        if sandbox_manager is not None:
+            try:
+                sandbox_manager.__exit__(None, None, None)
+            except Exception as exc:
+                logger.warning("Sandbox cleanup failed; report generation continues: %s", exc)
 
-            logger.info("Metric '%s' completed.", metric_name)
-
-    # Overall scoring runs after the LLM source audit has supplied the second
-    # required component of the composite memory-safety metric.
-    report["scoring"] = {"status": "pending", "note": "Awaiting LLM source audit and final metric aggregation."}
-
+    report["scoring"] = {"status": "pending", "note": "Awaiting LLM RSI and final metric aggregation."}
     return report
+
+
+def grade_with_rules_file(
+    rules_path: Path,
+    *,
+    project_root: Path = PROJECT_ROOT,
+    report_dir: Path | None = None,
+) -> tuple[dict[str, Any], Path, Path]:
+    """Run the complete grading flow and return the report and artifact paths.
+
+    This function is also the stable backend used by the Gradio interface.
+    """
+    rules = load_rules(rules_path, project_root)
+    report = run_configured_analyzers(rules)
+    report["evidence_ledger"] = build_evidence_ledger(report, rules)
+    try:
+        report["llm_rsi_evaluation"] = _review_with_local_llm(
+            report,
+            rules=rules,
+        )
+        logger.info("LLM RSI metric evaluation completed with status %s.", report["llm_rsi_evaluation"].get("status"))
+    except Exception as exc:
+        logger.warning("LLM RSI evaluation unavailable; analyzer scores will be used: %s: %s", type(exc).__name__, exc)
+        report["llm_rsi_evaluation"] = {
+            "status": "unavailable",
+            "model": settings.MODEL,
+            "error": f"{type(exc).__name__}: {exc}",
+            "metrics": [],
+        }
+
+    # Use the RSI metric score, fall back to the deterministic analyzer score,
+    # then calculate the final weighted grade in Python.
+    apply_metric_scores(rules["metrics"], report, report["llm_rsi_evaluation"])
+    report["scoring"] = calculate_overall_score(rules["metrics"], report)
+    destination = report_dir or settings.REPORTS_DIR
+    destination.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", rules["problem"]).strip("._") or "submission"
+    report_path = destination / f"{stem}.json"
+    text_report_path = destination / f"{stem}.txt"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    text_report_path.write_text(render_text_report(report), encoding="utf-8")
+    return report, report_path, text_report_path
+
 
 
 def main() -> None:
     try:
         logger.info("Loading instructor rules from %s.", RULES_PATH)
-        rules = load_rules(RULES_PATH, PROJECT_ROOT)
-
-        logger.info(
-            "Validated problem '%s' with %d enabled metrics.",
-            rules["problem"],
-            sum(metric["enabled"] for metric in rules["metrics"]),
-        )
-
-        # Execute the analyzers selected by rules.json.
-        report = run_configured_analyzers(rules)
-        report["evidence_ledger"] = build_evidence_ledger(report, rules)
-
-        # Review all collected analyzer evidence with the local LLM.
-        try:
-            report["llm_review"] = _review_with_local_llm(
-                report,
-                rules=rules,
-                max_iterations=rules.get("llm_review", {}).get("max_iterations", 3),
-            )
-            logger.info("LLM evidence review completed.")
-        except Exception as exc:
-            logger.exception("LLM review unavailable.")
-            _record_unavailable_memory_audits(report, exc)
-            report["llm_review"] = build_deterministic_evidence_review(
-                report, rules=rules, reason=f"Unexpected LLM-review exception: {type(exc).__name__}: {exc}"
-            )
-
-        report["scoring"] = calculate_overall_score(
-            rules["metrics"], report
-        )
-
-        report_dir = PROJECT_ROOT / "reports"
-        report_dir.mkdir(parents=True, exist_ok=True)
-        report_path = report_dir / f'{rules["problem"]}.json'
-
-        report_path.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        text_report_path = report_path.with_suffix(".txt")
-        text_report_path.write_text(
-            render_text_report(report),
-            encoding="utf-8",
-        )
-
+        report, report_path, text_report_path = grade_with_rules_file(RULES_PATH)
         print(json.dumps(report, indent=2, ensure_ascii=False))
         logger.info("JSON report saved to %s.", report_path)
         logger.info("Text report saved to %s.", text_report_path)
-        logger.info("Grading pipeline completed.")
-
+        logger.info("Grading pipeline completed with status %s.", report.get("scoring", {}).get("status"))
     except Exception:
-        logger.exception("Grading pipeline failed.")
+        logger.exception("Grading pipeline failed during configuration or report setup.")
         raise
 
 

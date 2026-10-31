@@ -8,3 +8,8 @@ Requires-Dist: docker>=7.0.0
 Requires-Dist: lizard==1.17.10
 Provides-Extra: benchmark
 Requires-Dist: ijson>=3.2.3; extra == "benchmark"
+Provides-Extra: ui
+Requires-Dist: gradio>=5.0; extra == "ui"
+Provides-Extra: all
+Requires-Dist: ijson>=3.2.3; extra == "all"
+Requires-Dist: gradio>=5.0; extra == "all"

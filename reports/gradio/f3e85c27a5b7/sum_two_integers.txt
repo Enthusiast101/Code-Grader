@@ -1,0 +1,64 @@
+Code Checking Assistant — sum_two_integers
+Submission: submission.c
+Rules SHA-256: e979ef77c3aaefabc4947227d3a4e727e8caeca1245d3dd3f48a70742733c9ca
+Source SHA-256: 61e481c31a63ee22adffd599c935dfcf77db9e4c12f22d463a5abc42790cce95
+
+METRIC RESULTS
+------------------------------------------------------------------------
+PREFLIGHT
+------------------------------------------------------------------------
+Status: passed
+Compiled: True
+Smoke tested: True
+
+correctness            weight=0.220  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: All four test cases (small positives, larger positives, mixed-sign values, zero operands) passed with expected outputs matching actual results. The analyzer confirmed 100% correctness in handling the problem contract's requirements.
+  Tests: 4/4 passed
+syntax                 weight=0.080  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: The compiler diagnostics indicate no syntax errors or warnings (0 warnings, 0 errors) during compilation with the specified flags. The code successfully compiled and passed the preflight checks, confirming adherence to the problem contract's syntax requirements.
+structure              weight=0.120  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=None  Basis=deterministic analyzer score (LLM RSI score unavailable)
+modularity             weight=0.080  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: The code contains exactly 1 function (main) and 0 helper functions, meeting the rubric's requirement of at least 1 function with no expected helper functions.
+complexity             weight=0.080  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: The analyzer's cyclomatic complexity estimate (2) and function length (10) are both below their respective thresholds (max_cyclomatic=8, max_function_length=40). No complexity violations were detected in the code.
+logical                weight=0.100  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=None  Basis=deterministic analyzer score (LLM RSI score unavailable)
+runtime_efficiency     weight=0.050  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: The median runtime of 128.197 ms is well within the target runtime of 1000 ms, indicating efficient execution.
+memory_safety          weight=0.170  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=None  Basis=deterministic analyzer score (LLM RSI score unavailable)
+  Valgrind score: 100.0
+  ASan/UBSan score (supplementary): 100.0
+readability            weight=0.100  score=92.00/100    status=completed
+  Analyzer=92.0  LLM RSI=None  Basis=deterministic analyzer score (LLM RSI score unavailable)
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 99.20/100
+  correctness: 100.00 × 0.220 = 22.00
+  syntax: 100.00 × 0.080 = 8.00
+  structure: 100.00 × 0.120 = 12.00
+  modularity: 100.00 × 0.080 = 8.00
+  complexity: 100.00 × 0.080 = 8.00
+  logical: 100.00 × 0.100 = 10.00
+  runtime_efficiency: 100.00 × 0.050 = 5.00
+  memory_safety: 100.00 × 0.170 = 17.00
+  readability: 92.00 × 0.100 = 9.20
+
+LLM EVIDENCE-BASED RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+  correctness: 100.0/100 — All four test cases (small positives, larger positives, mixed-sign values, zero operands) passed with expected outputs matching actual results. The analyzer confirmed 100% correctness in handling the problem contract's requirements.
+  syntax: 100.0/100 — The compiler diagnostics indicate no syntax errors or warnings (0 warnings, 0 errors) during compilation with the specified flags. The code successfully compiled and passed the preflight checks, confirming adherence to the problem contract's syntax requirements.
+  modularity: 100.0/100 — The code contains exactly 1 function (main) and 0 helper functions, meeting the rubric's requirement of at least 1 function with no expected helper functions.
+  complexity: 100.0/100 — The analyzer's cyclomatic complexity estimate (2) and function length (10) are both below their respective thresholds (max_cyclomatic=8, max_function_length=40). No complexity violations were detected in the code.
+  runtime_efficiency: 100.0/100 — The median runtime of 128.197 ms is well within the target runtime of 1000 ms, indicating efficient execution.
+LLM scores missing: structure, logical, memory_safety, readability
+
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

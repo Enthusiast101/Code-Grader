@@ -20,6 +20,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from grading_agent.config import settings
+
 
 def iter_records(path: Path) -> Iterable[dict[str, Any]]:
     try:
@@ -144,10 +146,10 @@ def _program_class(has_vulnerable: int, has_safe: int, has_unknown: int) -> str 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", required=True, type=Path)
-    parser.add_argument("--per-class", type=int, default=250)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--source-output", type=Path, default=Path("benchmark/formai_inputs.jsonl"))
-    parser.add_argument("--labels-output", type=Path, default=Path("benchmark/formai_ground_truth.json"))
+    parser.add_argument("--per-class", type=int, default=settings.FORM_AI_SAMPLE_PER_CLASS)
+    parser.add_argument("--seed", type=int, default=settings.FORM_AI_SAMPLE_SEED)
+    parser.add_argument("--source-output", type=Path, default=Path(settings.FORM_AI_SAMPLE_SOURCE_OUTPUT))
+    parser.add_argument("--labels-output", type=Path, default=Path(settings.FORM_AI_SAMPLE_LABELS_OUTPUT))
     args = parser.parse_args()
     if args.per_class < 1:
         parser.error("--per-class must be positive")

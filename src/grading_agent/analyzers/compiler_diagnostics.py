@@ -5,19 +5,20 @@ import math
 from typing import Any
 
 from grading_agent.sandbox.docker_sandbox import DockerSandbox
+from grading_agent.config import settings
 
 
 def run_compiler_diagnostics(
     sandbox: DockerSandbox,
     source_code: str,
-    filename: str = "main.c",
-    timeout_s: float = 10,
+    filename: str = settings.DEFAULT_SOURCE_FILENAME,
+    timeout_s: float = settings.ANALYZER_COMPILER_TIMEOUT_S,
     flags: list[str] | None = None,
-    warning_penalty: float = 5.0,
+    warning_penalty: float = settings.ANALYZER_COMPILER_WARNING_PENALTY,
 ) -> dict[str, Any]:
     if not math.isfinite(warning_penalty) or not 0 <= warning_penalty <= 100:
         raise ValueError("warning_penalty must be between 0 and 100.")
-    flags = flags or ["-std=c11", "-Wall", "-Wextra", "-Wpedantic"]
+    flags = list(flags) if flags is not None else list(settings.ANALYZER_COMPILER_FLAGS)
     if not isinstance(flags, list) or not all(isinstance(item, str) for item in flags):
         raise ValueError("compiler flags must be a list of strings.")
 

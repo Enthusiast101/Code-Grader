@@ -2,14 +2,15 @@
 from __future__ import annotations
 from typing import Any
 from grading_agent.analyzers.source_metrics import analyze_source
+from grading_agent.config import settings
 
 
 def run_complexity_estimator(
     source_code: str,
-    max_cyclomatic: int = 8,
-    max_function_length: int = 40,
-    complexity_penalty: float = 8.0,
-    length_penalty_per_line: float = 0.5,
+    max_cyclomatic: int = settings.ANALYZER_MAX_CYCLOMATIC,
+    max_function_length: int = settings.ANALYZER_MAX_FUNCTION_LENGTH,
+    complexity_penalty: float = settings.ANALYZER_COMPLEXITY_PENALTY,
+    length_penalty_per_line: float = settings.ANALYZER_LENGTH_PENALTY_PER_LINE,
 ) -> dict[str, Any]:
     metrics = analyze_source(source_code)
     functions = metrics["functions"]

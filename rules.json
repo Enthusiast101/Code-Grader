@@ -112,9 +112,6 @@
       }
     }
   ],
-  "llm_review": {
-    "max_iterations": 3
-  },
   "problem_contract": {
     "description": "Read two signed 32-bit integers separated by whitespace and print their mathematical sum followed by a newline.",
     "operand_type": "int32",

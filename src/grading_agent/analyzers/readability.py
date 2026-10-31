@@ -2,14 +2,15 @@
 from __future__ import annotations
 from typing import Any
 from grading_agent.analyzers.source_metrics import analyze_source
+from grading_agent.config import settings
 
 
 def run_readability(
     source_code: str,
-    max_line_length: int = 100,
-    long_line_penalty: float = 1.0,
-    single_char_identifier_penalty: float = 1.0,
-    missing_comment_penalty: float = 5.0,
+    max_line_length: int = settings.ANALYZER_MAX_LINE_LENGTH,
+    long_line_penalty: float = settings.ANALYZER_LONG_LINE_PENALTY,
+    single_char_identifier_penalty: float = settings.ANALYZER_SINGLE_CHAR_IDENTIFIER_PENALTY,
+    missing_comment_penalty: float = settings.ANALYZER_MISSING_COMMENT_PENALTY,
 ) -> dict[str, Any]:
     metrics = analyze_source(source_code)
     long_lines = [i for i, line in enumerate(source_code.splitlines(), 1) if len(line) > max_line_length]

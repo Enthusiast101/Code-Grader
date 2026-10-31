@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from grading_agent.analyzers.source_metrics import strip_comments_and_literals
+from grading_agent.config import settings
 
 _C_KEYWORDS = {
     "auto", "break", "case", "char", "const", "continue", "default", "do",
@@ -56,10 +57,10 @@ def _similarity(left: set[tuple[str, ...]], right: set[tuple[str, ...]]) -> floa
 def run_similarity_flag(
     source_code: str,
     corpus_dir: str | Path,
-    flag_threshold: float = 0.85,
-    max_files: int = 5000,
-    shingle_size: int = 5,
-    max_file_bytes: int = 2_000_000,
+    flag_threshold: float = settings.ANALYZER_SIMILARITY_THRESHOLD,
+    max_files: int = settings.ANALYZER_SIMILARITY_MAX_FILES,
+    shingle_size: int = settings.ANALYZER_SIMILARITY_SHINGLE_SIZE,
+    max_file_bytes: int = settings.ANALYZER_SIMILARITY_MAX_FILE_BYTES,
     exclude_path: str | Path | None = None,
 ) -> dict[str, Any]:
     root = Path(corpus_dir)

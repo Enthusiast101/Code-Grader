@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from grading_agent.config import settings
 from grading_agent.config.rule_loader import load_test_cases
 
 
@@ -23,10 +24,10 @@ def run_preflight(
     sandbox.write_file(source_filename, source_code)
     compile_result = sandbox.run(
         [
-            "gcc", "-std=c11", "-Wall", "-Wextra", "-O2",
+            "gcc", *settings.ANALYZER_PREFLIGHT_FLAGS,
             source_filename, "-o", "preflight_program",
         ],
-        timeout_s=10.0,
+        timeout_s=settings.ANALYZER_PREFLIGHT_TIMEOUT_S,
     )
 
     if compile_result["timed_out"]:

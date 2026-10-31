@@ -2,5 +2,12 @@ requests
 docker>=7.0.0
 lizard==1.17.10
 
+[all]
+ijson>=3.2.3
+gradio>=5.0
+
 [benchmark]
 ijson>=3.2.3
+
+[ui]
+gradio>=5.0

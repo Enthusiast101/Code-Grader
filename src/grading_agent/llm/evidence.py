@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from grading_agent.config import settings
+
 
 INT32_MIN = -(2**31)
 INT32_MAX = 2**31 - 1
@@ -28,26 +30,6 @@ def _add(
     if facts:
         record["facts"] = facts
     ledger.append(record)
-
-
-def _infer_metric_status(metric: dict[str, Any]) -> str:
-    """Infer completion for analyzers that expose scores but no status field."""
-    status = metric.get("status")
-    if isinstance(status, str) and status not in {"", "unknown", "None"}:
-        return status
-
-    total = metric.get("tests_total")
-    passed = metric.get("tests_passed")
-    if isinstance(total, int) and not isinstance(total, bool) and total > 0 and isinstance(passed, int):
-        if metric.get("compiled") is False:
-            return "failed"
-        return "completed" if passed == total else "completed_with_warnings"
-
-    if "compiled" in metric:
-        return "completed" if metric.get("compiled") is True else "failed"
-    if metric.get("score") is not None:
-        return "completed"
-    return "unknown"
 
 
 def _is_signed_int32_overflow_test(case: dict[str, Any], contract: dict[str, Any]) -> bool:
@@ -107,7 +89,7 @@ def build_evidence_ledger(
         if not isinstance(metric, dict):
             continue
         score = metric.get("score")
-        status = _infer_metric_status(metric)
+        status = metric.get("status", "unknown")
         weight = metric.get("weight")
         metric_id = f"E-METRIC-{name.upper()}-001"
         _add(
@@ -245,22 +227,11 @@ def build_evidence_ledger(
             audit = metric.get("llm_source_audit", {})
             if isinstance(audit, dict):
                 audit_payload = audit.get("audit", {})
-                valid_audit_findings = (
-                    audit_payload.get("findings", [])
-                    if isinstance(audit_payload, dict) and isinstance(audit_payload.get("findings"), list)
-                    else []
-                )
-                rejected_audit_findings = (
-                    audit_payload.get("rejected_findings", [])
-                    if isinstance(audit_payload, dict) and isinstance(audit_payload.get("rejected_findings"), list)
-                    else []
-                )
                 _add(
                     ledger, "E-MEMORY-SOURCE-AUDIT-001", "model_audit",
-                    f"Separate model source audit status={audit.get('status')}; validated findings={len(valid_audit_findings)}; rejected unsupported claims={len(rejected_audit_findings)}. Model-derived analysis is not independent runtime proof.",
+                    f"Separate model source audit status={audit.get('status')}; findings={len(audit_payload.get('findings', [])) if isinstance(audit_payload, dict) and isinstance(audit_payload.get('findings'), list) else 'unknown'}. Model-derived analysis is not independent runtime proof.",
                     status=audit.get("status"),
-                    finding_count=len(valid_audit_findings),
-                    rejected_finding_count=len(rejected_audit_findings),
+                    finding_count=(len(audit_payload.get("findings", [])) if isinstance(audit_payload, dict) and isinstance(audit_payload.get("findings"), list) else None),
                 )
                 if isinstance(audit_payload, dict):
                     for index, finding in enumerate(audit_payload.get("findings", [])[:10], 1):
@@ -349,22 +320,8 @@ def validate_review_payload(
         return None, {"status": "invalid", "reason": "Summary claims overflow handling without passing overflow-specific tests."}
 
     def required_test_metrics(text: str) -> set[str]:
-        """Return test groups asserted as completely passing by a claim.
-
-        Accept common model phrasings such as 'all four correctness tests
-        passed' and 'all five edge cases were handled', while still requiring
-        citations to the aggregate summaries for every asserted test group.
-        """
         normalized = text.casefold()
-        all_cases_mentioned = bool(
-            re.search(r"\ball\b.{0,55}\b(?:tests?|test cases|edge cases|corner cases)\b", normalized)
-            or re.search(r"\b(?:tests?|test cases|edge cases|corner cases)\b.{0,35}\ball\b", normalized)
-        )
-        positive_result = bool(re.search(
-            r"\b(?:pass(?:ed|es|ing)?|succeed(?:ed|s)?|correct(?:ly)?|handle(?:d|s)?|successful)\b",
-            normalized,
-        ))
-        if not all_cases_mentioned or not positive_result:
+        if not re.search(r"\ball\s+(?:configured\s+)?(?:tests|test cases|edge cases)\b.{0,45}\b(?:pass(?:ed)?|succeed(?:ed)?|correct(?:ly)?|handle(?:d)?)\b", normalized):
             return set()
         if re.search(r"\b(?:edge cases|edge tests|corner cases)\b", normalized):
             return {"logical"}
@@ -375,69 +332,26 @@ def validate_review_payload(
             for item in ledger if item.get("kind") == "test_summary"
         }
 
-    def claims_modularity_is_satisfied(text: str) -> bool:
-        normalized = text.casefold()
-        return bool(
-            re.search(r"\bmodularity\b.{0,55}\b(?:met|satisfied|satisfies|passes|passed|compliant|score(?:d)? 100)\b", normalized)
-            or re.search(r"\bmodularity rubric\b.{0,35}\b(?:met|satisfied|passed)\b", normalized)
-        )
-
-    # Apply the same test-scope and rubric checks to the summary itself.
     summary_test_scope = required_test_metrics(summary)
     if summary_test_scope:
-        expected_summaries = [
+        summaries = [
             item for item in ledger
-            if item.get("kind") == "test_summary"
-            and item.get("facts", {}).get("metric") in summary_test_scope
+            if item.get("kind") == "test_summary" and item.get("facts", {}).get("metric") in summary_test_scope
         ]
         cited_summaries = [
             by_id[ref] for ref in summary_ids
             if by_id[ref].get("kind") == "test_summary"
             and by_id[ref].get("facts", {}).get("metric") in summary_test_scope
         ]
-        if (
-            len(cited_summaries) != len(expected_summaries)
-            or not expected_summaries
-            or not all(
-                item.get("facts", {}).get("tests_total", 0) > 0
-                and item.get("facts", {}).get("tests_passed") == item.get("facts", {}).get("tests_total")
-                for item in expected_summaries
-            )
-        ):
-            return None, {
-                "status": "invalid",
-                "reason": "Summary claims complete test success without citing all passing summaries for the stated test group.",
-            }
-
-    if claims_modularity_is_satisfied(summary):
-        required_modularity_ids = {
-            "E-RULE-MODULARITY-001", "E-MODULARITY-001", "E-METRIC-MODULARITY-001"
-        }
-        rule = by_id.get("E-RULE-MODULARITY-001", {})
-        measured = by_id.get("E-MODULARITY-001", {})
-        metric = by_id.get("E-METRIC-MODULARITY-001", {})
-        rule_facts = rule.get("facts", {})
-        measured_facts = measured.get("facts", {})
-        minimum_functions = rule_facts.get("minimum_functions", measured_facts.get("minimum_functions"))
-        configured_helpers = rule_facts.get("helpers_expected", measured_facts.get("helpers_expected"))
-        function_count = measured_facts.get("function_count")
-        has_required_helpers = configured_helpers is not True or (
-            isinstance(measured_facts.get("helper_function_count"), int)
-            and measured_facts["helper_function_count"] > 0
+        all_metrics_pass = bool(summaries) and all(
+            item.get("facts", {}).get("tests_total", 0) > 0
+            and item.get("facts", {}).get("tests_passed") == item.get("facts", {}).get("tests_total")
+            for item in summaries
         )
-        if (
-            not required_modularity_ids.issubset(set(summary_ids))
-            or not isinstance(function_count, int)
-            or not isinstance(minimum_functions, int)
-            or function_count < minimum_functions
-            or not has_required_helpers
-            or metric.get("facts", {}).get("score") != 100.0
-        ):
-            return None, {
-                "status": "invalid",
-                "reason": "Summary claims modularity is satisfied without citing the instructor rule, measured function count, and completed 100-point modularity metric.",
-            }
-
+        if not all_metrics_pass or len(cited_summaries) != len(summaries):
+            return None, {"status": "invalid", "reason": "Summary claims all tests passed without citing complete passing summaries for the stated test category."}
+    if any(not isinstance(payload.get(key), list) for key in required_lists):
+        return None, {"status": "invalid", "reason": "Review sections must be JSON arrays."}
 
     metric_config = {
         item.get("name"): item
@@ -445,11 +359,10 @@ def validate_review_payload(
         if isinstance(item, dict) and item.get("enabled", True)
     }
     modularity_params = metric_config.get("modularity", {}).get("params", {})
-    helpers_expected = modularity_params.get("expect_helpers", True)
+    helpers_expected = modularity_params.get("expect_helpers", settings.ANALYZER_EXPECT_HELPERS)
 
     verified: dict[str, list[dict[str, Any]]] = {key: [] for key in required_lists}
     rejected: list[dict[str, str]] = []
-    normalization_notes: list[str] = []
 
     def validate_item(section: str, item: Any, index: int) -> None:
         if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
@@ -463,25 +376,13 @@ def validate_review_payload(
         text = item["text"]
         normalized = text.casefold()
         evidence_types = {by_id[ref]["kind"] for ref in ids}
-        if section == "findings":
-            finding_kind = item.get("kind")
-            if finding_kind is None:
-                if "scope_limitation" in evidence_types or re.search(r"\b(?:not tested|not covered|limited to|limitation|unknown)\b", normalized):
-                    finding_kind = "limitation"
-                elif "model_audit_finding" in evidence_types and not evidence_types.intersection({"test_result", "test_summary", "static_finding", "compiler_diagnostics", "source_metric"}):
-                    finding_kind = "potential"
-                else:
-                    finding_kind = "observed"
-                normalization_notes.append(f"findings[{index}]: inferred kind={finding_kind} from cited evidence.")
-            if finding_kind not in {"observed", "potential", "limitation"}:
-                rejected.append({"section": section, "claim": text[:240], "reason": "Finding kind must be observed, potential, or limitation."})
-                return
-            item["kind"] = finding_kind
+        if section == "findings" and item.get("kind") not in {"observed", "potential", "limitation"}:
+            rejected.append({"section": section, "claim": text[:240], "reason": "Finding kind must be observed, potential, or limitation."})
+            return
         if section == "findings" and not evidence_types.intersection({
-            "test_result", "test_summary", "metric_summary", "compiler_diagnostics", "static_finding", "source_metric",
+            "test_result", "compiler_diagnostics", "static_finding", "source_metric",
             "runtime_measurement", "memory_safety_measurement", "sanitizer_result",
             "readability_measurement", "source_line", "model_audit", "model_audit_finding",
-            "rubric", "static_analysis", "test_summary",
         }):
             rejected.append({"section": section, "claim": text[:240], "reason": "Finding cites no relevant analyzer or source evidence."})
             return
@@ -523,86 +424,13 @@ def validate_review_payload(
             rejected.append({"section": section, "claim": text[:240], "reason": "A contradiction must cite at least two evidence records."})
             return
 
-        if claims_modularity_is_satisfied(text):
-            cited_ids = set(ids)
-            rule = by_id.get("E-RULE-MODULARITY-001", {})
-            measured = by_id.get("E-MODULARITY-001", {})
-            metric = by_id.get("E-METRIC-MODULARITY-001", {})
-            rule_facts = rule.get("facts", {})
-            measured_facts = measured.get("facts", {})
-            metric_facts = metric.get("facts", {})
-            function_count = measured_facts.get("function_count")
-            minimum_functions = rule_facts.get("minimum_functions")
-            modularity_helpers_expected = rule_facts.get("helpers_expected")
-            if minimum_functions is None:
-                minimum_functions = measured_facts.get("minimum_functions")
-            if modularity_helpers_expected is None:
-                modularity_helpers_expected = measured_facts.get("helpers_expected")
-            enough_functions = (
-                isinstance(function_count, int)
-                and isinstance(minimum_functions, int)
-                and function_count >= minimum_functions
-            )
-            enough_helpers = modularity_helpers_expected is not True or (
-                isinstance(measured_facts.get("helper_function_count"), int)
-                and measured_facts["helper_function_count"] > 0
-            )
-            required_modularity_ids = {
-                "E-RULE-MODULARITY-001", "E-MODULARITY-001", "E-METRIC-MODULARITY-001"
-            }
-            if (
-                not required_modularity_ids.issubset(cited_ids)
-                or not enough_functions
-                or not enough_helpers
-                or metric_facts.get("score") != 100.0
-            ):
-                rejected.append({
-                    "section": section,
-                    "claim": text[:240],
-                    "reason": "Modularity satisfaction requires citations to the instructor rule, measured function count, and completed 100-point modularity metric.",
-                })
-                return
-
         if section == "recommendations":
             basis = item.get("basis")
-            if basis is None:
-                # Unspecified advice is non-binding by default. The LLM must
-                # explicitly cite the rubric to present a requirement.
-                basis = "optional"
-                normalization_notes.append(f"recommendations[{index}]: defaulted missing basis to optional.")
-            item["basis"] = basis
             if basis not in {"rubric", "measured_issue", "optional"}:
                 rejected.append({"section": section, "claim": text[:240], "reason": "Recommendation basis must be rubric, measured_issue, or optional."})
                 return
-            modularity_record = by_id.get("E-MODULARITY-001", {})
-            modularity_rule = by_id.get("E-RULE-MODULARITY-001", {})
-            modularity_metric = by_id.get("E-METRIC-MODULARITY-001", {})
-            modularity_facts = modularity_record.get("facts", {})
-            modularity_rule_facts = modularity_rule.get("facts", {})
-            modularity_score = modularity_metric.get("facts", {}).get("score")
-            minimum_functions = modularity_rule_facts.get(
-                "minimum_functions", modularity_facts.get("minimum_functions")
-            )
-            function_count = modularity_facts.get("function_count")
-            modularity_already_satisfied = (
-                modularity_score == 100.0
-                and isinstance(minimum_functions, int)
-                and isinstance(function_count, int)
-                and function_count >= minimum_functions
-            )
-            modularity_advice = bool(re.search(
-                r"\b(?:modular(?:ity)?|helper functions?|decompos(?:e|ition)|split into functions?)\b",
-                normalized,
-            ))
-            if helpers_expected is False and modularity_already_satisfied and modularity_advice:
-                rejected.append({
-                    "section": section,
-                    "claim": text[:240],
-                    "reason": (
-                        "Redundant modularity advice: the instructor does not require helper functions, "
-                        "and the measured modularity metric already satisfies the rubric."
-                    ),
-                })
+            if not helpers_expected and re.search(r"\b(helper function|add a helper|extract .*function|split .*function)\b", normalized):
+                rejected.append({"section": section, "claim": text[:240], "reason": "Recommendation conflicts with the instructor's helpers_expected=false rule."})
                 return
             if basis == "rubric" and "rubric" not in evidence_types:
                 rejected.append({"section": section, "claim": text[:240], "reason": "Rubric-required recommendation must cite a rubric evidence record."})
@@ -635,7 +463,6 @@ def validate_review_payload(
         **verified,
         "evidence_references": sorted(referenced),
         "unverified_claims": rejected,
-        "normalization_notes": normalization_notes,
     }
     status = "completed" if not rejected else "completed_with_warnings"
     validation = {
@@ -644,8 +471,6 @@ def validate_review_payload(
         "rejected_claim_count": len(rejected),
         "known_evidence_ids": len(by_id),
         "referenced_evidence_ids": len(referenced),
-        "normalization_count": len(normalization_notes),
-        "normalization_notes": normalization_notes,
         "semantic_entailment_note": "Python validates citation IDs, evidence types, explicit assignment constraints, and known unsupported claim patterns; natural-language entailment still requires human review.",
     }
     return cleaned, validation

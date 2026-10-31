@@ -25,8 +25,6 @@ SUPPORTED_ANALYZERS = {
     "valgrind_memcheck",
 }
 
-MEMORY_SAFETY_SEVERITIES = {"critical", "high", "medium", "low"}
-
 
 class RuleValidationError(ValueError):
     """Raised when an instructor rules file is invalid."""
@@ -347,21 +345,21 @@ def load_rules(
             normalized["params"]["resolved_corpus_dir"] = str(resolved_dir)
 
         if enabled and analyzer == "runtime_profile":
-            target_ms = params.get("target_runtime_ms", 50.0)
+            target_ms = params.get("target_runtime_ms", settings.ANALYZER_RUNTIME_TARGET_MS)
             if isinstance(target_ms, bool) or not isinstance(target_ms, (int, float)) or not math.isfinite(target_ms) or target_ms <= 0:
                 raise RuleValidationError(f"'{name}.params.target_runtime_ms' must be positive.")
-            repetitions = params.get("repetitions", 3)
-            if isinstance(repetitions, bool) or not isinstance(repetitions, int) or not 1 <= repetitions <= 10:
-                raise RuleValidationError(f"'{name}.params.repetitions' must be an integer from 1 to 10.")
+            repetitions = params.get("repetitions", settings.ANALYZER_RUNTIME_REPETITIONS)
+            if isinstance(repetitions, bool) or not isinstance(repetitions, int) or not 1 <= repetitions <= settings.ANALYZER_RUNTIME_MAX_REPETITIONS:
+                raise RuleValidationError(f"'{name}.params.repetitions' must be an integer from 1 to {settings.ANALYZER_RUNTIME_MAX_REPETITIONS}.")
             normalized["params"].update({"target_runtime_ms": float(target_ms), "repetitions": repetitions})
-            normalized["params"].setdefault("compile_timeout_s", 10.0)
+            normalized["params"].setdefault("compile_timeout_s", settings.ANALYZER_COMPILE_TIMEOUT_S)
 
         if enabled and analyzer == "edge_case_runner":
-            normalized["params"].setdefault("compile_timeout_s", 10.0)
+            normalized["params"].setdefault("compile_timeout_s", settings.ANALYZER_COMPILE_TIMEOUT_S)
 
         if enabled and analyzer == "modularity":
-            min_functions = params.get("min_functions", 2)
-            expect_helpers = params.get("expect_helpers", True)
+            min_functions = params.get("min_functions", settings.ANALYZER_MIN_FUNCTIONS)
+            expect_helpers = params.get("expect_helpers", settings.ANALYZER_EXPECT_HELPERS)
             if isinstance(min_functions, bool) or not isinstance(min_functions, int) or min_functions < 1:
                 raise RuleValidationError(f"'{name}.params.min_functions' must be a positive integer.")
             if not isinstance(expect_helpers, bool):
@@ -369,39 +367,39 @@ def load_rules(
             normalized["params"].update({"min_functions": min_functions, "expect_helpers": expect_helpers})
 
         if enabled and analyzer == "complexity_estimator":
-            for key, default in (("max_cyclomatic", 8), ("max_function_length", 40)):
+            for key, default in (("max_cyclomatic", settings.ANALYZER_MAX_CYCLOMATIC), ("max_function_length", settings.ANALYZER_MAX_FUNCTION_LENGTH)):
                 value = params.get(key, default)
                 if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                     raise RuleValidationError(f"'{name}.params.{key}' must be a positive integer.")
                 normalized["params"][key] = value
-            for key, default in (("complexity_penalty", 8.0), ("length_penalty_per_line", 0.5)):
+            for key, default in (("complexity_penalty", settings.ANALYZER_COMPLEXITY_PENALTY), ("length_penalty_per_line", settings.ANALYZER_LENGTH_PENALTY_PER_LINE)):
                 normalized["params"][key] = _percentage_penalty(
                     params.get(key, default), f"{name}.params.{key}"
                 )
 
         if enabled and analyzer == "readability":
-            max_line_length = params.get("max_line_length", 100)
+            max_line_length = params.get("max_line_length", settings.ANALYZER_MAX_LINE_LENGTH)
             if isinstance(max_line_length, bool) or not isinstance(max_line_length, int) or max_line_length < 20:
                 raise RuleValidationError(f"'{name}.params.max_line_length' must be an integer >= 20.")
             normalized["params"]["max_line_length"] = max_line_length
             for key, default in (
-                ("long_line_penalty", 1.0),
-                ("single_char_identifier_penalty", 1.0),
-                ("missing_comment_penalty", 5.0),
+                ("long_line_penalty", settings.ANALYZER_LONG_LINE_PENALTY),
+                ("single_char_identifier_penalty", settings.ANALYZER_SINGLE_CHAR_IDENTIFIER_PENALTY),
+                ("missing_comment_penalty", settings.ANALYZER_MISSING_COMMENT_PENALTY),
             ):
                 normalized["params"][key] = _percentage_penalty(
                     params.get(key, default), f"{name}.params.{key}"
                 )
 
         if enabled and analyzer == "compiler_diagnostics":
-            flags = params.get("flags", ["-std=c11", "-Wall", "-Wextra", "-Wpedantic"])
+            flags = params.get("flags", list(settings.ANALYZER_COMPILER_FLAGS))
             if not isinstance(flags, list) or not all(isinstance(item, str) for item in flags):
                 raise RuleValidationError(f"'{name}.params.flags' must be a list of strings.")
             normalized["params"]["flags"] = flags
             normalized["params"]["warning_penalty"] = _percentage_penalty(
-                params.get("warning_penalty", 5.0), f"{name}.params.warning_penalty"
+                params.get("warning_penalty", settings.ANALYZER_COMPILER_WARNING_PENALTY), f"{name}.params.warning_penalty"
             )
-            normalized["params"].setdefault("timeout_s", 10.0)
+            normalized["params"].setdefault("timeout_s", settings.ANALYZER_COMPILER_TIMEOUT_S)
 
         if enabled and analyzer == "static_analysis":
             supplied = params.get("severity_penalties", {})
@@ -415,100 +413,18 @@ def load_rules(
                 severity: _percentage_penalty(value, f"{name}.params.severity_penalties.{severity}")
                 for severity, value in supplied.items()
             }
-            normalized["params"].setdefault("timeout_s", 15.0)
+            normalized["params"].setdefault("timeout_s", settings.ANALYZER_STATIC_TIMEOUT_S)
 
         if enabled and analyzer == "similarity_flag":
-            threshold = _unit_interval_weight(params.get("flag_threshold", 0.85), f"{name}.params.flag_threshold")
-            max_files = params.get("max_files", 5000)
-            shingle_size = params.get("shingle_size", 5)
+            threshold = _unit_interval_weight(params.get("flag_threshold", settings.ANALYZER_SIMILARITY_THRESHOLD), f"{name}.params.flag_threshold")
+            max_files = params.get("max_files", settings.ANALYZER_SIMILARITY_MAX_FILES)
+            shingle_size = params.get("shingle_size", settings.ANALYZER_SIMILARITY_SHINGLE_SIZE)
             if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1:
                 raise RuleValidationError(f"'{name}.params.max_files' must be positive.")
-            if isinstance(shingle_size, bool) or not isinstance(shingle_size, int) or shingle_size < 2:
-                raise RuleValidationError(f"'{name}.params.shingle_size' must be >= 2.")
+            if isinstance(shingle_size, bool) or not isinstance(shingle_size, int) or shingle_size < settings.ANALYZER_SIMILARITY_MIN_SHINGLE_SIZE:
+                raise RuleValidationError(f"'{name}.params.shingle_size' must be >= {settings.ANALYZER_SIMILARITY_MIN_SHINGLE_SIZE}.")
             normalized["params"].update({"flag_threshold": threshold, "max_files": max_files, "shingle_size": shingle_size})
 
-        if enabled and analyzer == "memory_safety":
-            # Both component weights have defaults. If only one is supplied,
-            # the other is its complement so their sum remains exactly 1.
-            valgrind_weight = params.get("valgrind_weight")
-            llm_weight = params.get("llm_audit_weight")
-
-            if valgrind_weight is None and llm_weight is None:
-                valgrind_weight = settings.MEMORY_SAFETY_DEFAULT_VALGRIND_WEIGHT
-                llm_weight = settings.MEMORY_SAFETY_DEFAULT_LLM_WEIGHT
-            elif valgrind_weight is None:
-                llm_weight = _unit_interval_weight(
-                    llm_weight, f"{name}.params.llm_audit_weight"
-                )
-                valgrind_weight = 1.0 - llm_weight
-            elif llm_weight is None:
-                valgrind_weight = _unit_interval_weight(
-                    valgrind_weight, f"{name}.params.valgrind_weight"
-                )
-                llm_weight = 1.0 - valgrind_weight
-            else:
-                valgrind_weight = _unit_interval_weight(
-                    valgrind_weight, f"{name}.params.valgrind_weight"
-                )
-                llm_weight = _unit_interval_weight(
-                    llm_weight, f"{name}.params.llm_audit_weight"
-                )
-
-            if valgrind_weight <= 0 or llm_weight <= 0:
-                raise RuleValidationError(
-                    f"Both Valgrind and LLM audit weights for '{name}' "
-                    "must be greater than zero so both checks contribute."
-                )
-            if not math.isclose(
-                valgrind_weight + llm_weight,
-                1.0,
-                rel_tol=0.0,
-                abs_tol=1e-6,
-            ):
-                raise RuleValidationError(
-                    f"'{name}' component weights must sum to 1.0; received "
-                    f"{valgrind_weight + llm_weight:.6f}."
-                )
-
-            penalties = dict(
-                settings.MEMORY_SAFETY_DEFAULT_SEVERITY_PENALTIES
-            )
-            supplied_penalties = params.get("severity_penalties", {})
-            if not isinstance(supplied_penalties, dict):
-                raise RuleValidationError(
-                    f"'{name}.params.severity_penalties' must be an object."
-                )
-            unknown_severities = set(supplied_penalties) - MEMORY_SAFETY_SEVERITIES
-            if unknown_severities:
-                raise RuleValidationError(
-                    f"Unknown severity penalty keys for '{name}': "
-                    f"{', '.join(sorted(unknown_severities))}."
-                )
-            for severity, penalty in supplied_penalties.items():
-                penalties[severity] = _percentage_penalty(
-                    penalty,
-                    f"{name}.params.severity_penalties.{severity}",
-                )
-
-            max_findings = params.get(
-                "llm_audit_max_findings",
-                settings.MEMORY_SAFETY_LLM_MAX_FINDINGS,
-            )
-            if (
-                isinstance(max_findings, bool)
-                or not isinstance(max_findings, int)
-                or max_findings < 1
-            ):
-                raise RuleValidationError(
-                    f"'{name}.params.llm_audit_max_findings' must be a positive integer."
-                )
-
-            normalized["params"].update({
-                "valgrind_weight": float(valgrind_weight),
-                "llm_audit_weight": float(llm_weight),
-                "severity_penalties": penalties,
-                "llm_audit_max_findings": max_findings,
-            })
 
         normalized_metrics.append(normalized)
 
@@ -537,13 +453,6 @@ def load_rules(
         **submission,
         "resolved_source_path": str(source_path),
     }
-    review_config = rules.get("llm_review", {})
-    if not isinstance(review_config, dict):
-        raise RuleValidationError("'llm_review' must be a JSON object.")
-    review_iterations = review_config.get("max_iterations", 3)
-    if isinstance(review_iterations, bool) or not isinstance(review_iterations, int) or not 1 <= review_iterations <= 3:
-        raise RuleValidationError("'llm_review.max_iterations' must be an integer from 1 to 3.")
-
     for metric in normalized_metrics:
         if metric["analyzer"] == "memory_safety":
             run_sanitizers = metric["params"].get("run_sanitizers", True)
@@ -554,7 +463,9 @@ def load_rules(
             metric["params"]["run_sanitizers"] = run_sanitizers
 
     normalized_rules["metrics"] = normalized_metrics
-    normalized_rules["llm_review"] = {"max_iterations": review_iterations}
+    # Ignore the old experimental analyzer/LLM blend setting. Metric scores
+    # now come from RSI, with analyzer scores used only as fallback.
+    normalized_rules.pop("scoring", None)
     normalized_rules["rules_path"] = str(rules_path)
     normalized_rules["project_root"] = str(project_root)
 

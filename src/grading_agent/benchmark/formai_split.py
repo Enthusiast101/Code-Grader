@@ -7,6 +7,8 @@ import random
 from pathlib import Path
 from typing import Any
 
+from grading_agent.config import settings
+
 
 def _read_source_inputs(path: Path) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
@@ -82,9 +84,9 @@ def split_formai(
     labels_path: Path,
     output_dir: Path,
     *,
-    validation_fraction: float = 0.2,
-    test_fraction: float = 0.2,
-    seed: int = 42,
+    validation_fraction: float = settings.FORM_AI_SPLIT_VALIDATION_FRACTION,
+    test_fraction: float = settings.FORM_AI_SPLIT_TEST_FRACTION,
+    seed: int = settings.FORM_AI_SPLIT_SEED,
 ) -> dict[str, Any]:
     if not 0 <= validation_fraction < 1 or not 0 <= test_fraction < 1:
         raise ValueError("Split fractions must be in [0, 1).")
@@ -158,10 +160,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", required=True, type=Path, help="Source-only FormAI JSONL.")
     parser.add_argument("--labels", required=True, type=Path, help="Separate FormAI ground-truth JSON.")
-    parser.add_argument("--output-dir", type=Path, default=Path("benchmark/splits"))
-    parser.add_argument("--validation-fraction", type=float, default=0.2)
-    parser.add_argument("--test-fraction", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-dir", type=Path, default=Path(settings.FORM_AI_SPLIT_OUTPUT_DIR))
+    parser.add_argument("--validation-fraction", type=float, default=settings.FORM_AI_SPLIT_VALIDATION_FRACTION)
+    parser.add_argument("--test-fraction", type=float, default=settings.FORM_AI_SPLIT_TEST_FRACTION)
+    parser.add_argument("--seed", type=int, default=settings.FORM_AI_SPLIT_SEED)
     args = parser.parse_args()
     try:
         result = split_formai(

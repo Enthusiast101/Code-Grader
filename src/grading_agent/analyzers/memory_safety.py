@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any, TYPE_CHECKING
 
+from grading_agent.config import settings
+
 if TYPE_CHECKING:
     from grading_agent.sandbox.docker_sandbox import DockerSandbox
 
@@ -57,10 +59,10 @@ def run_memory_safety(
     sandbox: DockerSandbox,
     source_code: str,
     test_cases: list[dict[str, Any]],
-    filename: str = "main.c",
-    compile_timeout_s: int = 10,
-    run_timeout_s: int = 5,
-    run_sanitizers: bool = True,
+    filename: str = settings.DEFAULT_SOURCE_FILENAME,
+    compile_timeout_s: int = settings.ANALYZER_COMPILE_TIMEOUT_S,
+    run_timeout_s: int = settings.ANALYZER_MEMORY_RUN_TIMEOUT_S,
+    run_sanitizers: bool = settings.ANALYZER_RUN_SANITIZERS,
 ) -> dict[str, Any]:
     """Run Valgrind and optional AddressSanitizer/UBSan on every test input."""
     if not test_cases:
@@ -186,6 +188,8 @@ def run_memory_safety(
 
     return {
         "analyzer": "memory_safety", "status": "completed" if runtime_tools_complete else "inconclusive",
+        "score": round(vg_score, 2) if vg_score is not None else None,
+        "score_scale": "0-100",
         "compiled": True, "tests_total": len(test_cases), "tests_checked": len(vg_results),
         "tests_clean": sum(item["memory_safe"] for item in vg_results),
         "memory_safe": runtime_tools_complete and runtime_tools_score == 100.0,

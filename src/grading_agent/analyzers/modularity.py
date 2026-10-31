@@ -2,9 +2,10 @@
 from __future__ import annotations
 from typing import Any
 from grading_agent.analyzers.source_metrics import analyze_source
+from grading_agent.config import settings
 
 
-def run_modularity(source_code: str, min_functions: int = 2, expect_helpers: bool = True) -> dict[str, Any]:
+def run_modularity(source_code: str, min_functions: int = settings.ANALYZER_MIN_FUNCTIONS, expect_helpers: bool = settings.ANALYZER_EXPECT_HELPERS) -> dict[str, Any]:
     metrics = analyze_source(source_code)
     functions = metrics["functions"]
     helpers = [item for item in functions if item["name"] != "main"]

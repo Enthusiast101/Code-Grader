@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 benchmark = ["ijson>=3.2.3"]
+ui = ["gradio>=5.0"]
+all = ["ijson>=3.2.3", "gradio>=5.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
