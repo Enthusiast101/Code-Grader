@@ -1,18 +1,38 @@
 [
   {
     "input": "3 4\n",
-    "expected": "7\n"
+    "expected": "7\n",
+    "id": "C01",
+    "description": "Small positive values",
+    "tags": [
+      "basic"
+    ]
   },
   {
     "input": "10 20\n",
-    "expected": "30\n"
+    "expected": "30\n",
+    "id": "C02",
+    "description": "Larger positive values",
+    "tags": [
+      "basic"
+    ]
   },
   {
     "input": "-5 2\n",
-    "expected": "-3\n"
+    "expected": "-3\n",
+    "id": "C03",
+    "description": "Mixed-sign values",
+    "tags": [
+      "basic"
+    ]
   },
   {
     "input": "0 0\n",
-    "expected": "0\n"
+    "expected": "0\n",
+    "id": "C04",
+    "description": "Zero operands",
+    "tags": [
+      "basic"
+    ]
   }
 ]

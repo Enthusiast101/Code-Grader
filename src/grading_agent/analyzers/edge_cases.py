@@ -8,7 +8,7 @@ from grading_agent.sandbox.docker_sandbox import DockerSandbox
 def run_edge_case_runner(
     sandbox: DockerSandbox,
     source_code: str,
-    test_cases: list[dict[str, str]],
+    test_cases: list[dict[str, Any]],
     filename: str = "main.c",
     compile_timeout_s: int = 10,
     run_timeout_s: float = 2,

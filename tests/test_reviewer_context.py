@@ -9,92 +9,147 @@ from grading_agent.llm.reviewer import (
     REVIEW_MAX_TOKENS,
     _prepare_evidence,
     _request_json,
+    _validate_memory_audit,
     review_evidence,
 )
 
 
 class ReviewerContextTests(unittest.TestCase):
-    def test_evidence_payload_has_a_real_hard_limit(self):
-        long_log = "==123== Memcheck header\n" + ("irrelevant detail\n" * 500) + "==123== ERROR SUMMARY: 0 errors\n"
-        report = {
+    def _report(self):
+        return {
             "submission": "main.c",
-            "problem": "large_report",
+            "problem": "sample",
             "source_code": "int main(void) { return 0; }",
+            "configuration": {"enabled_metrics": [{"name": "correctness"}]},
             "correctness": {
-                "status": "completed",
-                "score": 100,
-                "tests_passed": 4,
-                "tests_total": 4,
-                "results": [{"test_id": i, "passed": True, "actual": "ok"} for i in range(4)],
-            },
-            "memory_safety": {
-                "status": "completed",
-                "score": 100,
-                "tests_total": 4,
-                "tests_clean": 4,
-                "runtime_tools": {
-                    "status": "completed",
-                    "score": 100,
-                    "valgrind_results": [
-                        {
-                            "test_id": i,
-                            "memory_safe": True,
-                            "captured_output": long_log,
-                            "raw_log": long_log,
-                            "parsed_summary": {"error_count": 0, "all_heap_blocks_freed": True},
-                        }
-                        for i in range(4)
-                    ],
-                },
-            },
-            "scoring": {
-                "status": "completed",
-                "score": 100,
-                "weights_sum": 1,
-                "contributions": [
-                    {"metric": f"metric_{i}", "weight": 0.1, "score": 100, "contribution": 10}
-                    for i in range(9)
-                ],
+                "status": "completed", "score": 100, "weight": 1.0,
+                "tests_passed": 1, "tests_total": 1,
+                "results": [{"test_id": 1, "passed": True, "input": "3 4", "expected": "7", "actual": "7"}],
             },
         }
 
+    def _valid_review(self, evidence_id="E-METRIC-CORRECTNESS-001"):
+        return {
+            "summary": "The configured correctness test passed.",
+            "summary_evidence_ids": [evidence_id],
+            "findings": [],
+            "contradictions": [],
+            "recommendations": [],
+            "uncertainties": [],
+            "evidence_references": [evidence_id],
+        }
+
+    def test_evidence_payload_is_bounded_and_does_not_mutate_raw_logs(self):
+        long_log = "==123== Memcheck header\n" + ("irrelevant detail\n" * 500) + "==123== ERROR SUMMARY: 0 errors\n"
+        report = self._report()
+        report["memory_safety"] = {
+            "status": "completed", "score": 100, "tests_total": 4, "tests_clean": 4,
+            "runtime_tools": {"status": "completed", "score": 100, "valgrind_results": [
+                {"test_id": 1, "memory_safe": True, "captured_output": long_log, "raw_log": long_log,
+                 "parsed_summary": {"error_count": 0, "all_heap_blocks_freed": True}}
+            ]},
+        }
         prepared = _prepare_evidence(report)
         encoded = json.dumps(prepared, ensure_ascii=False)
-
         self.assertLessEqual(len(encoded), MAX_EVIDENCE_CHARS)
         self.assertEqual(report["memory_safety"]["runtime_tools"]["valgrind_results"][0]["raw_log"], long_log)
         self.assertNotIn("raw_log", encoded)
         self.assertTrue(prepared["llm_input_metadata"]["full_logs_preserved_in_report"])
 
     @patch("grading_agent.llm.reviewer._request_json")
-    def test_three_pass_review_uses_bounded_requests(self, request_json):
-        def structured(summary):
-            return {
-                "summary": summary,
-                "findings": [],
-                "contradictions": [],
-                "recommendations": [],
-                "evidence_references": [],
-                "uncertainties": [],
-            }
-
+    def test_intermediate_failed_pass_is_recovered_by_valid_final_pass(self, request_json):
+        valid = self._valid_review()
         request_json.side_effect = [
-            (structured("initial"), "{}"),
-            (structured("audited"), "{}"),
-            (structured("final"), "{}"),
+            (valid, json.dumps(valid)),
+            (None, ""), (None, ""),
+            (valid, json.dumps(valid)),
         ]
-        report = {
-            "source_code": "int main(void) { return 0; }",
-            "correctness": {"score": 100, "tests_passed": 2, "tests_total": 2},
-            "memory_safety": {"status": "completed", "score": 100},
+        result = review_evidence(self._report(), max_iterations=3)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["llm_status"], "completed")
+        self.assertEqual(result["final_synthesis_status"], "llm_advisory_completed")
+        self.assertEqual(result["request_attempts"], 4)
+        self.assertEqual(result["failed_passes"], [])
+        self.assertIsNone(result["llm_error"])
+        self.assertEqual([p["iteration"] for p in result["recovered_passes"]], [2])
+
+    @patch("grading_agent.llm.reviewer._request_json")
+    def test_failed_final_pass_falls_back_and_marks_partial(self, request_json):
+        valid = self._valid_review()
+        from grading_agent.llm.reviewer import build_deterministic_review_fallback
+        report = self._report()
+        expected_deterministic_review = build_deterministic_review_fallback(report)["review"]
+        request_json.side_effect = [
+            (valid, json.dumps(valid)),
+            (None, ""), (None, ""),
+        ]
+        result = review_evidence(report, max_iterations=2)
+        self.assertEqual(result["status"], "completed_with_warnings")
+        self.assertEqual(result["final_synthesis_status"], "previous_valid_review_used")
+        self.assertEqual(result["llm_status"], "partial")
+        self.assertEqual(result["review_engine"], "python_deterministic_evidence_review")
+        self.assertEqual(result["review"], expected_deterministic_review)
+        self.assertIn("configured correctness test", result["llm_advisory"]["summary"])
+
+    @patch("grading_agent.llm.reviewer._request_json")
+    def test_all_empty_responses_are_not_marked_completed(self, request_json):
+        request_json.side_effect = [(None, ""), (None, "")]
+        result = review_evidence(self._report(), max_iterations=1)
+        self.assertEqual(result["status"], "completed_with_warnings")
+        self.assertEqual(result["final_synthesis_status"], "deterministic_fallback")
+        self.assertEqual(result["review_engine"], "python_deterministic_evidence_review")
+        self.assertEqual(result["llm_status"], "unavailable")
+        self.assertTrue(result["review"]["summary"])
+        self.assertEqual(result["claim_validation"]["status"], "completed")
+        self.assertGreater(result["claim_validation"]["verified_claim_count"], 0)
+        self.assertIsNone(result["llm_advisory"])
+
+    @patch("grading_agent.llm.reviewer._request_json")
+    def test_primary_review_is_identical_when_llm_is_unavailable(self, request_json):
+        request_json.return_value = (None, "")
+        report = self._report()
+        first = review_evidence(report, max_iterations=1)
+        second = review_evidence(report, max_iterations=1)
+        self.assertEqual(first["review_engine"], "python_deterministic_evidence_review")
+        self.assertEqual(second["review_engine"], "python_deterministic_evidence_review")
+        self.assertEqual(first["review"], second["review"])
+        self.assertEqual(first["claim_validation"]["status"], "completed")
+        self.assertEqual(second["claim_validation"]["status"], "completed")
+        self.assertEqual(first["llm_status"], "unavailable")
+        self.assertEqual(second["llm_status"], "unavailable")
+
+    def test_deterministic_fallback_rebuilds_ledger_and_reports_metric_status(self):
+        from grading_agent.llm.reviewer import build_deterministic_review_fallback
+        report = self._report()
+        # The basic I/O analyzer may omit a status field but has complete test evidence.
+        report["correctness"].pop("status", None)
+        report["evidence_ledger"] = [{"id": "STALE", "kind": "metric_summary", "facts": {}}]
+        result = build_deterministic_review_fallback(report, reason="mock model failure")
+        ledger = {item["id"]: item for item in report["evidence_ledger"]}
+        self.assertEqual(ledger["E-METRIC-CORRECTNESS-001"]["facts"]["status"], "completed")
+        self.assertIn("E-CORRECTNESS-SUMMARY-001", result["review"]["summary_evidence_ids"])
+        self.assertEqual(result["claim_validation"]["status"], "completed")
+        self.assertEqual(result["review_engine"], "python_deterministic_evidence_review")
+
+    def test_compacted_prompt_keeps_aggregate_test_summaries(self):
+        from grading_agent.llm.evidence import build_evidence_ledger
+        from grading_agent.llm.reviewer import _compact_ledger
+        report = self._report()
+        report["configuration"]["enabled_metrics"] = [
+            {"name": "correctness"}, {"name": "logical"}
+        ]
+        report["logical"] = {
+            "score": 100, "tests_passed": 2, "tests_total": 2, "compiled": True,
+            "results": [
+                {"test_id": "E1", "passed": True, "input": "2147483647 1", "expected": "2147483648", "actual": "2147483648", "tags": ["signed_int32_overflow"]},
+                {"test_id": "E2", "passed": True, "input": "-2147483648 -1", "expected": "-2147483649", "actual": "-2147483649", "tags": ["signed_int32_overflow"]},
+            ],
         }
-        result = review_evidence(report, max_iterations=3)
-        self.assertEqual(result["review_iterations"], 3)
-        self.assertEqual(request_json.call_count, 3)
-        for call in request_json.call_args_list:
-            self.assertLessEqual(call.kwargs["max_tokens"], REVIEW_MAX_TOKENS)
-            user_message = call.args[0][1]["content"]
-            self.assertLess(len(user_message), 6_000)
+        ledger = build_evidence_ledger(report, {"problem_contract": {"operand_type": "int32", "sum_type": "int64"}})
+        ids = {item["id"] for item in _compact_ledger(ledger)}
+        self.assertIn("E-CORRECTNESS-SUMMARY-001", ids)
+        self.assertIn("E-LOGICAL-SUMMARY-001", ids)
+        self.assertIn("E-LOGICAL-OVERFLOW-COVERAGE-001", ids)
 
     @patch("grading_agent.llm.reviewer.requests.post")
     def test_http_error_includes_server_response_body(self, post):
@@ -103,59 +158,55 @@ class ReviewerContextTests(unittest.TestCase):
         response._content = b'{"error":{"message":"request exceeds available context"}}'
         response.url = "http://127.0.0.1:8080/v1/chat/completions"
         post.return_value = response
-
         with self.assertRaisesRegex(RuntimeError, "request exceeds available context"):
             _request_json([{"role": "user", "content": "test"}])
-
-    @patch("grading_agent.llm.reviewer._request_json")
-    def test_failed_final_pass_falls_back_to_latest_valid_review(self, request_json):
-        valid = {
-            "summary": "The submission passes the configured tests; no confirmed defects were found.",
-            "findings": [],
-            "contradictions": [],
-            "recommendations": [],
-            "evidence_references": ["correctness", "memory_safety"],
-            "uncertainties": [],
-        }
-        request_json.side_effect = [
-            (valid, json.dumps(valid)),
-            (None, ""), (None, ""),
-            (None, ""), (None, ""),
-        ]
-        result = review_evidence({"source_code": "int main(void){return 0;}"}, max_iterations=3)
-
-        self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["final_synthesis_status"], "failed_using_previous_valid_review")
-        self.assertIn("passes the configured tests", result["review"]["summary"])
-        self.assertTrue(result["review"]["uncertainties"])
-        self.assertEqual(result["request_attempts"], 5)
-        self.assertEqual(len(result["failed_passes"]), 2)
-
-    @patch("grading_agent.llm.reviewer._request_json")
-    def test_all_empty_responses_are_not_marked_completed(self, request_json):
-        request_json.side_effect = [(None, ""), (None, "")]
-        result = review_evidence({"source_code": "int main(void){return 0;}"}, max_iterations=1)
-
-        self.assertEqual(result["status"], "unavailable")
-        self.assertEqual(result["final_synthesis_status"], "failed_no_valid_review")
-        self.assertTrue(result["review"]["summary"])
-        self.assertEqual(result["intermediate_reviews"], [])
 
     @patch("grading_agent.llm.reviewer.requests.post")
     def test_requests_constrained_json_output(self, post):
         response = requests.Response()
         response.status_code = 200
-        response._content = json.dumps({
-            "choices": [{"message": {"content": json.dumps({"summary": "ok"})}}]
-        }).encode("utf-8")
+        response._content = json.dumps({"choices": [{"message": {"content": json.dumps({"summary": "ok"})}}]}).encode()
         response.url = "http://127.0.0.1:8080/v1/chat/completions"
         post.return_value = response
-
         parsed, _ = _request_json([{"role": "user", "content": "Return JSON."}], max_tokens=128)
-
         self.assertEqual(parsed, {"summary": "ok"})
-        payload = post.call_args.kwargs["json"]
-        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+
+    def test_memory_audit_rewrites_summary_when_all_model_findings_are_rejected(self):
+        source = "int main(void) { return 0; }\n"
+        audit = {
+            "summary": "Memory-safety issues found in the C source code.",
+            "limitations": [],
+            "findings": [{
+                "category": "use_after_free", "severity": "high", "line": 1,
+                "function": "main", "code_excerpt": "int main(void)",
+                "description": "Possible use after free.",
+                "evidence": "No deallocation lifecycle is present.",
+                "trigger_condition": "Any call to main.",
+                "recommendation": "Inspect object lifetime.",
+            }],
+        }
+        cleaned, error = _validate_memory_audit(audit, source, 10)
+        self.assertIsNone(error)
+        self.assertEqual(cleaned["findings"], [])
+        self.assertEqual(len(cleaned["rejected_findings"]), 1)
+        self.assertIn("No validated memory-safety defects", cleaned["summary"])
+
+    def test_source_audit_requires_exact_source_excerpt(self):
+        source = "int main(void) {\n    int value = 0;\n    return value;\n}\n"
+        base = {"summary": "A source inspection was performed.", "limitations": [], "findings": [{
+            "category": "uninitialized_read", "severity": "high", "line": 2,
+            "function": "main", "code_excerpt": "int value = value;",
+            "description": "Example finding", "evidence": "Exact line", "trigger_condition": "test", "recommendation": "review",
+        }]}
+        cleaned, error = _validate_memory_audit(base, source, 10)
+        self.assertIsNone(cleaned)
+        self.assertIn("not present", error)
+
+        clean_audit = {"summary": "No concrete memory defect was identified in this source snippet.", "findings": [], "limitations": ["Only supplied source was examined."]}
+        cleaned, error = _validate_memory_audit(clean_audit, source, 10)
+        self.assertIsNone(error)
+        self.assertEqual(cleaned["findings"], [])
 
 
 if __name__ == "__main__":

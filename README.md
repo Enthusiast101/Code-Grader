@@ -1,38 +1,31 @@
-# Focused LLM Review + Modularity Fix
+# FormAI-v2 program-level aggregation patch
 
-This is a **small patch**, not a full project replacement. Copy these files into the root of your existing Code-Checking-Assistant repository, preserving the directory structure:
+This focused patch fixes the FormAI-v2 benchmark's handling of multiple verification records for one C source file.
 
-- `src/grading_agent/llm/reviewer.py`
-- `src/grading_agent/reporting/text_report.py`
-- `rules.json`
+## Replace these files
 
-The three files under `tests/` are new/updated regression tests; copy them into the existing `tests/` directory.
+- `src/grading_agent/benchmark/formai_sample.py`
+- `src/grading_agent/benchmark/formai_evaluate.py`
 
-## What changed
+Copy `tests/test_formai_dataset_aggregation.py` into the project's `tests/` directory.
 
-1. The general LLM reviewer requests JSON-mode output from llama.cpp, validates the required fields, retries an empty/invalid response once per pass, and never labels an empty response as `completed`.
-2. If final synthesis fails, the latest valid earlier review is retained and the overall status becomes `partial`; if all attempts fail, the status is `unavailable` with a non-empty explanation. Failed passes are retained as diagnostics.
-3. The text report displays `completed`, `partial`, and `unavailable` states, including failure details, rather than suppressing non-completed review information.
-4. `MAX_SOURCE_CHARS = 6000` is defined in `reviewer.py` for the dedicated memory-safety source audit.
-5. The `sum_two_integers` rules no longer require a helper function: `expect_helpers=false`, `min_functions=1`. This avoids penalizing a one-function implementation for unnecessary decomposition. Keep helper requirements enabled for assignments that explicitly demand them.
+## What changes
 
-## Run focused tests
+- Reservoir-samples **unique `file_name` programs**, not raw verification rows.
+- Aggregates all known vulnerable lines and error types for each vulnerable source program.
+- Labels a program `VULNERABLE` when any record confirms a vulnerability.
+- Labels a program `SAFE` only when it has non-vulnerable records and no timeout/unknown verification record.
+- Excludes unknown/timeout-only programs from binary safe-vulnerable sampling.
+- Rejects inconsistent source code for the same filename rather than silently merging it.
+- Evaluates one prediction per program; localization succeeds when the predicted line is within tolerance of any known vulnerable line, and type accuracy checks against any recorded error type.
+- Rejects duplicate prediction filenames and reports predictions that do not occur in the selected ground truth.
 
-```bash
-PYTHONPATH=src python -m unittest \
-  tests.test_reviewer_context \
-  tests.test_modularity_simple_task \
-  tests.test_text_report \
-  tests.test_memory_safety_scoring \
-  tests.test_rule_loader -v
-```
+## Test
 
-Then rerun grading:
+From the repository root:
 
 ```bash
-python -m grading_agent.main
+PYTHONPATH=src python -m unittest tests.test_formai_dataset_aggregation -v
 ```
 
-Changing `rules.json` changes its SHA-256, so the next report will show a new rules hash. Recomputing your supplied report with the revised modularity rule gives **98.80/100**, assuming all other metric results remain unchanged.
-
-The unit tests validate JSON-mode requests, retry behavior, valid-review fallback, status reporting, and modularity scoring. The live request to your local llama.cpp server must still be confirmed in your environment.
+The prediction modes and their CLI remain unchanged.

@@ -15,13 +15,13 @@ class AnalyzerContext:
     rules: dict[str, Any]
     source_code: str
     source_filename: str
-    test_case_cache: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    test_case_cache: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     @property
     def params(self) -> dict[str, Any]:
         return self.metric["params"]
 
-    def get_test_cases(self) -> list[dict[str, str]]:
+    def get_test_cases(self) -> list[dict[str, Any]]:
         resolved = self.params.get("resolved_testset_path")
         if not resolved:
             raise ValueError(f"Analyzer '{self.metric['analyzer']}' requires params.testset_path.")
@@ -168,7 +168,7 @@ def run_analyzer(
     rules: dict[str, Any],
     source_code: str,
     source_filename: str,
-    test_case_cache: dict[str, list[dict[str, str]]] | None = None,
+    test_case_cache: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     try:
         handler = ANALYZER_REGISTRY[analyzer_name]

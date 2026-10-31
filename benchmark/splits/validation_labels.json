@@ -1,0 +1,1114 @@
+[
+  {
+    "file_name": "codellama_13b-10036.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "codellama_13b-182.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "codellama_13b-6103.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "codellama_13b-8795.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "codellama_13b-9915.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-13452.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 40,
+    "vulnerable_lines": [
+      40
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-23785.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 33,
+    "vulnerable_lines": [
+      33,
+      36
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "falcon180b-24510.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 12,
+    "vulnerable_lines": [
+      12,
+      13,
+      59,
+      63,
+      68
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf",
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-28673.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 19,
+    "vulnerable_lines": [
+      19
+    ],
+    "error_type": "dereference failure: accessed expired variable pointer",
+    "error_types": [
+      "dereference failure: accessed expired variable pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-35281.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 49,
+    "vulnerable_lines": [
+      49,
+      50,
+      53,
+      54
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer",
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-35463.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 51,
+    "vulnerable_lines": [
+      51
+    ],
+    "error_type": "arithmetic overflow on add",
+    "error_types": [
+      "arithmetic overflow on add"
+    ]
+  },
+  {
+    "file_name": "falcon180b-35976.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-39052.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 9,
+    "vulnerable_lines": [
+      9,
+      26,
+      43,
+      44,
+      47
+    ],
+    "error_type": "VLA array size in bytes overflows address space size",
+    "error_types": [
+      "VLA array size in bytes overflows address space size",
+      "buffer overflow on scanf",
+      "dereference failure: array bounds violated",
+      "division by zero"
+    ]
+  },
+  {
+    "file_name": "falcon180b-45818.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-45964.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-47395.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 52,
+    "vulnerable_lines": [
+      52,
+      65,
+      67
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf",
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-51090.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 51,
+    "vulnerable_lines": [
+      51,
+      62
+    ],
+    "error_type": "array bounds violated: upper bound",
+    "error_types": [
+      "array bounds violated: upper bound",
+      "buffer overflow on sscanf"
+    ]
+  },
+  {
+    "file_name": "falcon180b-55767.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-56512.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 21,
+    "vulnerable_lines": [
+      21,
+      22
+    ],
+    "error_type": "array bounds violated: lower bound",
+    "error_types": [
+      "array bounds violated: lower bound"
+    ]
+  },
+  {
+    "file_name": "falcon180b-59148.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 58,
+    "vulnerable_lines": [
+      58,
+      60
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-66075.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 24,
+    "vulnerable_lines": [
+      24,
+      25,
+      26,
+      27,
+      33,
+      34
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "falcon180b-67142.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-69234.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon180b-8270.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 27,
+    "vulnerable_lines": [
+      27,
+      46
+    ],
+    "error_type": "arithmetic overflow on add",
+    "error_types": [
+      "arithmetic overflow on add"
+    ]
+  },
+  {
+    "file_name": "falcon180b-8342.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 25,
+    "vulnerable_lines": [
+      25,
+      39,
+      48,
+      49,
+      50,
+      56,
+      58,
+      67,
+      68,
+      76
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf",
+      "dereference failure: NULL pointer",
+      "dereference failure: forgotten memory"
+    ]
+  },
+  {
+    "file_name": "falcon180b-9746.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 22,
+    "vulnerable_lines": [
+      22,
+      25
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "falcon2-11B-10850.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 16,
+    "vulnerable_lines": [
+      16
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "falcon2-11B-11254.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 17,
+    "vulnerable_lines": [
+      17
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer",
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "falcon2-11B-4991.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "falcon2-11B-8695.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemini_pro-11745.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemini_pro-15562.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 13,
+    "vulnerable_lines": [
+      13,
+      14
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-19143.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemini_pro-19450.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 141,
+    "vulnerable_lines": [
+      141
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-2127.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 63,
+    "vulnerable_lines": [
+      63
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-22480.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 37,
+    "vulnerable_lines": [
+      37,
+      39
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-22701.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 41,
+    "vulnerable_lines": [
+      41
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-23618.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 61,
+    "vulnerable_lines": [
+      61
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-25884.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 31,
+    "vulnerable_lines": [
+      31,
+      36,
+      39
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-2607.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 13,
+    "vulnerable_lines": [
+      13,
+      14,
+      72,
+      74
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemini_pro-35351.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemini_pro-39652.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemini_pro-6227.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-10915.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 15,
+    "vulnerable_lines": [
+      15,
+      18
+    ],
+    "error_type": "arithmetic overflow on sub",
+    "error_types": [
+      "arithmetic overflow on sub",
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemma7b-12529.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 35,
+    "vulnerable_lines": [
+      35
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gemma7b-13563.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 19,
+    "vulnerable_lines": [
+      19
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemma7b-15223.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-23505.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-24094.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-25799.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-32178.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-35767.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 21,
+    "vulnerable_lines": [
+      21,
+      22
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemma7b-37696.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-39601.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 19,
+    "vulnerable_lines": [
+      19,
+      20,
+      22,
+      23,
+      25,
+      31,
+      35,
+      47,
+      48,
+      62
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer",
+      "dereference failure: forgotten memory"
+    ]
+  },
+  {
+    "file_name": "gemma7b-41920.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-635.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gemma7b-7735.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 14,
+    "vulnerable_lines": [
+      14,
+      15
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemma7b-8141.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 13,
+    "vulnerable_lines": [
+      13
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gemma7b-8699.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-10807.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-10830.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-13119.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-14691.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 26,
+    "vulnerable_lines": [
+      26,
+      28,
+      30,
+      32,
+      36,
+      40,
+      61,
+      63,
+      118
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf",
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-19114.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-22855.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 45,
+    "vulnerable_lines": [
+      45,
+      46
+    ],
+    "error_type": "dereference failure: invalid pointer",
+    "error_types": [
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-23374.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-24137.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-27185.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 34,
+    "vulnerable_lines": [
+      34
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gpt35-29426.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 34,
+    "vulnerable_lines": [
+      34,
+      36,
+      43,
+      48,
+      50
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-30283.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 22,
+    "vulnerable_lines": [
+      22,
+      45,
+      46
+    ],
+    "error_type": "array bounds violated: lower bound",
+    "error_types": [
+      "array bounds violated: lower bound",
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gpt35-31776.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-32355.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 60,
+    "vulnerable_lines": [
+      60,
+      77,
+      78
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer",
+      "dereference failure: array bounds violated",
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-37327.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-37733.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-37908.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-38318.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 34,
+    "vulnerable_lines": [
+      34
+    ],
+    "error_type": "dereference failure: invalid pointer",
+    "error_types": [
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-39645.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 30,
+    "vulnerable_lines": [
+      30
+    ],
+    "error_type": "dereference failure: invalid pointer",
+    "error_types": [
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-50198.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-55699.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 58,
+    "vulnerable_lines": [
+      58,
+      104,
+      157
+    ],
+    "error_type": "arithmetic overflow on shl",
+    "error_types": [
+      "arithmetic overflow on shl",
+      "array bounds violated: upper bound",
+      "dereference failure: forgotten memory"
+    ]
+  },
+  {
+    "file_name": "gpt35-60573.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 153,
+    "vulnerable_lines": [
+      153
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gpt35-62784.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 22,
+    "vulnerable_lines": [
+      22,
+      31,
+      35,
+      39,
+      51,
+      56
+    ],
+    "error_type": "array bounds violated: lower bound",
+    "error_types": [
+      "array bounds violated: lower bound",
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gpt35-7193.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 20,
+    "vulnerable_lines": [
+      20,
+      21,
+      25,
+      27,
+      28,
+      29,
+      139
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf",
+      "dereference failure: NULL pointer"
+    ]
+  },
+  {
+    "file_name": "gpt35-76919.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt35-9366.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt4o_mini-10327.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt4o_mini-13858.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt4o_mini-14079.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 39,
+    "vulnerable_lines": [
+      39
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gpt4o_mini-27468.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt4o_mini-30158.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 19,
+    "vulnerable_lines": [
+      19,
+      23,
+      33,
+      37,
+      43
+    ],
+    "error_type": "arithmetic overflow on floating-point ieee_mul",
+    "error_types": [
+      "arithmetic overflow on floating-point ieee_mul",
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "gpt4o_mini-33812.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt4o_mini-35141.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 81,
+    "vulnerable_lines": [
+      81
+    ],
+    "error_type": "array bounds violated: upper bound",
+    "error_types": [
+      "array bounds violated: upper bound"
+    ]
+  },
+  {
+    "file_name": "gpt4o_mini-38040.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 15,
+    "vulnerable_lines": [
+      15,
+      21
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer",
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "gpt4o_mini-7205.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "gpt4o_mini-9154.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 34,
+    "vulnerable_lines": [
+      34,
+      138
+    ],
+    "error_type": "buffer overflow on scanf",
+    "error_types": [
+      "buffer overflow on scanf"
+    ]
+  },
+  {
+    "file_name": "llama2-13B-11889.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "llama2-13B-1394.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "llama2-13B-18992.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "llama2-13B-19524.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  },
+  {
+    "file_name": "llama2-13B-3654.c",
+    "ground_truth_category": "VULNERABLE",
+    "vulnerable_line": 53,
+    "vulnerable_lines": [
+      53,
+      68
+    ],
+    "error_type": "dereference failure: NULL pointer",
+    "error_types": [
+      "dereference failure: NULL pointer",
+      "dereference failure: invalid pointer"
+    ]
+  },
+  {
+    "file_name": "llama2-13B-5353.c",
+    "ground_truth_category": "SAFE",
+    "vulnerable_line": null,
+    "vulnerable_lines": [],
+    "error_type": null,
+    "error_types": []
+  }
+]

@@ -1,6 +1,6 @@
 import unittest
 
-from grading_agent.scoring.memory_safety import calculate_memory_safety_score
+from grading_agent.scoring.memory_safety import calculate_memory_safety_score, finalize_memory_safety_result
 
 
 class MemorySafetyScoringTests(unittest.TestCase):
@@ -98,6 +98,41 @@ class MemorySafetyScoringTests(unittest.TestCase):
         result = self.calculate(valgrind=valgrind)
         self.assertEqual(result["score"], 86.0)
         self.assertEqual(result["runtime_tools"]["score"], 80.0)
+
+
+    def test_unscored_llm_claims_do_not_reduce_memory_score(self):
+        audit = {
+            "status": "completed_with_warnings",
+            "audit": {
+                "findings": [],
+                "rejected_findings": [{"category": "integer_overflow", "reason": "Not a memory-safety issue."}],
+            },
+        }
+        result = self.calculate(audit=audit)
+        self.assertEqual(result["score"], 100.0)
+        self.assertEqual(result["status"], "completed_with_warnings")
+        self.assertEqual(result["llm_source_audit"]["rejected_unscored_findings"], 1)
+
+
+    def test_warning_audit_keeps_verified_score_and_marks_metric_with_warnings(self):
+        memory_result = dict(self.valgrind)
+        audit = {
+            "status": "completed_with_warnings",
+            "audit": {
+                "findings": [],
+                "rejected_findings": [{"category": "integer_overflow", "reason": "Not a memory-safety issue."}],
+            },
+        }
+        finalized = finalize_memory_safety_result(
+            memory_result,
+            audit,
+            valgrind_weight=0.7,
+            llm_audit_weight=0.3,
+            severity_penalties=self.penalties,
+        )
+        self.assertEqual(finalized["status"], "completed_with_warnings")
+        self.assertEqual(finalized["score"], 100.0)
+        self.assertEqual(finalized["composite_score"]["status"], "completed_with_warnings")
 
     def test_same_finding_is_deduplicated(self):
         finding = {

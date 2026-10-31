@@ -5,7 +5,6 @@ Summary: Rule-driven C code grading with Docker isolation and local LLM feedback
 Requires-Python: >=3.11
 Requires-Dist: requests
 Requires-Dist: docker>=7.0.0
-Requires-Dist: py-cpuinfo>=9.0.0
 Requires-Dist: lizard==1.17.10
 Provides-Extra: benchmark
 Requires-Dist: ijson>=3.2.3; extra == "benchmark"

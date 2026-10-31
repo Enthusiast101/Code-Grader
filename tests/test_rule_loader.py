@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from grading_agent.config.rule_loader import load_rules, RuleValidationError
+from grading_agent.config.rule_loader import load_rules, load_test_cases, RuleValidationError
 
 
 class RuleLoaderTests(unittest.TestCase):
@@ -142,6 +142,30 @@ class RuleLoaderTests(unittest.TestCase):
         loaded = load_rules(self.rules_path, self.root)
         self.assertEqual(loaded["metrics"][1]["analyzer"], "memory_safety")
         self.assertIn("llm_audit_weight", loaded["metrics"][1]["params"])
+
+    def test_preserves_test_ids_descriptions_and_tags(self):
+        (self.root / "tests/sum/testcases.json").write_text(
+            json.dumps([{
+                "id": "CASE-01", "description": "simple addition",
+                "tags": ["basic"], "input": "1 2\n", "expected": "3\n",
+            }]),
+            encoding="utf-8",
+        )
+        cases = load_test_cases(self.root / "tests/sum/testcases.json")
+        self.assertEqual(cases[0]["id"], "CASE-01")
+        self.assertEqual(cases[0]["description"], "simple addition")
+        self.assertEqual(cases[0]["tags"], ["basic"])
+
+    def test_rejects_duplicate_test_ids(self):
+        (self.root / "tests/sum/testcases.json").write_text(
+            json.dumps([
+                {"id": "DUP", "input": "1 2\n", "expected": "3\n"},
+                {"id": "DUP", "input": "2 3\n", "expected": "5\n"},
+            ]),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuleValidationError, "Duplicate test case id"):
+            load_rules(self.rules_path, self.root)
 
     def test_rejects_invalid_test_case_schema(self):
         (self.root / "tests/sum/testcases.json").write_text(

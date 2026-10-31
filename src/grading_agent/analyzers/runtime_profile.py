@@ -9,7 +9,7 @@ from grading_agent.sandbox.docker_sandbox import DockerSandbox
 def run_runtime_profile(
     sandbox: DockerSandbox,
     source_code: str,
-    test_cases: list[dict[str, str]],
+    test_cases: list[dict[str, Any]],
     filename: str = "main.c",
     compile_timeout_s: int = 10,
     run_timeout_s: float = 2.0,
@@ -37,7 +37,14 @@ def run_runtime_profile(
             if execution["timed_out"] or execution["exit_code"] != 0:
                 failure = {"exit_code": execution["exit_code"], "timed_out": execution["timed_out"], "output": execution["output"]}
                 break
-        samples.append({"test_id": test_index, "durations_ms": durations, "median_ms": round(statistics.median(durations), 3) if durations else None, "failure": failure})
+        samples.append({
+            "test_id": case.get("id", test_index),
+            "description": case.get("description", ""),
+            "tags": case.get("tags", []),
+            "durations_ms": durations,
+            "median_ms": round(statistics.median(durations), 3) if durations else None,
+            "failure": failure,
+        })
 
     medians = [item["median_ms"] for item in samples if item["median_ms"] is not None]
     if len(medians) != len(test_cases) or not medians:

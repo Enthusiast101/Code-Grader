@@ -1,7 +1,87 @@
 [
-  {"input": "2147483647 0\n", "expected": "2147483647\n"},
-  {"input": "-2147483648 0\n", "expected": "-2147483648\n"},
-  {"input": "  12     30   \n", "expected": "42\n"},
-  {"input": "-100 -200\n", "expected": "-300\n"},
-  {"input": "1000000000 1000000000\n", "expected": "2000000000\n"}
+  {
+    "id": "E01",
+    "description": "Largest signed 32-bit operand plus zero",
+    "tags": [
+      "int32_boundary"
+    ],
+    "input": "2147483647 0\n",
+    "expected": "2147483647\n"
+  },
+  {
+    "id": "E02",
+    "description": "Smallest signed 32-bit operand plus zero",
+    "tags": [
+      "int32_boundary"
+    ],
+    "input": "-2147483648 0\n",
+    "expected": "-2147483648\n"
+  },
+  {
+    "id": "E03",
+    "description": "Input separated by irregular whitespace",
+    "tags": [
+      "whitespace"
+    ],
+    "input": "  12     30   \n",
+    "expected": "42\n"
+  },
+  {
+    "id": "E04",
+    "description": "Two negative operands",
+    "tags": [
+      "negative"
+    ],
+    "input": "-100 -200\n",
+    "expected": "-300\n"
+  },
+  {
+    "id": "E05",
+    "description": "Large sum still within signed 32-bit range",
+    "tags": [
+      "large_value"
+    ],
+    "input": "1000000000 1000000000\n",
+    "expected": "2000000000\n"
+  },
+  {
+    "id": "E06",
+    "description": "Positive signed 32-bit addition overflow",
+    "tags": [
+      "signed_int32_overflow",
+      "positive_overflow"
+    ],
+    "input": "2147483647 1\n",
+    "expected": "2147483648\n"
+  },
+  {
+    "id": "E07",
+    "description": "Negative signed 32-bit addition overflow",
+    "tags": [
+      "signed_int32_overflow",
+      "negative_overflow"
+    ],
+    "input": "-2147483648 -1\n",
+    "expected": "-2147483649\n"
+  },
+  {
+    "id": "E08",
+    "description": "Maximum signed 32-bit operands",
+    "tags": [
+      "signed_int32_overflow",
+      "maximum_operands"
+    ],
+    "input": "2147483647 2147483647\n",
+    "expected": "4294967294\n"
+  },
+  {
+    "id": "E09",
+    "description": "Minimum signed 32-bit operands",
+    "tags": [
+      "signed_int32_overflow",
+      "minimum_operands"
+    ],
+    "input": "-2147483648 -2147483648\n",
+    "expected": "-4294967296\n"
+  }
 ]

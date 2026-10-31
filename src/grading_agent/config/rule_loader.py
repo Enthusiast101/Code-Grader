@@ -107,7 +107,7 @@ def _percentage_penalty(value: Any, field_name: str) -> float:
     return float(value)
 
 
-def load_test_cases(path: Path) -> list[dict[str, str]]:
+def load_test_cases(path: Path) -> list[dict[str, Any]]:
     """Load and validate JSON input/expected-output test cases."""
     try:
         with path.open("r", encoding="utf-8") as file:
@@ -122,7 +122,8 @@ def load_test_cases(path: Path) -> list[dict[str, str]]:
             f"Test-case file must contain a non-empty JSON array: {path}"
         )
 
-    validated: list[dict[str, str]] = []
+    validated: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for index, case in enumerate(cases, start=1):
         if (
             not isinstance(case, dict)
@@ -133,10 +134,30 @@ def load_test_cases(path: Path) -> list[dict[str, str]]:
                 f"Test case {index} in {path} must contain string "
                 "'input' and 'expected' fields."
             )
-        validated.append({
+        case_id = case.get("id")
+        if case_id is not None:
+            if not isinstance(case_id, str) or not case_id.strip():
+                raise RuleValidationError(f"Test case {index} in {path} has invalid 'id'; expected a non-empty string.")
+            if case_id in seen_ids:
+                raise RuleValidationError(f"Duplicate test case id '{case_id}' in {path}.")
+            seen_ids.add(case_id)
+        tags = case.get("tags", [])
+        description = case.get("description", "")
+        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+            raise RuleValidationError(f"Test case {index} in {path} has invalid 'tags'; expected a list of strings.")
+        if not isinstance(description, str):
+            raise RuleValidationError(f"Test case {index} in {path} has invalid 'description'; expected a string.")
+        validated_case: dict[str, Any] = {
             "input": case["input"],
             "expected": case["expected"],
-        })
+        }
+        if case_id is not None:
+            validated_case["id"] = case_id
+        if description:
+            validated_case["description"] = description
+        if tags:
+            validated_case["tags"] = tags
+        validated.append(validated_case)
 
     return validated
 
@@ -500,7 +521,16 @@ def load_rules(
             f"received {sum(enabled_weights):.6f}."
         )
 
+    problem_contract = rules.get("problem_contract", {})
+    if not isinstance(problem_contract, dict):
+        raise RuleValidationError("'problem_contract' must be a JSON object when provided.")
+    for key in ("description", "operand_type", "sum_type", "input_range", "output_rule"):
+        value = problem_contract.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise RuleValidationError(f"'problem_contract.{key}' must be a non-empty string when provided.")
+
     normalized_rules = dict(rules)
+    normalized_rules["problem_contract"] = dict(problem_contract)
     normalized_rules["time_limit_s"] = time_limit_s
     normalized_rules["memory_limit_mb"] = memory_limit_mb
     normalized_rules["submission"] = {

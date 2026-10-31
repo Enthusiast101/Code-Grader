@@ -86,7 +86,7 @@
       "weight": 0.17,
       "enabled": true,
       "params": {
-        "testset_path": "tests/sum/testcases.json",
+        "testset_path": "tests/sum/edge_cases.json",
         "run_sanitizers": true
       }
     },
@@ -114,5 +114,12 @@
   ],
   "llm_review": {
     "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Read two signed 32-bit integers separated by whitespace and print their mathematical sum followed by a newline.",
+    "operand_type": "int32",
+    "sum_type": "int64",
+    "input_range": "-2147483648 through 2147483647 for each operand",
+    "output_rule": "The sum must be printed exactly as a signed 64-bit decimal integer."
   }
 }

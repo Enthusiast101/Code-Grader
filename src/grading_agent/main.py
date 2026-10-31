@@ -13,9 +13,9 @@ from typing import Any
 from grading_agent.analyzers.registry import run_analyzer
 from grading_agent.config.rule_loader import load_rules
 from grading_agent.llm.reviewer import (
-    review_evidence,
-    review_memory_safety_source,
+    review_evidence, review_memory_safety_source, build_deterministic_evidence_review,
 )
+from grading_agent.llm.evidence import build_evidence_ledger
 from grading_agent.scoring.memory_safety import calculate_memory_safety_score
 from grading_agent.scoring.overall import calculate_overall_score
 from grading_agent.reporting.text_report import render_text_report
@@ -100,7 +100,12 @@ def _record_unavailable_memory_audits(
             memory_result["score_scale"] = "0-100"
 
 
-def _review_with_local_llm(report: dict[str, Any], *, max_iterations: int = 3) -> dict[str, Any]:
+def _review_with_local_llm(
+    report: dict[str, Any],
+    *,
+    rules: dict[str, Any],
+    max_iterations: int = 3,
+) -> dict[str, Any]:
     """Run the dedicated memory source audit and general evidence review."""
     process = None
     try:
@@ -155,7 +160,7 @@ def _review_with_local_llm(report: dict[str, Any], *, max_iterations: int = 3) -
 
         # General evidence review sees the Valgrind logs, source-audit findings,
         # and composite memory score. It does not set or change any score.
-        return review_evidence(report, max_iterations=max_iterations)
+        return review_evidence(report, rules=rules, max_iterations=max_iterations)
     finally:
         _stop_llm_server(process)
 
@@ -189,7 +194,7 @@ def run_configured_analyzers(
     source_filename = source_path.name
 
     # The registry shares this cache across analyzers that use the same tests.
-    test_case_cache: dict[str, list[dict[str, str]]] = {}
+    test_case_cache: dict[str, list[dict[str, Any]]] = {}
 
     enabled_metrics = [
         metric for metric in rules["metrics"] if metric["enabled"]
@@ -206,6 +211,7 @@ def run_configured_analyzers(
         "configuration": {
             "time_limit_s": rules["time_limit_s"],
             "memory_limit_mb": rules["memory_limit_mb"],
+            "problem_contract": rules.get("problem_contract", {}),
             "enabled_metrics": [
                 {
                     "name": metric["name"],
@@ -339,21 +345,22 @@ def main() -> None:
 
         # Execute the analyzers selected by rules.json.
         report = run_configured_analyzers(rules)
+        report["evidence_ledger"] = build_evidence_ledger(report, rules)
 
         # Review all collected analyzer evidence with the local LLM.
         try:
             report["llm_review"] = _review_with_local_llm(
                 report,
+                rules=rules,
                 max_iterations=rules.get("llm_review", {}).get("max_iterations", 3),
             )
             logger.info("LLM evidence review completed.")
         except Exception as exc:
             logger.exception("LLM review unavailable.")
             _record_unavailable_memory_audits(report, exc)
-            report["llm_review"] = {
-                "status": "unavailable",
-                "error": str(exc),
-            }
+            report["llm_review"] = build_deterministic_evidence_review(
+                report, rules=rules, reason=f"Unexpected LLM-review exception: {type(exc).__name__}: {exc}"
+            )
 
         report["scoring"] = calculate_overall_score(
             rules["metrics"], report

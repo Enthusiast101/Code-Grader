@@ -24,6 +24,7 @@ ENV/
 .coverage
 .coverage.*
 htmlcov/
+data/
 
 # Local environment variables and secrets
 .env

@@ -7,7 +7,7 @@ from grading_agent.sandbox.docker_sandbox import DockerSandbox
 def run_io_tests(
     sandbox: DockerSandbox,
     source_code: str,
-    test_cases: list[dict[str, str]],
+    test_cases: list[dict[str, Any]],
     filename: str = "main.c",
     compile_timeout_s: int = 10,
     run_timeout_s: int = 2,
@@ -70,7 +70,9 @@ def run_io_tests(
         )
 
         results.append({
-            "test_id": index,
+            "test_id": case.get("id", index),
+            "description": case.get("description", ""),
+            "tags": case.get("tags", []),
             "passed": passed,
             "input": case["input"],
             "expected": expected,

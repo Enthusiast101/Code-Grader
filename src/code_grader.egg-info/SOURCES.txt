@@ -21,10 +21,16 @@ src/grading_agent/analyzers/runtime_profile.py
 src/grading_agent/analyzers/similarity.py
 src/grading_agent/analyzers/source_metrics.py
 src/grading_agent/analyzers/static_analysis.py
+src/grading_agent/benchmark/__init__.py
+src/grading_agent/benchmark/formai_evaluate.py
+src/grading_agent/benchmark/formai_predict.py
+src/grading_agent/benchmark/formai_sample.py
+src/grading_agent/benchmark/formai_split.py
 src/grading_agent/config/__init__.py
 src/grading_agent/config/rule_loader.py
 src/grading_agent/config/settings.py
 src/grading_agent/llm/__init__.py
+src/grading_agent/llm/evidence.py
 src/grading_agent/llm/reviewer.py
 src/grading_agent/llm/server.py
 src/grading_agent/reporting/__init__.py
@@ -35,6 +41,8 @@ src/grading_agent/scoring/__init__.py
 src/grading_agent/scoring/memory_safety.py
 src/grading_agent/scoring/overall.py
 tests/test_analyzer_registry.py
+tests/test_evidence_ledger.py
+tests/test_formai_dataset_aggregation.py
 tests/test_formai_predict.py
 tests/test_memory_safety_scoring.py
 tests/test_modularity_simple_task.py

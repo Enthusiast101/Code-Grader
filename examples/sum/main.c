@@ -1,12 +1,16 @@
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 
 int main(void) {
-    int a, b;
+    int32_t left;
+    int32_t right;
 
-    if (scanf("%d %d", &a, &b) != 2) {
+    if (scanf("%" SCNd32 " %" SCNd32, &left, &right) != 2) {
         return 1;
     }
 
-    printf("%d\n", a + b);
+    int64_t sum = (int64_t)left + (int64_t)right;
+    printf("%" PRId64 "\n", sum);
     return 0;
 }

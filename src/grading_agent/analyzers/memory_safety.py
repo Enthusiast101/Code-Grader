@@ -56,7 +56,7 @@ def _parse_valgrind_log(log: str) -> dict[str, Any]:
 def run_memory_safety(
     sandbox: DockerSandbox,
     source_code: str,
-    test_cases: list[dict[str, str]],
+    test_cases: list[dict[str, Any]],
     filename: str = "main.c",
     compile_timeout_s: int = 10,
     run_timeout_s: int = 5,
@@ -118,7 +118,9 @@ def run_memory_safety(
             and parsed["error_count"] == 0 and not parsed["diagnostics"]
         )
         vg_results.append({
-            "test_id": index,
+            "test_id": case.get("id", index),
+            "description": case.get("description", ""),
+            "tags": case.get("tags", []),
             "input": case["input"],
             # DockerSandbox combines stdout/stderr for bounded capture; this
             # field therefore includes program stdout and Valgrind diagnostics.
@@ -161,7 +163,8 @@ def run_memory_safety(
                 if inconclusive:
                     sanitizer_complete = False
                 sanitizer_results.append({
-                    "test_id": index, "input": case["input"], "output": output,
+                    "test_id": case.get("id", index), "description": case.get("description", ""),
+                    "tags": case.get("tags", []), "input": case["input"], "output": output,
                     "exit_code": run["exit_code"], "timed_out": timed_out,
                     "address_sanitizer_finding": address_issue,
                     "undefined_behavior_finding": undefined_issue,
