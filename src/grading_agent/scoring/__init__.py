@@ -1,1 +1,1 @@
-"""Deterministic scoring helpers for individual grading metrics."""
+"""Deterministic scoring helpers."""

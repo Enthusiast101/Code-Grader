@@ -1,2 +1,7 @@
 requests
 docker>=7.0.0
+py-cpuinfo>=9.0.0
+lizard==1.17.10
+
+[benchmark]
+ijson>=3.2.3

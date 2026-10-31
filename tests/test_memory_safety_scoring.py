@@ -84,6 +84,21 @@ class MemorySafetyScoringTests(unittest.TestCase):
         self.assertEqual(result["status"], "incomplete")
         self.assertIsNone(result["score"])
 
+    def test_runtime_tools_score_uses_valgrind_component_weight(self):
+        valgrind = {
+            **self.valgrind,
+            "runtime_tools": {
+                "status": "completed",
+                "score": 80.0,
+                "valgrind_score": 80.0,
+                "asan_ubsan_score": 20.0,
+                "scoring_note": "ASan/UBSan are supplementary and not weighted.",
+            },
+        }
+        result = self.calculate(valgrind=valgrind)
+        self.assertEqual(result["score"], 86.0)
+        self.assertEqual(result["runtime_tools"]["score"], 80.0)
+
     def test_same_finding_is_deduplicated(self):
         finding = {
             "category": "out_of_bounds_write",

@@ -12,7 +12,11 @@ dependencies = [
     "requests",
     "docker>=7.0.0",
     "py-cpuinfo>=9.0.0",
+    "lizard==1.17.10",
 ]
+
+[project.optional-dependencies]
+benchmark = ["ijson>=3.2.3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,31 +1,97 @@
 {
-    "problem": "sum_two_integers",
-    "time_limit_s": 2,
-    "memory_limit_mb": 512,
-
-    "submission": {
-        "language": "c",
-        "source_file": "examples/sum/main.c"
+  "problem": "sum_two_integers",
+  "time_limit_s": 2,
+  "memory_limit_mb": 512,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/sum/main.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.22,
+      "enabled": true,
+      "params": {"testset_path": "tests/sum/testcases.json"}
     },
-
-    "metrics": [
-        {
-            "name": "correctness",
-            "analyzer": "io_tests",
-            "weight": 0.60,
-            "enabled": true,
-            "params": {
-                "testset_path": "tests/sum/testcases.json"
-            }
-        },
-        {
-            "name": "memory_safety",
-            "analyzer": "memory_safety",
-            "weight": 0.40,
-            "enabled": true,
-            "params": {
-                "testset_path": "tests/sum/testcases.json"
-            }
-        }
-    ]
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "flags": ["-std=c11", "-Wall", "-Wextra", "-Wpedantic"],
+        "warning_penalty": 5
+      }
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.12,
+      "enabled": true,
+      "params": {"timeout_s": 15}
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {"expect_helpers": true, "min_functions": 2}
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {"max_cyclomatic": 8, "max_function_length": 40}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.10,
+      "enabled": true,
+      "params": {"testset_path": "tests/sum/edge_cases.json"}
+    },
+    {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.05,
+      "enabled": true,
+      "params": {
+        "testset_path": "tests/sum/runtime_cases.json",
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.17,
+      "enabled": true,
+      "params": {
+        "testset_path": "tests/sum/testcases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.10,
+      "enabled": true,
+      "params": {"max_line_length": 100}
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
+    }
+  ],
+  "llm_review": {"max_iterations": 3}
 }

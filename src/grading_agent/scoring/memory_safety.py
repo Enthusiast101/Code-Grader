@@ -176,9 +176,20 @@ def calculate_memory_safety_score(
         raise ValueError("Memory-safety component weights must sum to 1.0.")
 
     valgrind = _valgrind_component_score(valgrind_report)
+    runtime_tools = valgrind_report.get("runtime_tools")
+    if isinstance(runtime_tools, dict):
+        runtime_component = {
+            "status": runtime_tools.get("status", "inconclusive"),
+            "score": runtime_tools.get("score"),
+            "valgrind_score": runtime_tools.get("valgrind_score"),
+            "asan_ubsan_score": runtime_tools.get("asan_ubsan_score"),
+            "basis": runtime_tools.get("scoring_note"),
+        }
+    else:
+        runtime_component = valgrind
     llm = _llm_component_score(llm_audit, severity_penalties)
 
-    if valgrind["score"] is None or llm["score"] is None:
+    if runtime_component["score"] is None or llm["score"] is None:
         return {
             "status": "incomplete",
             "score": None,
@@ -187,13 +198,14 @@ def calculate_memory_safety_score(
                 "valgrind": valgrind_weight,
                 "llm_source_audit": llm_audit_weight,
             },
+            "runtime_tools": runtime_component,
             "valgrind": valgrind,
             "llm_source_audit": llm,
             "reason": "Both Valgrind and LLM source audit must complete before a composite score is issued.",
         }
 
     score = round(
-        valgrind_weight * valgrind["score"]
+        valgrind_weight * runtime_component["score"]
         + llm_audit_weight * llm["score"],
         2,
     )
@@ -206,7 +218,8 @@ def calculate_memory_safety_score(
             "valgrind": valgrind_weight,
             "llm_source_audit": llm_audit_weight,
         },
+        "runtime_tools": runtime_component,
         "valgrind": valgrind,
         "llm_source_audit": llm,
-        "formula": "valgrind_weight * valgrind_score + llm_audit_weight * llm_score",
+        "formula": "valgrind_weight * runtime_tools_score + llm_audit_weight * llm_score",
     }

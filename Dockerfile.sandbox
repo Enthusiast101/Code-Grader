@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6-dev \
     bash \
     coreutils \
+    cppcheck \
     valgrind \
     && rm -rf /var/lib/apt/lists/*
 

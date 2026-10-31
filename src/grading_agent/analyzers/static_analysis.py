@@ -1,88 +1,61 @@
-#used for checking compiler diagnostics, to check for compiler errors
-# Score = max(0, 1 - n * p), where n is warning count and p is the penalty per warning.
-#default penalty is 0.1
-import math
+"""Cppcheck-based static diagnostics."""
+from __future__ import annotations
+
+import re
 from typing import Any
 
 from grading_agent.sandbox.docker_sandbox import DockerSandbox
+
+
+CPP_CHECK_LINE = re.compile(r"^.*?:\d+:\d+:\s*(error|warning|style|performance|portability|information):\s*(.*)$", re.I)
+DEFAULT_PENALTIES = {
+    "error": 25.0,
+    "warning": 10.0,
+    "style": 3.0,
+    "performance": 4.0,
+    "portability": 3.0,
+    "information": 0.5,
+}
 
 
 def run_static_analysis(
     sandbox: DockerSandbox,
     source_code: str,
     filename: str = "main.c",
-    timeout_s: int = 10,
-    warning_penalty: float = 0.1,
+    timeout_s: float = 15,
+    severity_penalties: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """
-    Check C source code for syntax errors and compiler warnings.
-
-    The score starts at 1.0 and decreases for each warning.
-    Compilation errors or a timeout result in a score of 0.0.
-    """
-    if (
-        isinstance(warning_penalty, bool)
-        or not isinstance(warning_penalty, (int, float))
-        or not math.isfinite(warning_penalty)
-        or not 0 <= warning_penalty <= 1
-    ):
-        raise ValueError(
-            "warning_penalty must be a finite number between 0 and 1."
-        )
-
-    # Place the source file inside the isolated Docker workspace.
     sandbox.write_file(filename, source_code)
-
-    # Ask GCC to check the code without producing an executable.
-    analysis = sandbox.run(
-        [
-            "gcc",
-            "-std=c11",
-            "-Wall",
-            "-Wextra",
-            "-Wpedantic",
-            "-fsyntax-only",
-            filename,
-        ],
-        timeout_s=timeout_s,
-    )
-
-    compiler_output = analysis["output"]
-
-    # Extract individual diagnostic lines containing warnings and errors.
-    warnings = [
-        line.strip()
-        for line in compiler_output.splitlines()
-        if "warning:" in line.lower()
+    command = [
+        "cppcheck", "--enable=warning,style,performance,portability",
+        "--inline-suppr", "--language=c", "--std=c11",
+        "--template=gcc", "--error-exitcode=0", filename,
     ]
+    result = sandbox.run(command, timeout_s=timeout_s)
+    if result["exit_code"] == 127:
+        return {"status": "unavailable", "score": None, "error": "cppcheck is not installed in the sandbox image."}
+    if result["timed_out"]:
+        return {"status": "inconclusive", "score": None, "error": "cppcheck timed out.", "raw_output": result["output"]}
 
-    errors = [
-        line.strip()
-        for line in compiler_output.splitlines()
-        if "error:" in line.lower()
-    ]
-
-    failed = (
-        analysis["exit_code"] != 0
-        or analysis["timed_out"]
-        or bool(errors)
-    )
-
-    # Transparent scoring rule: each warning incurs a configurable penalty.
-    if failed:
-        score = 0.0
-    else:
-        score = max(
-            0.0,
-            1.0 - len(warnings) * warning_penalty,
-        )
-
+    penalties = {**DEFAULT_PENALTIES, **(severity_penalties or {})}
+    findings: list[dict[str, str]] = []
+    for line in result["output"].splitlines():
+        match = CPP_CHECK_LINE.match(line.strip())
+        if match:
+            severity = match.group(1).lower()
+            findings.append({"severity": severity, "message": match.group(2), "raw": line.strip()})
+    total_penalty = min(100.0, sum(float(penalties.get(item["severity"], 0.0)) for item in findings))
     return {
-        "compiled": not failed,
-        "compiler_output": compiler_output,
-        "compiler_exit_code": analysis["exit_code"],
-        "timed_out": analysis["timed_out"],
-        "warning_count": len(warnings),
-        "warnings": warnings,
-        "score": round(score, 4),
+        "status": "completed",
+        "tool": "cppcheck",
+        "finding_count": len(findings),
+        "findings": findings,
+        "severity_counts": {
+            severity: sum(item["severity"] == severity for item in findings)
+            for severity in penalties
+        },
+        "raw_output": result["output"],
+        "score": round(max(0.0, 100.0 - total_penalty), 2),
+        "score_scale": "0-100",
+        "scoring_note": "Configured deterministic severity deductions; findings are not proof of exploitability.",
     }

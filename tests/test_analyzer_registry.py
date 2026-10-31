@@ -6,10 +6,11 @@ from grading_agent.analyzers.registry import ANALYZER_REGISTRY, run_analyzer
 
 class AnalyzerRegistryTests(unittest.TestCase):
     def test_expected_analyzers_are_registered(self):
-        self.assertEqual(
-            set(ANALYZER_REGISTRY),
-            {"io_tests", "memory_safety", "static_analysis"},
-        )
+        self.assertTrue({
+            "io_tests", "edge_case_runner", "runtime_profile",
+            "compiler_diagnostics", "static_analysis", "memory_safety",
+            "modularity", "complexity_estimator", "readability", "similarity_flag",
+        }.issubset(set(ANALYZER_REGISTRY)))
 
     def test_dispatches_registered_handler_and_adds_metric_metadata(self):
         metric = {

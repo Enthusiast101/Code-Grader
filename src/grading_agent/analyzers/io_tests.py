@@ -39,10 +39,13 @@ def run_io_tests(
 
     if compilation["exit_code"] != 0 or compilation["timed_out"]:
         return {
+            "status": "inconclusive" if compilation["timed_out"] else "completed",
             "compiled": False,
             "compiler_output": compilation["output"],
             "tests_passed": 0,
             "tests_total": len(test_cases),
+            "score": None if compilation["timed_out"] else 0.0,
+            "score_scale": "0-100",
             "results": [],
         }
 
@@ -87,8 +90,9 @@ def run_io_tests(
         "tests_passed": passed_count,
         "tests_total": len(test_cases),
         "score": (
-            passed_count / len(test_cases)
+            100.0 * passed_count / len(test_cases)
             if test_cases else 0.0
         ),
+        "score_scale": "0-100",
         "results": results,
     }
