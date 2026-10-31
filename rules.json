@@ -12,7 +12,9 @@
       "analyzer": "io_tests",
       "weight": 0.22,
       "enabled": true,
-      "params": {"testset_path": "tests/sum/testcases.json"}
+      "params": {
+        "testset_path": "tests/sum/testcases.json"
+      }
     },
     {
       "name": "syntax",
@@ -20,7 +22,12 @@
       "weight": 0.08,
       "enabled": true,
       "params": {
-        "flags": ["-std=c11", "-Wall", "-Wextra", "-Wpedantic"],
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
         "warning_penalty": 5
       }
     },
@@ -29,28 +36,38 @@
       "analyzer": "static_analysis",
       "weight": 0.12,
       "enabled": true,
-      "params": {"timeout_s": 15}
+      "params": {
+        "timeout_s": 15
+      }
     },
     {
       "name": "modularity",
       "analyzer": "modularity",
       "weight": 0.08,
       "enabled": true,
-      "params": {"expect_helpers": true, "min_functions": 2}
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
     },
     {
       "name": "complexity",
       "analyzer": "complexity_estimator",
       "weight": 0.08,
       "enabled": true,
-      "params": {"max_cyclomatic": 8, "max_function_length": 40}
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
       "analyzer": "edge_case_runner",
-      "weight": 0.10,
+      "weight": 0.1,
       "enabled": true,
-      "params": {"testset_path": "tests/sum/edge_cases.json"}
+      "params": {
+        "testset_path": "tests/sum/edge_cases.json"
+      }
     },
     {
       "name": "runtime_efficiency",
@@ -76,9 +93,11 @@
     {
       "name": "readability",
       "analyzer": "readability",
-      "weight": 0.10,
+      "weight": 0.1,
       "enabled": true,
-      "params": {"max_line_length": 100}
+      "params": {
+        "max_line_length": 100
+      }
     },
     {
       "name": "originality",
@@ -93,5 +112,7 @@
       }
     }
   ],
-  "llm_review": {"max_iterations": 3}
+  "llm_review": {
+    "max_iterations": 3
+  }
 }

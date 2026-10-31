@@ -68,10 +68,20 @@ class ReviewerContextTests(unittest.TestCase):
 
     @patch("grading_agent.llm.reviewer._request_json")
     def test_three_pass_review_uses_bounded_requests(self, request_json):
+        def structured(summary):
+            return {
+                "summary": summary,
+                "findings": [],
+                "contradictions": [],
+                "recommendations": [],
+                "evidence_references": [],
+                "uncertainties": [],
+            }
+
         request_json.side_effect = [
-            ({"summary": "initial", "findings": []}, "{}"),
-            ({"summary": "audited", "findings": []}, "{}"),
-            ({"summary": "final", "findings": []}, "{}"),
+            (structured("initial"), "{}"),
+            (structured("audited"), "{}"),
+            (structured("final"), "{}"),
         ]
         report = {
             "source_code": "int main(void) { return 0; }",
@@ -96,6 +106,56 @@ class ReviewerContextTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "request exceeds available context"):
             _request_json([{"role": "user", "content": "test"}])
+
+    @patch("grading_agent.llm.reviewer._request_json")
+    def test_failed_final_pass_falls_back_to_latest_valid_review(self, request_json):
+        valid = {
+            "summary": "The submission passes the configured tests; no confirmed defects were found.",
+            "findings": [],
+            "contradictions": [],
+            "recommendations": [],
+            "evidence_references": ["correctness", "memory_safety"],
+            "uncertainties": [],
+        }
+        request_json.side_effect = [
+            (valid, json.dumps(valid)),
+            (None, ""), (None, ""),
+            (None, ""), (None, ""),
+        ]
+        result = review_evidence({"source_code": "int main(void){return 0;}"}, max_iterations=3)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["final_synthesis_status"], "failed_using_previous_valid_review")
+        self.assertIn("passes the configured tests", result["review"]["summary"])
+        self.assertTrue(result["review"]["uncertainties"])
+        self.assertEqual(result["request_attempts"], 5)
+        self.assertEqual(len(result["failed_passes"]), 2)
+
+    @patch("grading_agent.llm.reviewer._request_json")
+    def test_all_empty_responses_are_not_marked_completed(self, request_json):
+        request_json.side_effect = [(None, ""), (None, "")]
+        result = review_evidence({"source_code": "int main(void){return 0;}"}, max_iterations=1)
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["final_synthesis_status"], "failed_no_valid_review")
+        self.assertTrue(result["review"]["summary"])
+        self.assertEqual(result["intermediate_reviews"], [])
+
+    @patch("grading_agent.llm.reviewer.requests.post")
+    def test_requests_constrained_json_output(self, post):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = json.dumps({
+            "choices": [{"message": {"content": json.dumps({"summary": "ok"})}}]
+        }).encode("utf-8")
+        response.url = "http://127.0.0.1:8080/v1/chat/completions"
+        post.return_value = response
+
+        parsed, _ = _request_json([{"role": "user", "content": "Return JSON."}], max_tokens=128)
+
+        self.assertEqual(parsed, {"summary": "ok"})
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
 
 
 if __name__ == "__main__":

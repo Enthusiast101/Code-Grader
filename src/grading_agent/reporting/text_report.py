@@ -56,11 +56,36 @@ def render_text_report(report: dict[str, Any]) -> str:
             lines.append(f"  {item['metric']}: {item['reason']}")
 
     review = report.get("llm_review", {})
-    if review.get("status") == "completed":
+    if isinstance(review, dict) and review:
         body = review.get("review", {})
-        lines.extend(["", "LLM REVIEW", "-" * 72, str(body.get("summary", "No summary provided."))])
-        for item in body.get("findings", []) if isinstance(body.get("findings"), list) else []:
-            lines.append(f"  - {item}")
+        body = body if isinstance(body, dict) else {}
+        review_status = review.get("status", "unknown")
+        lines.extend([
+            "",
+            "LLM REVIEW",
+            "-" * 72,
+            f"Status: {review_status}",
+            str(body.get("summary") or review.get("error") or "No valid LLM summary was returned."),
+        ])
+        for section, heading in (
+            ("findings", "Findings"),
+            ("contradictions", "Contradictions"),
+            ("recommendations", "Recommendations"),
+            ("uncertainties", "Uncertainties"),
+        ):
+            items = body.get(section, [])
+            if isinstance(items, list) and items:
+                lines.append(f"  {heading}:")
+                for item in items[:5]:
+                    lines.append(f"    - {item}")
+        if review.get("final_synthesis_status"):
+            lines.append(f"  Final synthesis: {review['final_synthesis_status']}")
+        for failure in review.get("failed_passes", []) if isinstance(review.get("failed_passes"), list) else []:
+            if isinstance(failure, dict):
+                lines.append(
+                    f"  Review pass {failure.get('iteration', '?')} error: "
+                    f"{failure.get('error', 'Invalid model response.')}"
+                )
 
     lines.extend([
         "",

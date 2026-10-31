@@ -37,8 +37,10 @@ src/grading_agent/scoring/overall.py
 tests/test_analyzer_registry.py
 tests/test_formai_predict.py
 tests/test_memory_safety_scoring.py
+tests/test_modularity_simple_task.py
 tests/test_preflight.py
 tests/test_reviewer_context.py
 tests/test_rule_loader.py
 tests/test_source_analyzers.py
+tests/test_text_report.py
 tests/test_valgrind_capture.py

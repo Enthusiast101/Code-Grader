@@ -17,10 +17,10 @@ from grading_agent.config import settings
 # summary small enough to leave room for the system prompt, review instruction,
 # prior-pass summary, and generated answer. Full evidence remains in the report.
 MAX_EVIDENCE_CHARS = 4_200
-MAX_SOURCE_CHARS = 6_000
 MAX_REVIEW_SOURCE_CHARS = 1_200
+MAX_SOURCE_CHARS = 6_000  # Complete source limit for the separate memory-safety audit.
 MAX_REVIEW_STRING_CHARS = 220
-REVIEW_MAX_TOKENS = 384
+REVIEW_MAX_TOKENS = 640
 
 
 def _short(value: Any, limit: int = MAX_REVIEW_STRING_CHARS) -> Any:
@@ -245,6 +245,8 @@ def _request_json(messages: list[dict[str, str]], *, max_tokens: int | None = No
             "temperature": settings.TEMPERATURE,
             "seed": settings.SEED,
             "max_tokens": max_tokens or settings.MAX_TOKENS,
+            # llama.cpp supports constrained JSON responses on this endpoint.
+            "response_format": {"type": "json_object"},
         },
         timeout=(5, 180),
     )
@@ -270,12 +272,56 @@ def _request_json(messages: list[dict[str, str]], *, max_tokens: int | None = No
         return None, content
 
 
+def _is_valid_review(payload: dict[str, Any] | None) -> bool:
+    """Require a usable summary and correctly typed review collections."""
+    if not isinstance(payload, dict):
+        return False
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return False
+    for key in ("findings", "contradictions", "recommendations", "evidence_references", "uncertainties"):
+        if not isinstance(payload.get(key), list):
+            return False
+    return True
+
+
+def _review_pass(
+    messages: list[dict[str, str]],
+) -> tuple[dict[str, Any] | None, str, int]:
+    """Request a structured review, retrying once when output is unusable."""
+    parsed, raw = _request_json(messages, max_tokens=REVIEW_MAX_TOKENS)
+    if _is_valid_review(parsed):
+        return parsed, raw, 1
+
+    retry_messages = list(messages)
+    retry_messages.append({
+        "role": "user",
+        "content": (
+            "Your previous response was empty, incomplete, or invalid. Return now "
+            "one complete JSON object only. It must contain a non-empty string "
+            "summary and list fields findings, contradictions, recommendations, "
+            "evidence_references, and uncertainties. Keep the summary to at most "
+            "two sentences and each list to at most three concise items. Do not "
+            "include markdown fences or private reasoning."
+        ),
+    })
+    retry_parsed, retry_raw = _request_json(
+        retry_messages,
+        max_tokens=REVIEW_MAX_TOKENS,
+    )
+    if _is_valid_review(retry_parsed):
+        return retry_parsed, retry_raw, 2
+
+    diagnostic = retry_raw.strip() or raw.strip() or "The model returned an empty response."
+    return None, diagnostic[:1_000], 2
+
+
 def review_evidence(
     report: dict[str, Any],
     *,
     max_iterations: int = 3,
 ) -> dict[str, Any]:
-    """Run a bounded evidence review without overflowing small model contexts."""
+    """Run bounded evidence review and never mark empty output as completed."""
     if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or not 1 <= max_iterations <= 3:
         raise ValueError("max_iterations must be an integer from 1 to 3.")
 
@@ -288,61 +334,116 @@ def review_evidence(
         "potential risks, and inconclusive analyses. Do not assign or alter a "
         "numerical grade. Do not provide private chain-of-thought; provide a "
         "concise, auditable rationale with metric and test references. Return "
-        "valid JSON with keys: summary, findings, contradictions, recommendations, "
-        "evidence_references, uncertainties. Be concise."
+        "one valid JSON object with a non-empty string summary and list fields "
+        "findings, contradictions, recommendations, evidence_references, and "
+        "uncertainties. Keep the summary to at most two sentences and each list "
+        "to at most three concise items."
     )
     passes: list[dict[str, Any]] = []
-    previous: dict[str, Any] | None = None
+    valid_reviews: list[dict[str, Any]] = []
+    attempts_total = 0
 
     for iteration in range(1, max_iterations + 1):
         if iteration == 1:
             instruction = (
-                "PASS 1 — INITIAL REVIEW. Summarize the key analyzer findings, "
-                "identify limitations, and cite evidence. Keep the response concise."
+                "PASS 1 — INITIAL REVIEW. Summarize the important analyzer results, "
+                "limitations, and any concerns. Cite metric/test evidence."
             )
             user_content = instruction + "\n\nEvidence:\n" + evidence_json
         elif iteration < max_iterations:
             instruction = (
-                "PASS 2 — EVIDENCE AUDIT. Re-check the evidence against the prior "
-                "review. Identify omissions, unsupported claims, contradictions, "
-                "and important edge cases not exercised. Return a concise revised JSON review."
+                "PASS 2 — EVIDENCE AUDIT. Re-check the evidence against the latest "
+                "valid review. Identify omissions, unsupported claims, contradictions, "
+                "and important edge cases not exercised. Return concise JSON."
             )
+            prior_review = valid_reviews[-1] if valid_reviews else {}
             user_content = (
                 instruction + "\n\nEvidence:\n" + evidence_json
-                + "\n\nPrevious review:\n"
-                + json.dumps(_compact_review(previous), ensure_ascii=False)
+                + "\n\nPrevious valid review:\n"
+                + json.dumps(_compact_review(prior_review), ensure_ascii=False)
             )
         else:
             instruction = (
-                "FINAL PASS — SYNTHESIS. Reconcile the prior review passes with "
-                "the evidence. Return the final concise JSON review and preserve "
+                "FINAL PASS — SYNTHESIS. Reconcile the prior valid review passes "
+                "with the evidence. Return the final concise JSON review and preserve "
                 "unresolved uncertainties. Do not change numerical scores."
             )
-            prior = [_compact_review(item["review"]) for item in passes[-2:]]
+            prior = [_compact_review(item) for item in valid_reviews[-2:]]
             user_content = (
                 instruction + "\n\nEvidence:\n" + evidence_json
-                + "\n\nPrior review summaries:\n"
+                + "\n\nPrior valid review summaries:\n"
                 + json.dumps(prior, ensure_ascii=False)
             )
 
-        parsed, raw = _request_json(
-            [
-                {"role": "system", "content": base_system},
-                {"role": "user", "content": user_content},
-            ],
-            max_tokens=REVIEW_MAX_TOKENS,
-        )
-        current = parsed if parsed is not None else {"unstructured_response": raw[:2000]}
-        passes.append({"iteration": iteration, "review": current})
-        previous = current
+        parsed, diagnostic, attempts = _review_pass([
+            {"role": "system", "content": base_system},
+            {"role": "user", "content": user_content},
+        ])
+        attempts_total += attempts
+        if parsed is not None:
+            current = parsed
+            valid_reviews.append(current)
+            pass_status = "completed"
+            error = None
+        else:
+            pass_status = "invalid_response"
+            error = diagnostic
+            current = {
+                "summary": f"LLM review pass {iteration} did not return a valid structured response.",
+                "findings": [],
+                "contradictions": [],
+                "recommendations": [],
+                "evidence_references": [],
+                "uncertainties": ["This pass is incomplete; see response_error."],
+                "response_error": diagnostic,
+            }
+
+        passes.append({
+            "iteration": iteration,
+            "status": pass_status,
+            "review": current,
+            **({"error": error} if error else {}),
+        })
+
+    final_pass_valid = passes[-1]["status"] == "completed"
+    if final_pass_valid:
+        final_review = passes[-1]["review"]
+        overall_status = "completed"
+        final_synthesis_status = "completed"
+    elif valid_reviews:
+        # Do not throw away a valid earlier review because the final synthesis
+        # call failed. Explicitly mark the result partial rather than complete.
+        final_review = dict(valid_reviews[-1])
+        uncertainties = final_review.setdefault("uncertainties", [])
+        if isinstance(uncertainties, list):
+            uncertainties.append("Final synthesis pass failed; showing the latest valid earlier review.")
+        overall_status = "partial"
+        final_synthesis_status = "failed_using_previous_valid_review"
+    else:
+        final_review = {
+            "summary": "The local LLM did not produce a valid review after retrying; analyzer scores remain authoritative.",
+            "findings": [],
+            "contradictions": [],
+            "recommendations": [],
+            "evidence_references": [],
+            "uncertainties": ["No valid structured LLM review was obtained."],
+        }
+        overall_status = "unavailable"
+        final_synthesis_status = "failed_no_valid_review"
 
     return {
-        "status": "completed",
+        "status": overall_status,
         "model": settings.MODEL,
         "review_iterations": max_iterations,
+        "request_attempts": attempts_total,
+        "final_synthesis_status": final_synthesis_status,
         "evidence_metadata": evidence["llm_input_metadata"],
         "intermediate_reviews": passes[:-1],
-        "review": passes[-1]["review"],
+        "failed_passes": [
+            {"iteration": item["iteration"], "error": item.get("error", "Invalid model response.")}
+            for item in passes if item["status"] != "completed"
+        ],
+        "review": final_review,
         "scoring_authority": "Python deterministic scoring engine; LLM review does not assign or change scores.",
     }
 
