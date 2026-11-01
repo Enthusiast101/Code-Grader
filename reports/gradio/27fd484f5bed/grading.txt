@@ -1,0 +1,195 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: 4d7f56ad478b3639688b14c8a8feccb0f79e255de737fd0bcec0e4b967f66806
+Source SHA-256: 738c72427ccdc58c8a72fe2ac64be42a28a43d6ae7d82c2e14b7546aa51906db
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Critical: Program fails to implement grading logic; contains unused variable and potential memory safety issues.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: compiled_smoke_skipped
+Compiled: True
+Smoke tested: False
+
+correctness            weight=0.220  score=0.00/100     status=completed
+  Assessment: Program fails to implement grading logic; lacks input reading and output computation.
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=100.00/100   status=completed
+  Assessment: Valid C code with no syntax errors or warnings.
+structure              weight=0.120  score=100.00/100   status=completed
+  Assessment: Program is organized into a coherent control and data-flow structure.
+modularity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Program is modular with a single entry point function.
+complexity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Algorithm complexity is proportional to the task size.
+logical                weight=0.100  score=100.00/100   status=completed
+  Assessment: Loop logic and arithmetic operations are correct.
+runtime_efficiency     weight=0.050  score=100.00/100   status=completed
+  Assessment: Algorithm avoids unnecessary work and excessive memory use.
+memory_safety          weight=0.170  score=80.00/100    status=completed
+  Assessment: Memory management is handled, but unused variable dereference is a concern.
+  Valgrind score: None
+  ASan/UBSan score (supplementary): None
+readability            weight=0.100  score=80.00/100    status=completed
+  Assessment: Code is readable but lacks comments explaining the grading logic.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 72.60/100
+  correctness: 0.00 × 0.220 = 0.00
+  syntax: 100.00 × 0.080 = 8.00
+  structure: 100.00 × 0.120 = 12.00
+  modularity: 100.00 × 0.080 = 8.00
+  complexity: 100.00 × 0.080 = 8.00
+  logical: 100.00 × 0.100 = 10.00
+  runtime_efficiency: 100.00 × 0.050 = 5.00
+  memory_safety: 80.00 × 0.170 = 13.60
+  readability: 80.00 × 0.100 = 8.00
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed
+  RSI pass 1: completed; 3 retained finding(s); Source code is syntactically valid and structurally sound, but lacks required functional behavior per assignment contract.
+    - correctness: Missing Input Reading (line 5)
+    - correctness: Missing Output Computation (line 11)
+    - memory_safety: Unused Variable Dereference (line 24)
+  RSI pass 2: completed; 3 retained finding(s); Critical: Program fails to implement grading logic; contains unused variable and potential memory safety issues.
+    - correctness: Missing Input Reading (line 5)
+    - correctness: Missing Output Computation (line 11)
+    - memory_safety: Unused Variable Dereference (line 24)
+  RSI pass 3: completed; 3 retained finding(s); Critical: Program fails to implement grading logic; contains unused variable and potential memory safety issues.
+    - correctness: Missing Input Reading (line 5)
+    - correctness: Missing Output Computation (line 11)
+    - memory_safety: Unused Variable Dereference (line 24)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The program allocates a 64-element integer array, initializes it with values 0 to 128, prints the string "grading sample" to stdout, prints the value at index 20 (40), then frees the allocated memory and returns 0.
+Expected assignment behavior: The assignment likely requires the program to read input, perform some computation on the input, and output a result, rather than simply printing a hardcoded string and a hardcoded index.
+Contract comparison: The program does not match the intended behavior; it lacks input reading and output computation, instead performing only initialization, printing a static string, and printing a static index.
+Actual algorithm: The program performs a linear scan from index 0 to 63, assigning each index a value equal to its index times 2. It then prints a constant string and a constant integer, followed by memory deallocation.
+Functions:
+  - main (lines 5-28): Entry point
+Execution flow:
+  - main is called
+  - values is allocated
+  - if check fails, return 1
+  - loop from 0 to 63
+  - assign values[i] = i * 2
+  - allocate message
+  - if check fails, free values, return 1
+  - copy message to string
+Assumptions:
+  - The program is compiled with standard C compiler flags
+  - The program is run on a system where malloc/free are available
+  - The program is not run under memory safety sanitizers
+  - The program is not run under address sanitizer or other runtime checks
+Ambiguities:
+  - The exact behavior of the `volatile` keyword on `stale_value` is non-standard and may have undefined effects depending on the compiler
+  - The behavior of `strcpy` on a null-terminated string is undefined if the destination buffer is not large enough
+  - The behavior of `malloc` returning `NULL` is undefined if the system does not support dynamic allocation
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[CRITICAL] correctness — Missing Input Reading (lines 5-28)
+  The program allocates memory but never reads any input data, violating the assignment contract which implies processing user input or external data.
+  Evidence: E-METRIC-CORRECTNESS-001
+  Source:
+4: 
+5: int main(void) {
+6:     int *values = malloc(64 * sizeof(*values));
+7:     if (values == NULL) {
+8:         return 1;
+9:     }
+10: 
+11:     for (int i = 0; i < 64; ++i) {
+12:         values[i] = i * 2;
+13:     }
+14: 
+15:     char *message = malloc(32);
+16:     if (message == NULL) {
+17:         free(values);
+18:         return 1;
+19:     }
+20:     strcpy(message, "grading sample");
+21:     printf("%s\n", message);
+22: 
+23:     free(values);
+24:     volatile int stale_value = values[20];
+25:     (void)stale_value;
+26: 
+27:     return 0;
+28: }
+[CRITICAL] correctness — Missing Output Computation (lines 11-28)
+  The program prints a hardcoded string and index without performing any computation on the allocated data, failing to meet the grading task requirements.
+  Evidence: E-METRIC-CORRECTNESS-001
+  Source:
+10: 
+11:     for (int i = 0; i < 64; ++i) {
+12:         values[i] = i * 2;
+13:     }
+14: 
+15:     char *message = malloc(32);
+16:     if (message == NULL) {
+17:         free(values);
+18:         return 1;
+19:     }
+20:     strcpy(message, "grading sample");
+21:     printf("%s\n", message);
+22: 
+23:     free(values);
+24:     volatile int stale_value = values[20];
+25:     (void)stale_value;
+26: 
+27:     return 0;
+28: }
+[HIGH] memory_safety — Unused Variable Dereference (lines 24-28)
+  The variable `stale_value` is declared but never used, creating a potential logical defect where the compiler may warn about unused variables.
+  Evidence: E-METRIC-STRUCTURE-001
+  Source:
+23:     free(values);
+24:     volatile int stale_value = values[20];
+25:     (void)stale_value;
+26: 
+27:     return 0;
+28: }
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 0.893 s
+LLM server readiness/startup: 59.334 s
+LLM requests: 415.637 s
+Total through scoring: 392.886 s
+  correctness: 0.000 s
+  syntax: 0.111 s
+  structure: 0.106 s
+  modularity: 0.015 s
+  complexity: 0.001 s
+  logical: 0.000 s
+  runtime_efficiency: 0.003 s
+  memory_safety: 0.180 s
+  readability: 0.001 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed
+LLM calls: 11 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 38.455 s
+RSI pass 1: 66.579 s
+RSI pass 2: 80.155 s
+RSI pass 3: 73.399 s
+Metric-scoring request 1: 73.903 s
+Total LLM time: 415.637 s
+Context compression: same-model used (1 request(s)); deterministic fallback used 5 time(s).
+  Compression detail (program_understanding): ValueError: the grading model output did not reduce the complete prompt payload.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

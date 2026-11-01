@@ -2,8 +2,10 @@
 from __future__ import annotations
 import statistics
 import time
-from typing import Any
-from grading_agent.sandbox.docker_sandbox import DockerSandbox
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from grading_agent.sandbox.docker_sandbox import DockerSandbox
 from grading_agent.config import settings
 
 
@@ -21,6 +23,16 @@ def run_runtime_profile(
         raise ValueError(f"repetitions must be between 1 and {settings.ANALYZER_RUNTIME_MAX_REPETITIONS}.")
     if target_runtime_ms <= 0:
         raise ValueError("target_runtime_ms must be positive.")
+    if not test_cases:
+        return {
+            "status": "inconclusive",
+            "score": None,
+            "score_scale": "0-100",
+            "samples": [],
+            "target_runtime_ms": target_runtime_ms,
+            "repetitions": repetitions,
+            "reason": "No assignment-specific runtime inputs were configured; runtime performance was not measured.",
+        }
     sandbox.write_file(filename, source_code)
     compile_result = sandbox.run(["gcc", "-std=c11", "-O2", filename, "-o", "student_program_profile"], timeout_s=compile_timeout_s)
     if compile_result["exit_code"] != 0 or compile_result["timed_out"]:

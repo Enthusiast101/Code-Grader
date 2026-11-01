@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "algorithmic-complexity",
+      "severity": "medium",
+      "anchor": "for (int k = j + 1; k < count; ++k) {",
+      "description": "Three nested loops enumerate every triple, resulting in O(N^3) time and failing the stated N up to 20,000 constraint.",
+      "line": 32,
+      "source_excerpt": "for (int k = j + 1; k < count; ++k) {"
+    }
+  ],
+  "note": "Instructor-side oracle for regression and manual review. Keep separate from model input."
+}

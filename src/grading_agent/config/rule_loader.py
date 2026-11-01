@@ -105,6 +105,27 @@ def _percentage_penalty(value: Any, field_name: str) -> float:
     return float(value)
 
 
+def _validate_json_value(value: Any, field_name: str) -> None:
+    """Validate a generic JSON-compatible value used in task contracts."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise RuleValidationError(f"'{field_name}' contains a non-finite number.")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_value(item, f"{field_name}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise RuleValidationError(f"'{field_name}' object keys must be strings.")
+            _validate_json_value(item, f"{field_name}.{key}")
+        return
+    raise RuleValidationError(f"'{field_name}' must contain only JSON-compatible values.")
+
+
 def load_test_cases(path: Path) -> list[dict[str, Any]]:
     """Load and validate JSON input/expected-output test cases."""
     try:
@@ -191,6 +212,12 @@ def load_rules(
     problem = rules.get("problem")
     if not isinstance(problem, str) or not problem.strip():
         raise RuleValidationError("'problem' must be a non-empty string.")
+    normalized_problem = problem.strip()
+    placeholder_markers = ("replace this text", "paste the complete", "todo:", "<assignment statement>")
+    if any(marker in normalized_problem.casefold() for marker in placeholder_markers):
+        raise RuleValidationError(
+            "Replace the generic 'problem' placeholder with the complete assignment statement before grading."
+        )
 
     time_limit_s = _positive_number(
         rules.get("time_limit_s"),
@@ -316,17 +343,23 @@ def load_rules(
             enabled_weights.append(float(weight))
 
         if enabled and analyzer in {"io_tests", "memory_safety", "edge_case_runner", "runtime_profile"}:
-            testset_path = resolve_project_path(
-                project_root,
-                params.get("testset_path"),
-                field_name=f"metrics[{index}].params.testset_path",
-            )
-            # Validate the JSON structure at configuration-loading time.
-            load_test_cases(testset_path)
-            # Keep the resolved path in params because the coordinator reads
-            # it from there. Also retain the metric-level field for clarity.
-            normalized["params"]["resolved_testset_path"] = str(testset_path)
-            normalized["resolved_testset_path"] = str(testset_path)
+            # Test data is assignment-specific, so a reusable rules template
+            # may omit it. In that case the analyzer runs in an explicitly
+            # inconclusive/no-test mode instead of treating an empty test set
+            # as a zero score. If a path is supplied, it remains strict.
+            configured_testset = params.get("testset_path")
+            if configured_testset not in (None, ""):
+                testset_path = resolve_project_path(
+                    project_root,
+                    configured_testset,
+                    field_name=f"metrics[{index}].params.testset_path",
+                )
+                load_test_cases(testset_path)
+                normalized["params"]["resolved_testset_path"] = str(testset_path)
+                normalized["resolved_testset_path"] = str(testset_path)
+            else:
+                normalized["params"].pop("resolved_testset_path", None)
+                normalized.pop("resolved_testset_path", None)
 
         if enabled and analyzer == "similarity_flag":
             corpus_dir = params.get("corpus_dir")
@@ -440,10 +473,9 @@ def load_rules(
     problem_contract = rules.get("problem_contract", {})
     if not isinstance(problem_contract, dict):
         raise RuleValidationError("'problem_contract' must be a JSON object when provided.")
-    for key in ("description", "operand_type", "sum_type", "input_range", "output_rule"):
-        value = problem_contract.get(key)
-        if value is not None and (not isinstance(value, str) or not value.strip()):
-            raise RuleValidationError(f"'problem_contract.{key}' must be a non-empty string when provided.")
+    # Contracts are task-defined: accept arbitrary structured requirements
+    # rather than imposing an addition-only schema such as operand_type/sum_type.
+    _validate_json_value(problem_contract, "problem_contract")
 
     normalized_rules = dict(rules)
     normalized_rules["problem_contract"] = dict(problem_contract)

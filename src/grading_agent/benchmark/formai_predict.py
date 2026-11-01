@@ -1,9 +1,10 @@
 """Run resilient source-level FormAI-v2 vulnerability predictions.
 
 Combined modes always attempt the LLM source audit independently of cppcheck.
-The evidence-review (RSI) stage is an additional signal, never a gate that can
-erase a valid cppcheck or LLM result. Each source record is emitted even when
-one analysis stage fails, so infrastructure errors do not discard a batch.
+In hybrid_rsi, RSI adjudicates each LLM-originated candidate against source-line
+and analyzer evidence; confirmed cppcheck positives remain intact. An unresolved
+positive summary/candidate is marked inconclusive rather than safe. Every input
+record is emitted even when an analysis stage fails.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ CPP_CHECK = re.compile(
     re.IGNORECASE,
 )
 VULNERABILITY_ID = re.compile(
-    r"buffer|out[-_ ]?of[-_ ]?bounds|array.?index|mem(?:ory)?leak|invalid.?pointer|use.?after.?free|uninit|null.?pointer|integer.?overflow|dealloc|resource.?leak|invalidscanf|invalidfunctionarg|stack.?overflow|double.?free",
+    r"buffer|out[-_ ]?of[-_ ]?bounds|array.?index|mem(?:ory)?leak|invalid.?pointer|use.?after.?free|uninit|null.?pointer|integer.?overflow|integer.?truncation|dealloc|resource.?leak|invalidscanf|invalidfunctionarg|stack.?overflow|double.?free|division.?by.?zero|divide.?by.?zero|format.?string|dangling.?pointer|signed.?overflow",
     re.IGNORECASE,
 )
 
@@ -58,6 +59,32 @@ def _iter_inputs(path: Path) -> Iterator[dict[str, Any]]:
                 }
                 continue
             yield item
+
+
+def _validate_predictor_input(path: Path) -> dict[str, Any]:
+    """Fail before starting Docker/LLM if the source split is malformed or duplicated."""
+    names: set[str] = set()
+    count = 0
+    with path.open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid source JSONL at line {line_number}: {exc}") from exc
+            if not isinstance(item, dict):
+                raise ValueError(f"Source JSONL line {line_number} must be an object.")
+            name, source = item.get("file_name"), item.get("source_code")
+            if not isinstance(name, str) or not name.strip() or not isinstance(source, str) or not source.strip():
+                raise ValueError(f"Source JSONL line {line_number} must contain non-empty file_name and source_code strings.")
+            if name in names:
+                raise ValueError(f"Duplicate source program {name!r} at JSONL line {line_number}.")
+            names.add(name)
+            count += 1
+    if count == 0:
+        raise ValueError(f"Source input file contains no programs: {path}")
+    return {"input_records": count, "unique_programs": count}
 
 
 def _server_ready() -> bool:
@@ -103,6 +130,22 @@ def _build_rsi_review_report(
         "submission": item["file_name"],
         "source_code": source,
         "problem": "FormAI-v2-source-vulnerability-review",
+        "review_focus": (
+            "This is a vulnerability-claim adjudication task, not a general assignment review. "
+            "Inspect EACH cppcheck static finding and EACH LLM source-audit finding independently. "
+            "The absence of a cppcheck warning does not refute an LLM candidate. For every candidate, "
+            "compare its cited source line and nearby source-line evidence with the actual code. "
+            "Retain a candidate as observed or potential only when the cited source supports the "
+            "defect; otherwise reject that candidate and explain why. Do not require the two analyzers "
+            "to agree. Mention the vulnerability class in the finding text (for example buffer overflow, "
+            "out-of-bounds access, uninitialized read, null dereference, integer overflow, memory leak, "
+            "or use-after-free) so the adjudicated claim can be mapped to the benchmark label. "
+            "Evaluate every candidate; do not silently omit a candidate merely because it came from the LLM. "
+            "For EVERY accepted finding, cite at least one exact source-line evidence ID of the form "
+            "E-SOURCE-L### whose facts.line is the line being claimed, in addition to any analyzer/model finding ID. "
+            "Do not cite a different nearby line as a substitute. Do not report an include directive as a vulnerability line. "
+            "If the candidate's claimed line does not show or directly support the defect, reject that candidate."
+        ),
         "configuration": {
             "enabled_metrics": [
                 {"name": name, "analyzer": analyzer, "weight": weight}
@@ -131,7 +174,7 @@ def _prediction_from_rsi_review(
     ledger: list[dict[str, Any]],
 ) -> tuple[bool, int | None, str | None, list[dict[str, Any]]]:
     """Accept only claims anchored to source or analyzer evidence."""
-    if review_result.get("status") not in {"completed", "completed_with_warnings"}:
+    if review_result.get("status") not in {"completed", "completed_with_warnings", "partial"}:
         return False, None, None, []
     validation = review_result.get("claim_validation", {})
     if not isinstance(validation, dict) or validation.get("status") not in {"completed", "completed_with_warnings"}:
@@ -145,27 +188,107 @@ def _prediction_from_rsi_review(
         if not isinstance(claim, dict) or claim.get("kind") not in {"observed", "potential"}:
             continue
         text = claim.get("text", "")
-        if not isinstance(text, str) or not VULNERABILITY_ID.search(text):
+        if not isinstance(text, str) or not text.strip():
             continue
-        evidence = [by_id[ref] for ref in claim.get("evidence_ids", []) if ref in by_id]
-        source_evidence = [
+        cited_ids = claim.get("evidence_ids", [])
+        if not isinstance(cited_ids, list):
+            continue
+        evidence = [by_id[ref] for ref in cited_ids if isinstance(ref, str) and ref in by_id]
+        evidence_terms = []
+        for entry in evidence:
+            facts = entry.get("facts", {}) if isinstance(entry.get("facts"), dict) else {}
+            evidence_terms.extend(str(facts.get(key, "")) for key in ("category", "id", "code_excerpt", "description"))
+            evidence_terms.append(str(entry.get("statement", "")))
+        classification_text = " ".join([text, *evidence_terms])
+        if not VULNERABILITY_ID.search(classification_text):
+            continue
+
+        # An ID merely existing in the ledger is not proof. The claim must cite
+        # the exact source line that it is asking the evaluator to trust.
+        source_lines = [
             entry for entry in evidence
-            if entry.get("kind") in {"source_line", "static_finding", "model_audit_finding"}
+            if entry.get("kind") == "source_line"
+            and isinstance(entry.get("facts"), dict)
+            and isinstance(entry["facts"].get("line"), int)
+            and not isinstance(entry["facts"].get("line"), bool)
         ]
-        if not source_evidence:
+        if not source_lines:
             continue
-        line = next((
-            entry.get("facts", {}).get("line") for entry in source_evidence
-            if isinstance(entry.get("facts", {}).get("line"), int)
+        # Do not accept a header/include line as the vulnerable operation.
+        source_lines = [
+            entry for entry in source_lines
+            if not str(entry.get("facts", {}).get("code", "")).lstrip().startswith("#include")
+        ]
+        if not source_lines:
+            continue
+        source_lines.sort(key=lambda entry: entry["facts"]["line"])
+        # If the claim also cites an analyzer/model candidate with a concrete
+        # line, the exact source-line citation must agree with that candidate.
+        candidate_entries = [
+            entry for entry in evidence
+            if entry.get("kind") in {"static_finding", "model_audit_finding"}
+            and isinstance(entry.get("facts"), dict)
+            and isinstance(entry["facts"].get("line"), int)
+            and not isinstance(entry["facts"].get("line"), bool)
+        ]
+        candidate_lines: set[int] = set()
+        for candidate in candidate_entries:
+            facts = candidate.get("facts", {})
+            candidate_line = facts.get("line")
+            matching_source = next(
+                (entry for entry in source_lines if entry.get("facts", {}).get("line") == candidate_line),
+                None,
+            )
+            if matching_source is None:
+                continue
+            # For LLM-originated evidence, verify the stored quoted excerpt
+            # against the actual source-line ledger fact, not merely the ID.
+            if candidate.get("kind") == "model_audit_finding":
+                model_excerpt = facts.get("code_excerpt")
+                source_text = matching_source.get("facts", {}).get("code")
+                compact = lambda value: re.sub(r"\s+", "", str(value or ""))
+                model_compact, source_compact = compact(model_excerpt), compact(source_text)
+                if not model_compact or not source_compact:
+                    continue
+                # Evidence source lines are capped at 180 characters; permit
+                # either side to be a prefix only to account for that cap.
+                if model_compact not in source_compact and source_compact not in model_compact:
+                    continue
+            candidate_lines.add(candidate_line)
+        if candidate_entries:
+            if not candidate_lines:
+                continue
+            source_lines = [entry for entry in source_lines if entry["facts"]["line"] in candidate_lines]
+            if not source_lines:
+                continue
+        line = source_lines[0]["facts"]["line"]
+        line_entry = next((
+            entry for entry in evidence
+            if entry.get("kind") in {"static_finding", "model_audit_finding"}
+            and isinstance(entry.get("facts"), dict)
+            and entry["facts"].get("line") == line
         ), None)
-        error_type = next((
-            entry.get("facts", {}).get("category") or entry.get("facts", {}).get("id")
-            for entry in source_evidence
-            if entry.get("facts", {}).get("category") or entry.get("facts", {}).get("id")
-        ), None)
+        error_type = None
+        if line_entry:
+            facts = line_entry.get("facts", {})
+            error_type = facts.get("category") or facts.get("id")
+        if not error_type:
+            # Use the claim's own text as a label rather than borrowing the
+            # category from a different line's analyzer finding.
+            text_lower = text.casefold()
+            for label in (
+                "Buffer Overflow", "Out-of-bounds access", "Uninitialized Read",
+                "Use of uninitialized variable", "Use After Free", "Double Free",
+                "Integer Overflow", "Division by Zero", "Null Pointer Dereference",
+                "Memory Leak", "Format String Vulnerability", "Stack Overflow",
+            ):
+                if label.casefold() in text_lower:
+                    error_type = label
+                    break
+        evidence_ids = [entry.get("id") for entry in evidence if entry.get("id")]
         supported.append({
             "text": text[:400],
-            "evidence_ids": claim.get("evidence_ids", [])[:5],
+            "evidence_ids": evidence_ids[:8],
             "line": line,
             "error_type": error_type or "source_review_finding",
             "kind": claim.get("kind"),
@@ -216,6 +339,47 @@ def _run_llm_stage(source: str, max_findings: int, setup_error: str | None) -> d
         return {"status": "unavailable", "model": settings.MODEL, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _vulnerability_family(value: Any) -> str:
+    """Map common LLM/cppcheck labels to a compact defect family."""
+    text = re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+    aliases = (
+        ("uninitialized", ("uninit", "uninitialized")),
+        ("bounds", ("outofbounds", "arrayindex", "arraybounds", "boundserror")),
+        ("division_by_zero", ("divisionbyzero", "dividebyzero")),
+        ("integer_overflow", ("integeroverflow", "signedoverflow", "integertruncation")),
+        ("null_dereference", ("nullpointer", "null dereference", "nullpointeroutofmemory")),
+        ("use_after_free", ("useafterfree", "danglingpointer")),
+        ("double_free", ("doublefree",)),
+        ("memory_leak", ("memleak", "memoryleak", "resourceleak")),
+        ("unsafe_input", ("invalidscanf", "scanf", "bufferoverflow")),
+        ("format_string", ("formatstring",)),
+        ("stack_overflow", ("stackoverflow",)),
+    )
+    for family, patterns in aliases:
+        if any(pattern in text for pattern in patterns):
+            return family
+    return text
+
+
+def _rsi_confirms_llm_finding(
+    finding: dict[str, Any], rsi_findings: list[dict[str, Any]]
+) -> bool:
+    line = finding.get("line")
+    category = _vulnerability_family(finding.get("category"))
+    for reviewed in rsi_findings:
+        if not isinstance(reviewed, dict):
+            continue
+        reviewed_line = reviewed.get("line")
+        reviewed_category = _vulnerability_family(reviewed.get("error_type"))
+        if reviewed_category in {"", "sourcereviewfinding"}:
+            reviewed_category = _vulnerability_family(reviewed.get("text"))
+        same_category = bool(category and reviewed_category and category == reviewed_category)
+        same_line = isinstance(line, int) and isinstance(reviewed_line, int) and line == reviewed_line
+        if same_category and (same_line or reviewed_line is None or line is None):
+            return True
+    return False
+
+
 def _select_hybrid_prediction(
     *,
     mode: str,
@@ -225,7 +389,7 @@ def _select_hybrid_prediction(
     rsi_review: dict[str, Any] | None = None,
     rsi_findings: list[dict[str, Any]] | None = None,
 ) -> tuple[bool | None, int | None, str | None, str]:
-    """Combine completed primary methods; refinement can add but never veto."""
+    """Fuse cppcheck positives, RSI-adjudicated LLM candidates, and uncertainty."""
     tool_done = tool_status == "completed"
     llm_status = llm_audit.get("status") if isinstance(llm_audit, dict) else None
     llm_result_usable = llm_status in {"completed", "completed_with_warnings"}
@@ -243,9 +407,31 @@ def _select_hybrid_prediction(
     # A positive finding from a successfully audited chunk remains useful even
     # when another chunk failed. A partial audit with no findings cannot justify
     # a negative whole-file classification.
-    llm_positive = bool(llm_findings) and llm_result_usable
     rsi_findings = rsi_findings or []
-    rsi_positive = bool(rsi_findings) and isinstance(rsi_review, dict) and rsi_review.get("status") in {"completed", "completed_with_warnings"}
+    # In hybrid_rsi, the source auditor proposes claims and RSI must adjudicate
+    # each LLM-originated candidate against the supplied source/analyzer ledger.
+    # The regular hybrid and llm_only modes can use the source-validated LLM
+    # findings directly because they do not promise the additional RSI pass.
+    if mode == "hybrid_rsi":
+        llm_findings_usable = [
+            finding for finding in llm_findings
+            if isinstance(finding, dict) and _rsi_confirms_llm_finding(finding, rsi_findings)
+        ]
+    else:
+        llm_findings_usable = [finding for finding in llm_findings if isinstance(finding, dict)]
+    llm_positive = bool(llm_findings_usable) and llm_result_usable
+    unresolved_summary = bool((llm_audit or {}).get("unresolved_positive_summary"))
+    unresolved_invalid_candidates = bool((llm_audit or {}).get("unresolved_invalid_candidates"))
+    unconfirmed_llm_candidates = (
+        bool(llm_findings) and len(llm_findings_usable) < len(llm_findings) and mode == "hybrid_rsi"
+    )
+    rsi_done = mode != "hybrid_rsi" or (
+        isinstance(rsi_review, dict)
+        and rsi_review.get("status") in {"completed", "completed_with_warnings"}
+        and isinstance(rsi_review.get("claim_validation"), dict)
+        and rsi_review["claim_validation"].get("status") in {"completed", "completed_with_warnings"}
+    )
+    rsi_positive = bool(rsi_findings) and rsi_done
 
     if mode == "tools_only":
         if not tool_done and not tool_findings:
@@ -269,26 +455,39 @@ def _select_hybrid_prediction(
     if not completed_primary:
         return None, None, None, "inconclusive"
 
-    # OR fusion preserves a positive signal from either completed method.
+    # Do not turn a positive LLM summary with failed line-level extraction into
+    # a safe negative. Keep it inconclusive unless another method validates a
+    # concrete positive claim.
+    incomplete_combined = mode in {"hybrid", "hybrid_rsi"} and not (tool_done and llm_done and rsi_done)
+    if (
+        unresolved_summary or unresolved_invalid_candidates or unconfirmed_llm_candidates or incomplete_combined
+    ) and not (tool_positive or llm_positive or rsi_positive):
+        return None, None, None, "inconclusive"
+
+    # OR fusion combines independently validated positive signals.
     predicted = tool_positive or llm_positive or rsi_positive
     if rsi_positive:
         rsi_first = rsi_findings[0]
         line, error_type = rsi_first.get("line"), rsi_first.get("error_type")
     elif llm_positive:
-        first = llm_findings[0]
+        first = llm_findings_usable[0]
         line, error_type = first.get("line"), first.get("category")
     else:
         line, error_type = tool_line, tool_type
 
     all_expected_complete = tool_done and llm_status == "completed"
     if mode == "hybrid_rsi":
-        rsi_done = isinstance(rsi_review, dict) and rsi_review.get("status") in {"completed", "completed_with_warnings"}
         all_expected_complete = all_expected_complete and rsi_done
-    status = "completed" if all_expected_complete else "completed_with_warnings"
+    status = (
+        "completed"
+        if all_expected_complete and not unconfirmed_llm_candidates and not unresolved_summary and not unresolved_invalid_candidates
+        else "completed_with_warnings"
+    )
     return predicted, line, error_type, status
 
 
 def run(args: argparse.Namespace) -> None:
+    input_manifest = _validate_predictor_input(args.inputs)
     process = None
     sandbox = None
     sandbox_error: str | None = None
@@ -308,7 +507,10 @@ def run(args: argparse.Namespace) -> None:
     if needs_tools:
         try:
             from grading_agent.sandbox.docker_sandbox import DockerSandbox
-            sandbox_manager = DockerSandbox(memory_limit=args.memory_limit)
+            sandbox_manager = DockerSandbox(
+                memory_limit=args.memory_limit,
+                cpu_limit=getattr(args, "cpu_limit", settings.DOCKER_CPU_LIMIT),
+            )
             sandbox = sandbox_manager.__enter__()
         except Exception as exc:
             sandbox = None
@@ -371,9 +573,9 @@ def run(args: argparse.Namespace) -> None:
                     or tool_status == "completed"
                     or bool(tool_findings)
                 ):
-                    # Evidence review runs whenever at least one primary source
-                    # stage produced a usable result. It is not gated on both
-                    # primary methods and cannot veto their prediction.
+                    # Review runs when either primary stage produced usable
+                    # evidence. It adjudicates LLM candidates independently;
+                    # cppcheck positives are retained even if RSI has warnings.
                     try:
                         review_report = _build_rsi_review_report(
                             item, source, tool_findings, tool_status, llm_audit or {}
@@ -386,7 +588,21 @@ def run(args: argparse.Namespace) -> None:
                         )
                         _, _, _, rsi_findings = _prediction_from_rsi_review(rsi_review, rsi_ledger)
                         if not rsi_findings:
-                            rsi_note = "Evidence review completed without additional validated vulnerability claims; primary results are retained."
+                            llm_candidates = (llm_audit or {}).get("audit", {}).get("findings", [])
+                            if isinstance(llm_candidates, list) and llm_candidates:
+                                rsi_note = (
+                                    "RSI completed but did not validate the LLM candidate finding(s). "
+                                    "The candidates are retained in the record; absent another validated "
+                                    "positive, the prediction is inconclusive rather than safe."
+                                )
+                            elif (llm_audit or {}).get("unresolved_positive_summary"):
+                                rsi_note = (
+                                    "The LLM summary suggested possible vulnerabilities, but neither the "
+                                    "source audit nor RSI established a line-grounded claim. Review manually; "
+                                    "the prediction is inconclusive rather than safe."
+                                )
+                            else:
+                                rsi_note = "Evidence review completed without additional validated vulnerability claims; primary results are retained."
                     except Exception as exc:
                         rsi_error = f"{type(exc).__name__}: {exc}"
                         rsi_review = {"status": "unavailable", "error": rsi_error}
@@ -406,10 +622,16 @@ def run(args: argparse.Namespace) -> None:
                     rsi_findings=rsi_findings,
                 )
                 llm_findings = []
-                if (llm_audit or {}).get("status") == "completed":
+                if (llm_audit or {}).get("status") in {"completed", "completed_with_warnings"}:
                     audit_payload = (llm_audit or {}).get("audit", {})
                     if isinstance(audit_payload, dict) and isinstance(audit_payload.get("findings"), list):
                         llm_findings = audit_payload["findings"]
+                llm_findings_not_confirmed_by_rsi = []
+                if args.mode == "hybrid_rsi":
+                    llm_findings_not_confirmed_by_rsi = [
+                        finding for finding in llm_findings
+                        if isinstance(finding, dict) and not _rsi_confirms_llm_finding(finding, rsi_findings)
+                    ]
                 if predicted is None:
                     errors_count += 1
 
@@ -425,10 +647,20 @@ def run(args: argparse.Namespace) -> None:
                     "tool_findings": tool_findings,
                     "tool_error": tool_error,
                     "llm_findings": llm_findings,
+                    "llm_findings_not_confirmed_by_rsi": llm_findings_not_confirmed_by_rsi,
                     "llm_audit_status": (llm_audit or {}).get("status", "not_run"),
                     "llm_audit_summary": ((llm_audit or {}).get("audit", {}) or {}).get("summary") if isinstance((llm_audit or {}).get("audit", {}), dict) else None,
+                    "llm_audit_limitations": ((llm_audit or {}).get("audit", {}) or {}).get("limitations", []) if isinstance((llm_audit or {}).get("audit", {}), dict) else [],
+                    "llm_rejected_findings": ((llm_audit or {}).get("audit", {}) or {}).get("rejected_findings", []) if isinstance((llm_audit or {}).get("audit", {}), dict) else [],
+                    "llm_finding_recovery_attempted": (llm_audit or {}).get("finding_recovery_attempted", False),
+                    "llm_finding_recovery_succeeded": (llm_audit or {}).get("finding_recovery_succeeded"),
+                    "llm_finding_recovery_completed": (llm_audit or {}).get("finding_recovery_completed"),
+                    "llm_unresolved_positive_summary": (llm_audit or {}).get("unresolved_positive_summary", False),
+                    "llm_unresolved_invalid_candidates": (llm_audit or {}).get("unresolved_invalid_candidates", False),
+                    "llm_finding_recovery_error": (llm_audit or {}).get("finding_recovery_error"),
                     "llm_error": (llm_audit or {}).get("error"),
                     "rsi_review_status": (rsi_review or {}).get("status", "not_run"),
+                    "rsi_preserved_prior_findings": (rsi_review or {}).get("preserved_prior_findings", 0),
                     "rsi_findings": rsi_findings,
                     "rsi_error": rsi_error or (rsi_review or {}).get("error"),
                     "rsi_note": rsi_note,
@@ -457,9 +689,20 @@ def run(args: argparse.Namespace) -> None:
                 process.kill()
                 process.wait()
 
+    run_manifest = {
+        **input_manifest,
+        "prediction_records": count,
+        "missing_prediction_records": max(0, input_manifest["input_records"] - count),
+        "max_samples": args.max_samples,
+        "complete_input_processed": count == input_manifest["input_records"],
+        "mode": args.mode,
+    }
+    output_path.with_suffix(output_path.suffix + ".run.json").write_text(
+        json.dumps(run_manifest, indent=2), encoding="utf-8"
+    )
     logger.info(
-        "Wrote %d predictions to %s (%d without any completed primary analysis stage).",
-        count, output_path, errors_count,
+        "Wrote %d/%d predictions to %s (%d without any completed primary analysis stage).",
+        count, input_manifest["input_records"], output_path, errors_count,
     )
 
 
@@ -498,6 +741,7 @@ def main() -> None:
     parser.add_argument("--max-llm-findings", type=int, default=settings.FORM_AI_DEFAULT_MAX_FINDINGS)
     parser.add_argument("--rsi-iterations", type=int, default=settings.FORM_AI_DEFAULT_RSI_ITERATIONS, help=f"Number of bounded RSI passes for hybrid_rsi (1-{settings.LLM_REVIEW_MAX_ITERATIONS}).")
     parser.add_argument("--memory-limit", default=settings.FORM_AI_DEFAULT_MEMORY_LIMIT)
+    parser.add_argument("--cpu-limit", type=float, default=settings.DOCKER_CPU_LIMIT, help="Docker CPU quota in cores.")
     args = parser.parse_args()
     if args.max_samples is not None and args.max_samples < 1:
         parser.error("--max-samples must be positive")
@@ -507,6 +751,8 @@ def main() -> None:
         parser.error("--max-llm-findings must be positive")
     if not 1 <= args.rsi_iterations <= settings.LLM_REVIEW_MAX_ITERATIONS:
         parser.error(f"--rsi-iterations must be between 1 and {settings.LLM_REVIEW_MAX_ITERATIONS}")
+    if not 0.25 <= args.cpu_limit <= 16:
+        parser.error("--cpu-limit must be between 0.25 and 16 cores")
     logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT_BENCHMARK)
     run(args)
 

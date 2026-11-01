@@ -1,0 +1,12 @@
+[
+  {
+    "id": "max-length",
+    "input": "1234567\n",
+    "expected": "Hello 1234567\n"
+  },
+  {
+    "id": "too-long",
+    "input": "Alexander\n",
+    "expected": "ERROR\n"
+  }
+]

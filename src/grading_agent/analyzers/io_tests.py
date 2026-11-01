@@ -26,6 +26,19 @@ def run_io_tests(
 
     Returns a structured result for the grading agent.
     """
+    if not test_cases:
+        return {
+            "status": "inconclusive",
+            "compiled": None,
+            "compiler_output": "",
+            "tests_passed": 0,
+            "tests_total": 0,
+            "score": None,
+            "score_scale": "0-100",
+            "results": [],
+            "reason": "No assignment-specific I/O test cases were configured; correctness must be assessed from the assignment contract and other available evidence.",
+        }
+
     sandbox.write_file(filename, source_code)
 
     compilation = sandbox.run(

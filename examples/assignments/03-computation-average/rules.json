@@ -1,0 +1,63 @@
+{
+  "problem": "03_computation_average",
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/03-computation-average/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.35,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/03-computation-average/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.35,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/03-computation-average/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/03-computation-average/memory_cases.json",
+        "run_sanitizers": true
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Compute the arithmetic mean without truncating fractional results. Use a floating-point division after accumulating safely.",
+    "operand_type": "signed integers",
+    "sum_type": "64-bit signed integer",
+    "input_range": "1 <= N <= 1000; each value fits in signed 32-bit integer",
+    "output_rule": "Print the arithmetic mean with exactly two digits after the decimal point."
+  }
+}

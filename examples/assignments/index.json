@@ -1,0 +1,43 @@
+[
+  {
+    "id": "01-memory-errors",
+    "title": "Heap use-after-free and memory leak",
+    "folder": "01-memory-errors",
+    "categories": [
+      "use-after-free",
+      "memory-leak"
+    ]
+  },
+  {
+    "id": "02-logical-leap-year",
+    "title": "Leap-year classification (logical bug)",
+    "folder": "02-logical-leap-year",
+    "categories": [
+      "logical-error"
+    ]
+  },
+  {
+    "id": "03-computation-average",
+    "title": "Arithmetic average (computation bug)",
+    "folder": "03-computation-average",
+    "categories": [
+      "computation-error"
+    ]
+  },
+  {
+    "id": "04-bruteforce-triplets",
+    "title": "Count triplets efficiently (brute-force solution)",
+    "folder": "04-bruteforce-triplets",
+    "categories": [
+      "algorithmic-complexity"
+    ]
+  },
+  {
+    "id": "05-buffer-overflow",
+    "title": "Bounded username input (buffer overflow)",
+    "folder": "05-buffer-overflow",
+    "categories": [
+      "buffer-overflow"
+    ]
+  }
+]

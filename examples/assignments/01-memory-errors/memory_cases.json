@@ -1,0 +1,7 @@
+[
+  {
+    "id": "trigger-uaf-and-leak",
+    "input": "",
+    "expected": "grading sample\n"
+  }
+]

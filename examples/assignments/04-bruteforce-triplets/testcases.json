@@ -1,0 +1,12 @@
+[
+  {
+    "id": "small-example",
+    "input": "5 3\n1 1 1 1 1\n",
+    "expected": "10\n"
+  },
+  {
+    "id": "no-triplets",
+    "input": "4 100\n1 2 3 4\n",
+    "expected": "0\n"
+  }
+]

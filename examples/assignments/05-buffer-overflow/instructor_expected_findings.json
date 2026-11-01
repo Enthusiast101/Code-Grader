@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "buffer-overflow",
+      "severity": "high",
+      "anchor": "if (scanf(\"%s\", username) != 1) {",
+      "description": "Unbounded %s conversion can write more than seven characters plus the terminating NUL into username[8]. A field width and explicit overlength handling are required.",
+      "line": 7,
+      "source_excerpt": "if (scanf(\"%s\", username) != 1) {"
+    }
+  ],
+  "note": "Instructor-side oracle for regression and manual review. Keep separate from model input."
+}

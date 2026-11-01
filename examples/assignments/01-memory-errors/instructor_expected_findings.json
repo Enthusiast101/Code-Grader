@@ -1,0 +1,22 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "use-after-free",
+      "severity": "high",
+      "anchor": "volatile int stale_value = values[20];",
+      "description": "Reads values after values has been freed.",
+      "line": 24,
+      "source_excerpt": "volatile int stale_value = values[20];"
+    },
+    {
+      "category": "memory-leak",
+      "severity": "medium",
+      "anchor": "strcpy(message, \"grading sample\");",
+      "description": "Allocates message but never calls free(message) before returning; this allocation leaks.",
+      "line": 15,
+      "source_excerpt": "char *message = malloc(32);"
+    }
+  ],
+  "note": "Instructor-side oracle for regression and manual review. Keep separate from model input."
+}

@@ -1,0 +1,7 @@
+[
+  {
+    "id": "century-not-leap",
+    "input": "1900\n",
+    "expected": "COMMON\n"
+  }
+]

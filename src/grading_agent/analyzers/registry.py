@@ -25,7 +25,9 @@ class AnalyzerContext:
     def get_test_cases(self) -> list[dict[str, Any]]:
         resolved = self.params.get("resolved_testset_path")
         if not resolved:
-            raise ValueError(f"Analyzer '{self.metric['analyzer']}' requires params.testset_path.")
+            # Test data depends on the assignment. Generic rules files may
+            # omit it; each execution analyzer handles [] as inconclusive.
+            return []
         path = Path(resolved)
         key = str(path)
         if key not in self.test_case_cache:

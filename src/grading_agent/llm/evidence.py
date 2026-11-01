@@ -119,10 +119,15 @@ def build_evidence_ledger(
         elif name in {"correctness", "logical"}:
             passed = metric.get("tests_passed", 0)
             total = metric.get("tests_total", 0)
+            if total:
+                summary_text = f"{name} test summary: {passed}/{total} passed."
+            else:
+                summary_text = f"{name}: no assignment-specific test cases were configured; execution correctness was not measured by this analyzer."
             _add(
                 ledger, f"E-{name.upper()}-SUMMARY-001", "test_summary",
-                f"{name} test summary: {passed}/{total} passed.",
+                summary_text,
                 metric=name, tests_passed=passed, tests_total=total,
+                test_data_configured=bool(total),
             )
             overflow_cases: list[dict[str, Any]] = []
             for index, case in enumerate(metric.get("results", [])[:30], 1):
@@ -159,9 +164,17 @@ def build_evidence_ledger(
                 )
 
         elif name == "syntax":
+            compiled = metric.get("compiled") is True
+            warning_count = int(metric.get("warning_count", 0) or 0)
+            error_count = int(metric.get("error_count", 0) or 0)
+            compiler_statement = (
+                "Compilation succeeded with zero warnings and zero errors; positive syntax evidence."
+                if compiled and warning_count == 0 and error_count == 0
+                else f"Compiler diagnostics: compiled={compiled}; warnings={warning_count}; errors={error_count}."
+            )
             _add(
                 ledger, "E-SYNTAX-001", "compiler_diagnostics",
-                f"Compiler: compiled={metric.get('compiled')}; warnings={metric.get('warning_count')}; errors={metric.get('error_count')}.",
+                compiler_statement,
                 compiled=metric.get("compiled"), warning_count=metric.get("warning_count"),
                 error_count=metric.get("error_count"), warnings=metric.get("warnings", [])[:5],
                 errors=metric.get("errors", [])[:5],
@@ -214,6 +227,42 @@ def build_evidence_ledger(
                 memory_safe=metric.get("memory_safe"), runtime_status=runtime.get("status") if isinstance(runtime, dict) else None,
             )
             if isinstance(runtime, dict):
+                gcc_analyzer = metric.get("gcc_analyzer", {})
+                if isinstance(gcc_analyzer, dict):
+                    gcc_findings = gcc_analyzer.get("findings", [])
+                    for index, finding in enumerate(gcc_findings[:16], 1):
+                        if isinstance(finding, dict):
+                            _add(
+                                ledger, f"E-GCC-ANALYZER-{index:03d}", "static_finding",
+                                f"GCC -fanalyzer {finding.get('category')}: {finding.get('message')} (line {finding.get('line')}).",
+                                tool="gcc -fanalyzer", category=finding.get("category"),
+                                severity=finding.get("severity"), line=finding.get("line"),
+                                column=finding.get("column"), message=finding.get("message"),
+                            )
+                for index, test in enumerate(runtime.get("valgrind_results", [])[:12], 1):
+                    if not isinstance(test, dict):
+                        continue
+                    parsed = test.get("parsed_summary", {})
+                    if not isinstance(parsed, dict):
+                        parsed = {}
+                    diagnostics = parsed.get("diagnostics", [])
+                    if not isinstance(diagnostics, list):
+                        diagnostics = []
+                    definite = parsed.get("definitely_lost", {})
+                    indirect = parsed.get("indirectly_lost", {})
+                    possible = parsed.get("possibly_lost", {})
+                    _add(
+                        ledger, f"E-VALGRIND-TEST-{index:03d}", "valgrind_result",
+                        f"Valgrind test {test.get('test_id')}: errors={parsed.get('error_count')}; "
+                        f"definitely_lost={definite.get('bytes') if isinstance(definite, dict) else None}; "
+                        f"indirectly_lost={indirect.get('bytes') if isinstance(indirect, dict) else None}; "
+                        f"possibly_lost={possible.get('bytes') if isinstance(possible, dict) else None}; "
+                        f"diagnostics={' | '.join(str(item)[:180] for item in diagnostics[:5])}.",
+                        test_id=test.get("test_id"), error_count=parsed.get("error_count"),
+                        definitely_lost=definite, indirectly_lost=indirect,
+                        possibly_lost=possible, diagnostics=[str(item)[:240] for item in diagnostics[:8]],
+                        analysis_error=test.get("analysis_error"), memory_safe=test.get("memory_safe"),
+                    )
                 for index, test in enumerate(runtime.get("asan_ubsan_results", [])[:12], 1):
                     if isinstance(test, dict):
                         _add(
@@ -227,11 +276,15 @@ def build_evidence_ledger(
             audit = metric.get("llm_source_audit", {})
             if isinstance(audit, dict):
                 audit_payload = audit.get("audit", {})
+                audit_summary = audit_payload.get("summary", "") if isinstance(audit_payload, dict) else ""
+                audit_limitations = audit_payload.get("limitations", []) if isinstance(audit_payload, dict) else []
                 _add(
                     ledger, "E-MEMORY-SOURCE-AUDIT-001", "model_audit",
-                    f"Separate model source audit status={audit.get('status')}; findings={len(audit_payload.get('findings', [])) if isinstance(audit_payload, dict) and isinstance(audit_payload.get('findings'), list) else 'unknown'}. Model-derived analysis is not independent runtime proof.",
+                    f"Separate model source audit status={audit.get('status')}; findings={len(audit_payload.get('findings', [])) if isinstance(audit_payload, dict) and isinstance(audit_payload.get('findings'), list) else 'unknown'}; summary={str(audit_summary)[:180]}. Model-derived analysis is a lead, not independent runtime proof.",
                     status=audit.get("status"),
                     finding_count=(len(audit_payload.get("findings", [])) if isinstance(audit_payload, dict) and isinstance(audit_payload.get("findings"), list) else None),
+                    summary=str(audit_summary)[:800] if isinstance(audit_summary, str) else "",
+                    limitations=[str(value)[:180] for value in audit_limitations[:4]] if isinstance(audit_limitations, list) else [],
                 )
                 if isinstance(audit_payload, dict):
                     for index, finding in enumerate(audit_payload.get("findings", [])[:10], 1):
@@ -268,12 +321,20 @@ def build_evidence_ledger(
                     line_number = finding.get("line") if isinstance(finding, dict) else None
                     if isinstance(line_number, int) and not isinstance(line_number, bool) and 1 <= line_number <= len(lines):
                         target_lines.add(line_number)
-        selected_lines = set(range(1, min(len(lines), 50) + 1)) | target_lines
+        # Keep a bounded opening context plus a small source window around
+        # every analyzer/model finding. This lets RSI inspect what happens
+        # before and after a cited line, even when the defect is late in file.
+        context_lines: set[int] = set()
+        for number in target_lines:
+            context = settings.LLM_SOURCE_EVIDENCE_CONTEXT_LINES
+            context_lines.update(range(max(1, number - context), min(len(lines), number + context) + 1))
+        selected_lines = set(range(1, min(len(lines), 50) + 1)) | target_lines | context_lines
         for index in sorted(selected_lines):
             line = lines[index - 1]
-            _add(ledger, f"E-SOURCE-L{index:03d}", "source_line", f"Source line {index}: {line[:180]!r}.", line=index, code=line[:180])
+            source_evidence = line[:settings.LLM_SOURCE_LINE_EVIDENCE_CHARS]
+            _add(ledger, f"E-SOURCE-L{index:03d}", "source_line", f"Source line {index}: {source_evidence[:360]!r}.", line=index, code=source_evidence)
         if len(lines) > 50:
-            _add(ledger, "E-SOURCE-TRUNCATED-001", "scope_limitation", f"The first 50 lines and directly cited finding lines are represented individually; full source remains in report ({len(lines)} lines).", line_count=len(lines))
+            _add(ledger, "E-SOURCE-TRUNCATED-001", "scope_limitation", f"The first 50 lines and source windows around directly cited finding lines are represented individually; full source remains in report ({len(lines)} lines).", line_count=len(lines))
 
     return ledger
 

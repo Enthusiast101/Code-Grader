@@ -89,19 +89,32 @@ def evaluate_mode(
     *,
     line_tolerance: int = settings.FORM_AI_LINE_TOLERANCE,
 ) -> dict[str, Any]:
+    """Evaluate only records with actual boolean predictions.
+
+    Missing and inconclusive predictions are never silently converted to safe.
+    A complete benchmark exposes headline metrics; incomplete runs expose
+    observed-subset metrics separately and set headline metrics to null.
+    """
     predictions = _load_predictions(predictions_path)
     tp = fp = fn = tn = 0
     line_checked = line_exact = line_within = 0
     type_checked = type_correct = 0
-    evaluated = missing = skipped = inconclusive = 0
-    matched_predictions: set[str] = set()
+    evaluated = missing = skipped = inconclusive = matched = 0
+    ground_truth_names: set[str] = set()
+    valid_ground_truth = 0
 
     for record in _iter_ground_truth(ground_truth_path):
         filename = record.get("file_name")
-        truth = _is_vulnerable(record.get("category", record.get("ground_truth_category")))
-        if not isinstance(filename, str) or truth is None:
+        # The derived program-level category is authoritative over raw record fields.
+        truth = _is_vulnerable(record.get("ground_truth_category", record.get("category")))
+        if not isinstance(filename, str) or not filename or truth is None:
             skipped += 1
             continue
+        if filename in ground_truth_names:
+            raise ValueError(f"Duplicate ground-truth filename {filename!r}; aggregate labels to one row per program first.")
+        ground_truth_names.add(filename)
+        valid_ground_truth += 1
+
         vulnerable_lines = _as_int_list(record.get("vulnerable_lines"))
         if not vulnerable_lines:
             vulnerable_lines = _as_int_list(record.get("vulnerable_line"))
@@ -112,25 +125,24 @@ def evaluate_mode(
         prediction = predictions.get(filename)
         if prediction is None:
             missing += 1
+            continue
+        matched += 1
+        raw_prediction = prediction.get("predicted_vulnerable")
+        if isinstance(raw_prediction, bool):
+            predicted = raw_prediction
+        elif isinstance(raw_prediction, str) and raw_prediction.casefold() in {"vulnerable", "unsafe", "true", "positive"}:
+            predicted = True
+        elif isinstance(raw_prediction, str) and raw_prediction.casefold() in {"safe", "non_vulnerable", "false", "negative"}:
             predicted = False
-            prediction = {}
         else:
-            matched_predictions.add(filename)
-            raw_prediction = prediction.get("predicted_vulnerable")
-            if isinstance(raw_prediction, bool):
-                predicted = raw_prediction
-            elif isinstance(raw_prediction, str):
-                predicted = raw_prediction.casefold() in {"vulnerable", "unsafe", "true", "positive"}
-            else:
-                skipped += 1
-                inconclusive += 1
-                continue
-        evaluated += 1
+            inconclusive += 1
+            continue
 
+        evaluated += 1
         if truth and predicted:
             tp += 1
             predicted_line = prediction.get("predicted_line")
-            if vulnerable_lines and isinstance(predicted_line, int):
+            if vulnerable_lines and isinstance(predicted_line, int) and not isinstance(predicted_line, bool):
                 line_checked += 1
                 line_exact += int(predicted_line in vulnerable_lines)
                 line_within += int(any(abs(predicted_line - line) <= line_tolerance for line in vulnerable_lines))
@@ -146,39 +158,72 @@ def evaluate_mode(
         else:
             tn += 1
 
-    extra_predictions = sorted(set(predictions) - matched_predictions)
+    extra_predictions = sorted(set(predictions) - ground_truth_names)
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     specificity = tn / (tn + fp) if tn + fp else 0.0
+    accuracy = (tp + tn) / evaluated if evaluated else 0.0
+    balanced_accuracy = (recall + specificity) / 2
+    partial_metrics = {
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "f1_score": round(f1, 6),
+        "accuracy": round(accuracy, 6),
+        "specificity": round(specificity, 6),
+        "false_positive_rate": round(fp / (fp + tn), 6) if fp + tn else 0.0,
+        "false_negative_rate": round(fn / (fn + tp), 6) if fn + tp else 0.0,
+        "balanced_accuracy": round(balanced_accuracy, 6),
+    }
+    complete = (
+        valid_ground_truth > 0
+        and missing == 0
+        and inconclusive == 0
+        and skipped == 0
+        and not extra_predictions
+        and evaluated == valid_ground_truth
+    )
+    localization = {
+        "line_predictions_evaluated": line_checked,
+        "exact_line_accuracy": round(line_exact / line_checked, 6) if line_checked else None,
+        "within_tolerance_accuracy": round(line_within / line_checked, 6) if line_checked else None,
+        "line_tolerance": line_tolerance,
+        "note": "A predicted line is correct when it matches any confirmed vulnerable line for that source file.",
+    }
+    error_type_accuracy = round(type_correct / type_checked, 6) if type_checked else None
     return {
         "prediction_file": str(predictions_path),
+        "evaluation_status": "completed" if complete else "incomplete",
+        "metrics_finalized": complete,
+        "ground_truth_records": valid_ground_truth,
         "evaluated_records": evaluated,
+        "matched_prediction_records": matched,
         "missing_predictions": missing,
         "extra_predictions_not_in_ground_truth": len(extra_predictions),
         "extra_prediction_examples": extra_predictions[:10],
         "inconclusive_predictions": inconclusive,
         "skipped_records": skipped,
-        "prediction_coverage": round(evaluated / (evaluated + inconclusive), 6) if evaluated + inconclusive else None,
+        "prediction_coverage": round(matched / valid_ground_truth, 6) if valid_ground_truth else None,
+        "classification_coverage": round(evaluated / valid_ground_truth, 6) if valid_ground_truth else None,
         "confusion_matrix": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
-        "precision": round(precision, 6),
-        "recall": round(recall, 6),
-        "f1_score": round(f1, 6),
-        "accuracy": round((tp + tn) / evaluated, 6) if evaluated else None,
-        "specificity": round(specificity, 6),
-        "false_positive_rate": round(fp / (fp + tn), 6) if fp + tn else 0.0,
-        "false_negative_rate": round(fn / (fn + tp), 6) if fn + tp else 0.0,
-        "balanced_accuracy": round((recall + specificity) / 2, 6),
-        "localization": {
-            "line_predictions_evaluated": line_checked,
-            "exact_line_accuracy": round(line_exact / line_checked, 6) if line_checked else None,
-            "within_tolerance_accuracy": round(line_within / line_checked, 6) if line_checked else None,
-            "line_tolerance": line_tolerance,
-            "note": "A predicted line is correct when it matches any confirmed vulnerable line for that source file.",
-        },
-        "error_type_accuracy": round(type_correct / type_checked, 6) if type_checked else None,
+        # Headline metrics are withheld for an incomplete test-set run.
+        "precision": partial_metrics["precision"] if complete else None,
+        "recall": partial_metrics["recall"] if complete else None,
+        "f1_score": partial_metrics["f1_score"] if complete else None,
+        "accuracy": partial_metrics["accuracy"] if complete else None,
+        "specificity": partial_metrics["specificity"] if complete else None,
+        "false_positive_rate": partial_metrics["false_positive_rate"] if complete else None,
+        "false_negative_rate": partial_metrics["false_negative_rate"] if complete else None,
+        "balanced_accuracy": partial_metrics["balanced_accuracy"] if complete else None,
+        "observed_subset_metrics": partial_metrics,
+        "localization": localization,
+        "error_type_accuracy": error_type_accuracy,
         "error_type_predictions_evaluated": type_checked,
-        "note": "One record per source program. Missing predictions count as negative predictions; inconclusive predictions are counted separately. Localization/type metrics use all aggregated ground-truth locations/types for each vulnerable program.",
+        "note": (
+            "Complete metrics use every valid ground-truth program exactly once. "
+            "Missing and inconclusive predictions are not treated as safe. "
+            "For incomplete runs, observed_subset_metrics are diagnostic only; headline metrics are withheld."
+        ),
     }
 
 
