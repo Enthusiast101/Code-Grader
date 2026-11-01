@@ -1,0 +1,63 @@
+{
+  "problem": "05_buffer_overflow",
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/05-buffer-overflow/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/05-buffer-overflow/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/05-buffer-overflow/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.5,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/05-buffer-overflow/memory_cases.json",
+        "run_sanitizers": true
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Accept a username of length 1 to 7, then print a greeting. Inputs longer than 7 characters must be rejected safely without overflowing the 8-byte destination.",
+    "operand_type": "ASCII username",
+    "sum_type": "none",
+    "input_range": "1 to 7 characters accepted; longer names rejected",
+    "output_rule": "For valid input print Hello <name>. For overlong input print ERROR."
+  }
+}

@@ -1,0 +1,7 @@
+[
+  {
+    "id": "overlong-input",
+    "input": "Alexander\n",
+    "expected": "ERROR\n"
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "id": "duplicate-values",
+    "input": "6 6\n1 1 2 2 3 3\n",
+    "expected": "8\n"
+  },
+  {
+    "id": "negative-values",
+    "input": "5 0\n-2 -1 0 1 2\n",
+    "expected": "2\n"
+  }
+]

@@ -7,7 +7,18 @@ only, so configuration remains discoverable in one place.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Any, Iterator, Mapping
+
+# Load project-local .env before reading any configuration values. Shell-exported
+# environment variables retain precedence, making deployment overrides explicit.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+except ImportError:
+    pass
 
 
 def _env_int(name: str, default: int) -> int:
@@ -43,6 +54,57 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 
+# Per-request configuration overrides used by Gradio. ContextVar keeps two
+# concurrent grading jobs isolated; module-level defaults remain immutable.
+_RUNTIME_OVERRIDE_KEYS = {
+    "MODEL",
+    "TEMPERATURE",
+    "LLAMA_REQUEST_TIMEOUT",
+    "LLM_REVIEW_MAX_ITERATIONS",
+    "LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS",
+    "LLM_GLOBAL_RSI_MAX_TOKENS",
+    "LLM_GLOBAL_SCORE_MAX_TOKENS",
+    "LLM_GLOBAL_MAX_FINDINGS",
+    "LLM_PROGRAM_SOURCE_MAX_CHARS",
+    "LLM_GLOBAL_SOURCE_MAX_CHARS",
+    "LLM_MAX_EVIDENCE_CHARS",
+    "LLAMA_REASONING_ENABLED",
+    "LLAMA_REASONING_FORMAT",
+    "LLAMA_REASONING_BUDGET",
+    "LLAMA_JSON_GRAMMAR_ENABLED",
+    "DOCKER_CPU_LIMIT",
+    "LLM_CONTEXT_COMPRESSION_ENABLED",
+    "LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS",
+    "LLM_CONTEXT_COMPRESSION_MAX_TOKENS",
+}
+_RUNTIME_OVERRIDES: ContextVar[dict[str, Any]] = ContextVar(
+    "grading_runtime_overrides", default={}
+)
+
+
+def runtime_value(name: str) -> Any:
+    """Return a per-request override, falling back to the module default."""
+    return _RUNTIME_OVERRIDES.get().get(name, globals().get(name))
+
+
+@contextmanager
+def runtime_overrides(values: Mapping[str, Any] | None = None) -> Iterator[None]:
+    """Apply validated, request-local settings without cross-job interference."""
+    supplied = dict(values or {})
+    unknown = set(supplied) - _RUNTIME_OVERRIDE_KEYS
+    if unknown:
+        raise ValueError(
+            "Unsupported runtime override(s): " + ", ".join(sorted(unknown))
+        )
+    merged = dict(_RUNTIME_OVERRIDES.get())
+    merged.update(supplied)
+    token = _RUNTIME_OVERRIDES.set(merged)
+    try:
+        yield
+    finally:
+        _RUNTIME_OVERRIDES.reset(token)
+
+
 # ---------------------------------------------------------------------------
 # Project paths and logging
 # ---------------------------------------------------------------------------
@@ -68,14 +130,42 @@ LLAMA_HEALTH_PATH = "/health"
 LLAMA_HEALTH_HOST = "127.0.0.1" if HOST in {"0.0.0.0", "::"} else HOST
 LLAMA_HEALTH_URL = f"http://{LLAMA_HEALTH_HOST}:{PORT}{LLAMA_HEALTH_PATH}"
 
-MODEL = os.getenv("LLAMA_MODEL", "Qwen/Qwen3-4B-GGUF:Q4_K_M")
+DEFAULT_MODEL = "gguf/Qwen3.5-2B-GGUF:Q4_K_M"
+_LEGACY_PROJECT_DEFAULT_MODELS = {"Qwen/Qwen3-4B-GGUF:Q4_K_M"}
+
+
+def _resolve_model_from_env(value: str | None) -> str:
+    """Use Qwen3.5-2B by default and migrate the previous bundled default.
+
+    Custom model identifiers remain untouched. This migration is important for
+    existing installations whose .env was copied from an older project version.
+    """
+    configured = (value or "").strip()
+    if not configured or configured in _LEGACY_PROJECT_DEFAULT_MODELS:
+        return DEFAULT_MODEL
+    return configured
+
+
+MODEL = _resolve_model_from_env(os.getenv("LLAMA_MODEL"))
 TEMPERATURE = _env_float("LLAMA_TEMPERATURE", 0.0)
 SEED = _env_int("LLAMA_SEED", 42)
 MAX_TOKENS = _env_int("LLAMA_MAX_TOKENS", 3072)
 LLAMA_CONTEXT_SIZE = _env_int("LLAMA_CONTEXT_SIZE", 8192)
 LLAMA_REASONING_ENABLED = _env_bool("LLAMA_REASONING_ENABLED", True)
-LLAMA_REASONING_FORMAT = os.getenv("LLAMA_REASONING_FORMAT", "deepseek")
-LLAMA_REASONING_BUDGET = _env_int("LLAMA_REASONING_BUDGET", 1536)
+# When reasoning is disabled, use the server's ``none`` parser as well.  This
+# prevents a pre-existing Qwen/DeepSeek chat template from routing the entire
+# completion budget into a hidden reasoning channel.
+LLAMA_REASONING_FORMAT = os.getenv(
+    "LLAMA_REASONING_FORMAT", "deepseek" if LLAMA_REASONING_ENABLED else "none"
+)
+LLAMA_REASONING_BUDGET = _env_int("LLAMA_REASONING_BUDGET", 384)
+# Structured grading/compression requests use response_format JSON Schema.
+# This toggle controls JSON-object mode for legacy callers without a schema.
+LLAMA_JSON_GRAMMAR_ENABLED = _env_bool("LLAMA_JSON_GRAMMAR_ENABLED", True)
+# Qwen3 + llama.cpp JSON-schema requests need the empty-think-prefill fix
+# merged in llama.cpp PR #31380 (first verified release: build b12005).
+LLAMA_MIN_JSON_SCHEMA_BUILD = _env_int("LLAMA_MIN_JSON_SCHEMA_BUILD", 12005)
+LLAMA_ALLOW_UNVERIFIED_SERVER = _env_bool("LLAMA_ALLOW_UNVERIFIED_SERVER", False)
 LLAMA_CHAT_TEMPLATE_KWARGS = {"enable_thinking": LLAMA_REASONING_ENABLED}
 
 # Server lifecycle and HTTP request timeouts (connect timeout, read timeout).
@@ -93,10 +183,32 @@ LLAMA_REQUEST_TIMEOUT = (LLAMA_REQUEST_CONNECT_TIMEOUT_S, LLAMA_REQUEST_READ_TIM
 # ---------------------------------------------------------------------------
 LLM_REVIEW_MAX_TOKENS = _env_int("LLM_REVIEW_MAX_TOKENS", MAX_TOKENS)
 LLM_SOURCE_AUDIT_MAX_TOKENS = _env_int("LLM_SOURCE_AUDIT_MAX_TOKENS", MAX_TOKENS)
+# Legacy per-metric setting retained for compatible callers; the grading path
+# now uses bounded whole-program stages below.
 LLM_RSI_MAX_TOKENS = _env_int("LLM_RSI_MAX_TOKENS", MAX_TOKENS)
-LLM_RETRY_ATTEMPTS = _env_int("LLM_RETRY_ATTEMPTS", 2)
+LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS = _env_int("LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS", 2048)
+LLM_GLOBAL_RSI_MAX_TOKENS = _env_int("LLM_GLOBAL_RSI_MAX_TOKENS", 3072)
+LLM_GLOBAL_SCORE_MAX_TOKENS = _env_int("LLM_GLOBAL_SCORE_MAX_TOKENS", 2048)
+LLM_PROGRAM_SOURCE_MAX_CHARS = _env_int("LLM_PROGRAM_SOURCE_MAX_CHARS", 12000)
+LLM_GLOBAL_SOURCE_MAX_CHARS = _env_int("LLM_GLOBAL_SOURCE_MAX_CHARS", 12000)
+LLM_GLOBAL_MAX_FINDINGS = _env_int("LLM_GLOBAL_MAX_FINDINGS", 12)
+LLM_GRADING_RETRY_ATTEMPTS = 1  # The production grading path sends exactly one request per stage.
+# The server can support reasoning globally; schema-constrained stages override
+# the chat template to direct mode for deterministic JSON Schema decoding.
+
+# Context compression uses the exact same model/server as grading. It is only
+# called when history is large; deterministic compaction remains the fallback.
+LLM_CONTEXT_COMPRESSION_ENABLED = _env_bool("LLM_CONTEXT_COMPRESSION_ENABLED", True)
+LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS = _env_int("LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS", 900)
+LLM_CONTEXT_COMPRESSION_MAX_TOKENS = _env_int("LLM_CONTEXT_COMPRESSION_MAX_TOKENS", 1536)
+LLM_RETRY_ATTEMPTS = 1  # Legacy audit paths also make one request; no repair retries.
 LLM_REVIEW_MAX_ITERATIONS = _env_int("LLM_REVIEW_MAX_ITERATIONS", 3)
 LLM_DEFAULT_MAX_FINDINGS = _env_int("LLM_DEFAULT_MAX_FINDINGS", 30)
+LLM_FINDING_RECOVERY_ENABLED = _env_bool("LLM_FINDING_RECOVERY_ENABLED", False)
+LLM_FINDING_EXCERPT_CONTEXT_LINES = _env_int("LLM_FINDING_EXCERPT_CONTEXT_LINES", 4)
+LLM_SOURCE_EVIDENCE_CONTEXT_LINES = _env_int("LLM_SOURCE_EVIDENCE_CONTEXT_LINES", 2)
+LLM_SOURCE_LINE_EVIDENCE_CHARS = _env_int("LLM_SOURCE_LINE_EVIDENCE_CHARS", 2000)
+LLM_RSI_CODE_EVIDENCE_CHARS = _env_int("LLM_RSI_CODE_EVIDENCE_CHARS", 320)
 
 LLM_MAX_EVIDENCE_CHARS = _env_int("LLM_MAX_EVIDENCE_CHARS", 4200)
 LLM_MAX_SOURCE_CHARS = _env_int("LLM_MAX_SOURCE_CHARS", 6000)
@@ -132,7 +244,9 @@ FORM_AI_DEFAULT_MAX_FINDINGS = _env_int("FORM_AI_DEFAULT_MAX_FINDINGS", LLM_DEFA
 FORM_AI_DEFAULT_RSI_ITERATIONS = _env_int("FORM_AI_DEFAULT_RSI_ITERATIONS", LLM_REVIEW_MAX_ITERATIONS)
 FORM_AI_DEFAULT_MEMORY_LIMIT = os.getenv("FORM_AI_DEFAULT_MEMORY_LIMIT", DOCKER_MEMORY_LIMIT)
 FORM_AI_LINE_TOLERANCE = _env_int("FORM_AI_LINE_TOLERANCE", 2)
-FORM_AI_DEFAULT_MAX_SAMPLES = None  # None means evaluate the complete supplied split.
+FORM_AI_DEFAULT_MAX_SAMPLES = None  # CLI default: evaluate the complete supplied split.
+FORM_AI_GRADIO_SAMPLE_SEED = _env_int("FORM_AI_GRADIO_SAMPLE_SEED", SEED)
+FORM_AI_GRADIO_DEFAULT_SAMPLE_COUNT = _env_int("FORM_AI_GRADIO_DEFAULT_SAMPLE_COUNT", 0)  # 0 = all
 FORM_AI_PREDICTION_MODES = ("tools_only", "llm_only", "hybrid", "hybrid_rsi")
 FORM_AI_RSI_METRIC_DEFAULTS = (
     ("structure", "cppcheck_source", 0.5),
@@ -151,6 +265,7 @@ UI_DEFAULT_MAX_FINDINGS = FORM_AI_DEFAULT_MAX_FINDINGS
 UI_DEFAULT_RSI_ITERATIONS = FORM_AI_DEFAULT_RSI_ITERATIONS
 UI_DOCKER_MEMORY_CHOICES = ("512m", "1g", "2g")
 UI_DEFAULT_MEMORY_LIMIT = FORM_AI_DEFAULT_MEMORY_LIMIT
+UI_DEFAULT_FORM_AI_SAMPLE_COUNT = FORM_AI_GRADIO_DEFAULT_SAMPLE_COUNT
 
 # ---------------------------------------------------------------------------
 # Analyzer defaults (rules.json parameters override these values)
@@ -212,6 +327,4 @@ FORM_AI_SPLIT_SEED = _env_int("FORM_AI_SPLIT_SEED", 42)
 FORM_AI_SPLIT_OUTPUT_DIR = "benchmark/splits"
 FORM_AI_EVALUATION_OUTPUT = "reports/formai-evaluation.json"
 
-# UI sample-count default: zero means process the complete uploaded test split.
-UI_DEFAULT_MAX_SAMPLES = _env_int("UI_DEFAULT_MAX_SAMPLES", 0)
 UI_DEFAULT_BENCHMARK_MODE = "hybrid_rsi"

@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "logical-error",
+      "severity": "medium",
+      "anchor": "return year % 4 == 0;",
+      "description": "Treats every year divisible by four as a leap year, incorrectly including century years not divisible by 400.",
+      "line": 5,
+      "source_excerpt": "return year % 4 == 0;"
+    }
+  ],
+  "note": "Instructor-side oracle for regression and manual review. Keep separate from model input."
+}

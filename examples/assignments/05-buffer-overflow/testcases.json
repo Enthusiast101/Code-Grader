@@ -1,0 +1,7 @@
+[
+  {
+    "id": "short-name",
+    "input": "Ada\n",
+    "expected": "Hello Ada\n"
+  }
+]

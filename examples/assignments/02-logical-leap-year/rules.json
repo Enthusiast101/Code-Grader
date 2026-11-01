@@ -1,0 +1,63 @@
+{
+  "problem": "02_logical_leap_year",
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/02-logical-leap-year/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.35,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/02-logical-leap-year/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.35,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/02-logical-leap-year/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/02-logical-leap-year/memory_cases.json",
+        "run_sanitizers": true
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Classify years according to the Gregorian leap-year rule: divisible by 400, or divisible by 4 and not by 100.",
+    "operand_type": "integer year",
+    "sum_type": "none",
+    "input_range": "1 through 9999",
+    "output_rule": "Print LEAP or COMMON followed by a newline."
+  }
+}

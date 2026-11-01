@@ -32,8 +32,8 @@ def build_usefulness_and_limitations() -> dict[str, list[dict[str, str]]]:
         "limitations": [
             {
                 "limitation": "Finite tests cannot prove correctness",
-                "example": "A sum program passes every supplied case but receives 2147483647 and 1 when no overflow case is configured; the program may invoke signed integer overflow.",
-                "mitigation": "Define the numeric contract in rules, include boundary/counterexample tests, and state exactly which inputs were exercised.",
+                "example": "A program passes every supplied case but receives a boundary value that was not represented in the test set; it may fail or violate a type/range constraint on that input.",
+                "mitigation": "Define task-specific preconditions, postconditions, input ranges, and output constraints in rules; include boundary/counterexample tests and state exactly which inputs were exercised.",
             },
             {
                 "limitation": "Dynamic tools only observe executed paths",

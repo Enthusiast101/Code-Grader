@@ -4,6 +4,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from grading_agent.reporting.rationale import compact_rationale
+
 
 def _valid_score(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -21,8 +23,9 @@ def apply_metric_scores(
 
     The analyzers collect objective evidence. The LLM evaluates that evidence
     against the rubric and supplies the metric score, as shown in the project
-    flowchart. If an LLM score is unavailable, the deterministic analyzer's
-    score is used. If neither exists, the metric receives zero.
+    flowchart. If an LLM score is unavailable, a completed analyzer score is
+    used. If neither source measured the metric, a neutral provisional score
+    is used and clearly identified rather than inventing a zero.
     """
     llm_by_name = {
         item.get("name"): item
@@ -39,32 +42,63 @@ def apply_metric_scores(
             result = {}
             report[name] = result
 
+        analyzer_status = str(result.get("status", "")).casefold()
         analyzer_score = _valid_score(result.get("score"))
+        if analyzer_status in {"inconclusive", "not_configured", "unavailable", "skipped", "error", "failed"}:
+            analyzer_score = None
         llm_item = llm_by_name.get(name, {})
-        llm_score = _valid_score(llm_item.get("score")) if isinstance(llm_item, dict) else None
+        score_origin = str(llm_item.get("origin", llm_item.get("score_origin", "llm"))) if isinstance(llm_item, dict) else "llm"
+        candidate_llm_score = _valid_score(llm_item.get("score")) if isinstance(llm_item, dict) else None
+        llm_score = candidate_llm_score if score_origin == "llm" else None
+        fallback_score = candidate_llm_score if score_origin != "llm" else None
 
         if llm_score is not None:
             final_score = llm_score
-            basis = "LLM RSI score based on rubric, source code, and analyzer evidence"
+            final_origin = "llm"
         elif analyzer_score is not None:
             final_score = analyzer_score
-            basis = "deterministic analyzer score (LLM RSI score unavailable)"
+            final_origin = "analyzer_fallback"
+        elif fallback_score is not None:
+            final_score = fallback_score
+            final_origin = score_origin if score_origin != "llm" else "evidence_fallback"
         else:
-            final_score = 0.0
-            basis = "no analyzer or LLM score available; zero used"
+            # Missing evidence is not proof of a failed submission. Keep a
+            # clearly tagged neutral provisional value rather than inventing 0.
+            final_score = 70.0
+            final_origin = "neutral_provisional"
 
         result["analyzer_score"] = analyzer_score
         result["llm_rsi_score"] = llm_score
         result["score"] = round(final_score, 2)
         result["score_scale"] = "0-100"
-        result["scoring_basis"] = basis
-        if isinstance(llm_item, dict) and llm_item:
+        result["score_origin"] = final_origin
+        if llm_score is not None and isinstance(llm_item, dict):
+            explanation = llm_item.get("rationale", "")
+        elif final_origin == "analyzer_fallback":
+            explanation = (
+                result.get("summary") or result.get("rationale") or result.get("message")
+                or f"LLM score unavailable; the completed {name.replace('_', ' ')} analyzer supplied the fallback score."
+            )
+        else:
+            explanation = (
+                llm_item.get("rationale", "") if isinstance(llm_item, dict) else ""
+            ) or f"Insufficient measured evidence for {name.replace('_', ' ')}; a provisional score is shown."
+        result["score_rationale"] = compact_rationale(explanation, max_words=18, max_chars=120)
+        # Remove the old verbose score-basis field from generated artifacts.
+        result.pop("scoring_basis", None)
+        if isinstance(llm_item, dict) and llm_item and llm_score is not None:
             result["llm_rsi"] = {
                 "rationale": llm_item.get("rationale", ""),
-                "basis": llm_item.get("basis", "limited_evidence"),
                 "evidence_ids": llm_item.get("evidence_ids", []),
+                "iterations_requested": llm_item.get("iterations_requested", 1),
+                "iterations_completed": llm_item.get("iterations_completed", 1),
+                "iteration_status": llm_item.get("iteration_status", "completed"),
+                "iteration_history": llm_item.get("iteration_history", []),
+                "score_origin": score_origin,
             }
-        result["status"] = "completed" if analyzer_score is not None or llm_score is not None else "completed_with_fallback"
+        elif llm_score is None:
+            result.pop("llm_rsi", None)
+        result["status"] = "completed" if llm_score is not None else "completed_with_fallback"
 
 
 def calculate_overall_score(
@@ -94,11 +128,13 @@ def calculate_overall_score(
         name = metric["name"]
         result = metric_results.get(name)
         score = _valid_score(result.get("score")) if isinstance(result, dict) else None
+        score_origin = str(result.get("score_origin", "unknown")) if isinstance(result, dict) else "unknown"
         if score is None:
-            score = 0.0
-            warnings.append(f"{name}: no score was available; zero was used.")
-        elif isinstance(result, dict) and result.get("scoring_basis", "").startswith("no analyzer or LLM score"):
-            warnings.append(f"{name}: no analyzer or LLM score was available; zero was used.")
+            score = 70.0
+            score_origin = "neutral_provisional"
+            warnings.append(f"{name}: no valid score was available; a neutral provisional score was used.")
+        elif score_origin == "neutral_provisional":
+            warnings.append(f"{name}: evidence was insufficient for a measured score; a neutral provisional score was used.")
 
         weight = float(metric["weight"])
         contribution = weight * score
@@ -109,7 +145,7 @@ def calculate_overall_score(
             "weight": weight,
             "score": round(score, 2),
             "contribution": round(contribution, 2),
-            "scoring_basis": result.get("scoring_basis", "no analyzer or LLM score") if isinstance(result, dict) else "no analyzer or LLM score",
+            "score_origin": score_origin,
         })
 
     return {
@@ -120,5 +156,5 @@ def calculate_overall_score(
         "contributions": contributions,
         "warnings": warnings,
         "formula": "sum(metric_weight * final_metric_score)",
-        "metric_fusion": "LLM RSI score per metric; deterministic analyzer score is the fallback; zero only when both are unavailable.",
+        "metric_fusion": "LLM score is authoritative; completed deterministic analyzer scores are fallbacks only; unmeasured metrics receive a labeled neutral provisional score.",
     }

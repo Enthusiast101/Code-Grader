@@ -1,0 +1,63 @@
+{
+  "problem": "01_memory_errors",
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/01-memory-errors/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/01-memory-errors/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/01-memory-errors/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.45,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/01-memory-errors/memory_cases.json",
+        "run_sanitizers": true
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Keep heap data valid until its last use and release every successful allocation exactly once. The program should print the fixed status line and exit normally.",
+    "operand_type": "none",
+    "sum_type": "none",
+    "input_range": "No input.",
+    "output_rule": "Print exactly: grading sample"
+  }
+}

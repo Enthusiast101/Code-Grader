@@ -1,0 +1,117 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: 0a77991366fb2700b1fae0917f37cafde93d5be3c9f84d586b3cb59b6b9ec3ce
+Source SHA-256: 738c72427ccdc58c8a72fe2ac64be42a28a43d6ae7d82c2e14b7546aa51906db
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Deterministic evidence fallback retained 1 supported finding(s). This fallback is not a substitute for a completed LLM review.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: compiled_smoke_skipped
+Compiled: True
+Smoke tested: False
+
+correctness            weight=0.220  score=60.00/100    status=completed_with_fallback
+  Assessment: The assignment contract is underspecified; this provisional score reflects observed behavior without inventing missing…
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed syntax analyzer supplied the fallback score.
+structure              weight=0.120  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed structure analyzer supplied the fallback score.
+modularity             weight=0.080  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed modularity analyzer supplied the fallback score.
+complexity             weight=0.080  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed complexity analyzer supplied the fallback score.
+logical                weight=0.100  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+runtime_efficiency     weight=0.050  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+memory_safety          weight=0.170  score=70.00/100    status=completed_with_fallback
+  Assessment: The review retained 1 finding(s), but the LLM metric-scoring response was unavailable. A neutral provisional score is…
+  Valgrind score: None
+  ASan/UBSan score (supplementary): None
+readability            weight=0.100  score=87.00/100    status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed readability analyzer supplied the fallback score.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 80.30/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+Program understanding: program_understanding: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 1: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 1: deterministic fallback retained the review state; RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 2: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 2: deterministic fallback retained the review state; RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 3: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","
+  RSI pass 1: completed with deterministic fallback; 1 retained finding(s); Deterministic evidence fallback retained 1 supported finding(s). This fallback is not a substitute for a completed LLM review.
+    - memory_safety: GCC -fanalyzer use_after_free: pointer ‘values’ used after ‘free’ [-Wuse-after-free] (line 24). (line 24)
+  RSI pass 2: completed with deterministic fallback; 1 retained finding(s); Deterministic evidence fallback retained 1 supported finding(s). This fallback is not a substitute for a completed LLM review.
+    - memory_safety: GCC -fanalyzer use_after_free: pointer ‘values’ used after ‘free’ [-Wuse-after-free] (line 24). (line 24)
+  RSI pass 3: completed with deterministic fallback; 1 retained finding(s); Deterministic evidence fallback retained 1 supported finding(s). This fallback is not a substitute for a completed LLM review.
+    - memory_safety: GCC -fanalyzer use_after_free: pointer ‘values’ used after ‘free’ [-Wuse-after-free] (line 24). (line 24)
+LLM scores missing: correctness, syntax, structure, modularity, complexity, logical, runtime_efficiency, memory_safety, readability
+Separate metric-scoring stage: completed_with_fallback
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The source contains 1 function definition(s). Included headers: stdio.h, stdlib.h, string.h. Input APIs observed: none detected. Output APIs observed: printf. Dynamic-memory APIs observed: malloc, free.
+Expected assignment behavior: grading
+Contract comparison: Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.
+Actual algorithm: Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.
+Functions:
+  - main (lines 5-5): Function declared/defined in the submitted source; behavior requires code inspection.
+Execution flow:
+  - Function definitions and API usage were inventoried from source text.
+Assumptions:
+  - This fallback is a lexical inventory, not a proof of program behavior.
+Ambiguities:
+  - LLM program understanding was unavailable; verify complex control/data flow manually.
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[MEDIUM] memory_safety — GCC -fanalyzer use_after_free: pointer ‘values’ used after ‘free’ [-Wuse-after-free] (line 24). (lines 24-24)
+  GCC -fanalyzer use_after_free: pointer ‘values’ used after ‘free’ [-Wuse-after-free] (line 24).
+  Evidence: E-GCC-ANALYZER-001
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 0.960 s
+LLM server readiness/startup: 5.020 s
+LLM requests: 0.096 s
+Total through scoring: 6.276 s
+  correctness: 0.000 s
+  syntax: 0.115 s
+  structure: 0.117 s
+  modularity: 0.009 s
+  complexity: 0.001 s
+  logical: 0.000 s
+  runtime_efficiency: 0.001 s
+  memory_safety: 0.192 s
+  readability: 0.001 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 9 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 0.010 s
+RSI pass 1: 0.016 s
+RSI pass 2: 0.018 s
+RSI pass 3: 0.017 s
+Metric-scoring request 1: 0.016 s
+Total LLM time: 0.096 s
+LLM error: Program understanding: program_understanding: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 1: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 1: deterministic fallback retained the review state; RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 2: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}; RSI iteration 2: deterministic fallback retained the review state; RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: s
+LLM diagnostic: Program understanding: program_understanding: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}
+LLM diagnostic: RSI iteration 1: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}
+LLM diagnostic: RSI iteration 1: deterministic fallback retained the review state; RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}
+LLM diagnostic: RSI iteration 2: RuntimeError: Local LLM request failed with HTTP 400: {"error":{"code":400,"message":"Failed to initialize samplers: std::exception","type":"invalid_request_error"}}
+Context compression: deterministic fallback used (4 event(s)); model=Qwen/Qwen3-4B-GGUF:Q4_K_M.
+  Compression detail (program_understanding): HTTPError: 400 Client Error: Bad Request for url: http://127.0.0.1:8080/v1/chat/completions
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

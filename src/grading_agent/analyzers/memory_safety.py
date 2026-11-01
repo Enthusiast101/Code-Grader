@@ -55,6 +55,84 @@ def _parse_valgrind_log(log: str) -> dict[str, Any]:
 
 
 
+def _parse_gcc_analyzer_output(output: str) -> list[dict[str, Any]]:
+    """Extract source-located GCC -fanalyzer warnings without retaining huge traces."""
+    findings: list[dict[str, Any]] = []
+    pattern = re.compile(
+        r"^(?P<file>.*?):(?P<line>\d+):(?P<column>\d+):\s*"
+        r"(?P<severity>warning|error):\s*(?P<message>.*)$"
+    )
+    seen: set[tuple[int, str]] = set()
+    for raw_line in output.splitlines():
+        match = pattern.match(raw_line.strip())
+        if not match:
+            continue
+        line = int(match.group("line"))
+        message = match.group("message").strip()
+        lowered = message.casefold()
+        if any(term in lowered for term in ("use after", "used after", "use-after-free")):
+            category = "use_after_free"
+        elif "double-free" in lowered or "double free" in lowered:
+            category = "double_free"
+        elif "leak" in lowered or "allocated" in lowered and "not freed" in lowered:
+            category = "memory_leak"
+        elif "out of bounds" in lowered or "out-of-bounds" in lowered:
+            category = "out_of_bounds"
+        elif "null" in lowered and ("dereference" in lowered or "pointer" in lowered):
+            category = "null_dereference"
+        else:
+            category = "memory_safety"
+        key = (line, category)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append({
+            "category": category,
+            "severity": match.group("severity").lower(),
+            "line": line,
+            "column": int(match.group("column")),
+            "message": message[:360],
+            "file": match.group("file")[-160:],
+            "tool": "gcc -fanalyzer",
+        })
+    return findings
+
+
+def _run_gcc_analyzer(sandbox: DockerSandbox, filename: str, timeout_s: int) -> dict[str, Any]:
+    """Run GCC's path-sensitive static analyzer as a supplementary memory check."""
+    try:
+        run = sandbox.run(
+            [
+                "gcc", "-std=c11", "-Wall", "-Wextra", "-fanalyzer",
+                "-fdiagnostics-color=never", "-c", filename,
+                "-o", "student_program_analyzer.o",
+            ],
+            timeout_s=timeout_s,
+        )
+    except Exception as exc:  # Tool availability must not invalidate Valgrind.
+        return {
+            "status": "unavailable",
+            "findings": [],
+            "error": f"{type(exc).__name__}: {exc}"[:300],
+        }
+
+    output = run.get("output", "") or ""
+    if run.get("timed_out"):
+        status = "inconclusive"
+    elif run.get("exit_code") == 0:
+        status = "completed"
+    else:
+        # Syntax errors or unsupported flags can prevent static analysis.
+        status = "unavailable"
+    return {
+        "status": status,
+        "findings": _parse_gcc_analyzer_output(output),
+        "output_excerpt": output[-5000:],
+        "exit_code": run.get("exit_code"),
+        "timed_out": bool(run.get("timed_out")),
+    }
+
+
 def run_memory_safety(
     sandbox: DockerSandbox,
     source_code: str,
@@ -64,10 +142,7 @@ def run_memory_safety(
     run_timeout_s: int = settings.ANALYZER_MEMORY_RUN_TIMEOUT_S,
     run_sanitizers: bool = settings.ANALYZER_RUN_SANITIZERS,
 ) -> dict[str, Any]:
-    """Run Valgrind and optional AddressSanitizer/UBSan on every test input."""
-    if not test_cases:
-        return {"analyzer": "memory_safety", "status": "inconclusive", "compiled": False, "analysis_error": True, "tests_total": 0, "tests_checked": 0, "results": [], "score": None}
-
+    """Run source-level analysis always and runtime checks when inputs exist."""
     for index, case in enumerate(test_cases, start=1):
         if not isinstance(case, dict) or not isinstance(case.get("input"), str) or not isinstance(case.get("expected"), str):
             raise ValueError(f"Test case {index} requires string input and expected fields.")
@@ -79,6 +154,38 @@ def run_memory_safety(
     )
     if vg_compile["timed_out"] or vg_compile["exit_code"] != 0:
         return {"analyzer": "memory_safety", "status": "failed", "compiled": False, "compiler_output": vg_compile["output"], "analysis_error": False, "tests_total": len(test_cases), "tests_checked": 0, "results": [], "score": None}
+
+    # GCC's path-sensitive analyzer catches source-level defects such as
+    # use-after-free even when a particular runtime test does not expose them.
+    gcc_analyzer = _run_gcc_analyzer(sandbox, filename, compile_timeout_s)
+
+    if not test_cases:
+        return {
+            "analyzer": "memory_safety",
+            "status": "inconclusive",
+            "score": None,
+            "score_scale": "0-100",
+            "compiled": True,
+            "tests_total": 0,
+            "tests_checked": 0,
+            "tests_clean": None,
+            "memory_safe": None,
+            "analysis_error": False,
+            "gcc_analyzer": gcc_analyzer,
+            "runtime_tools": {
+                "status": "not_run",
+                "score": None,
+                "score_scale": "0-100",
+                "valgrind_score": None,
+                "asan_ubsan_score": None,
+                "valgrind_results": [],
+                "asan_ubsan_results": [],
+                "scoring_note": "Runtime memory checks require instructor-provided test inputs; GCC -fanalyzer was still run.",
+            },
+            "results": [],
+            "reason": "No assignment-specific test inputs were configured; source-level GCC analysis ran, but Valgrind and ASan/UBSan runtime checks were not measured.",
+            "raw_compiler_output": vg_compile["output"],
+        }
 
     vg_results: list[dict[str, Any]] = []
     for index, case in enumerate(test_cases, 1):
@@ -191,6 +298,7 @@ def run_memory_safety(
         "score": round(vg_score, 2) if vg_score is not None else None,
         "score_scale": "0-100",
         "compiled": True, "tests_total": len(test_cases), "tests_checked": len(vg_results),
+        "gcc_analyzer": gcc_analyzer,
         "tests_clean": sum(item["memory_safe"] for item in vg_results),
         "memory_safe": runtime_tools_complete and runtime_tools_score == 100.0,
         "analysis_error": not runtime_tools_complete,

@@ -1,0 +1,118 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: cfef74a9126b3fcd2c2ef66468b31bac3aedad9600b4312d6b0439dcd3ec8b6a
+Source SHA-256: 738c72427ccdc58c8a72fe2ac64be42a28a43d6ae7d82c2e14b7546aa51906db
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Corrected findings based on evidence ledger. Only syntax is valid; memory safety finding was unverified.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: compiled_smoke_skipped
+Compiled: True
+Smoke tested: False
+
+correctness            weight=0.220  score=85.00/100    status=completed
+  Assessment: The program prints 'grading sample' and exits, meeting the main task, but also performs additional memory allocations and volatile reads not specified in the contract.
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=100.00/100   status=completed_with_fallback
+structure              weight=0.120  score=100.00/100   status=completed_with_fallback
+modularity             weight=0.080  score=100.00/100   status=completed_with_fallback
+complexity             weight=0.080  score=100.00/100   status=completed_with_fallback
+logical                weight=0.100  score=85.00/100    status=completed
+  Assessment: Control flow is correct, but the use of a volatile variable and unexplained memory allocations may indicate design choices beyond the task's scope.
+runtime_efficiency     weight=0.050  score=90.00/100    status=completed
+  Assessment: The algorithm is minimal, with no redundant operations or excessive resource usage for the given task.
+memory_safety          weight=0.170  score=85.00/100    status=completed
+  Assessment: Proper NULL checks and memory cleanup are present, but the volatile variable's purpose is unclear and could introduce undefined behavior.
+  Valgrind score: None
+  ASan/UBSan score (supplementary): None
+readability            weight=0.100  score=87.00/100    status=completed_with_fallback
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 90.85/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+RSI iteration 1: Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.; RSI iteration 1: deterministic fallback retained the review state; Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.; RSI iteration 3: Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=932; prompt_tokens=3771; reasoning_content_chars=4517. The model did not emit final JSON. The request explicitly set reasoning_effort=none, the model did not place a parseable JSON object in its final content channel. Reasoning is enabled only when configured; increase the stage token budget or inspect the server's final content/reasoning channels.; RSI iteration 3: deterministic fallback retained the review state; Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=932; prompt_tokens=3771; reasoning_content_chars=4517. The model did not emit final JSON. The request explicitly set reasoning_effort=none, the model did not place a parseable JSON object in its final content channel. Reasoning is enabled only when configured; increase the stage token bu
+  RSI pass 1: completed with deterministic fallback; 2 retained finding(s); Deterministic evidence fallback retained 2 supported finding(s). This fallback is not a substitute for a completed LLM review.
+    - syntax: Compiler: compiled=True; warnings=0; errors=0. (line n/a)
+    - memory_safety: GCC -fanalyzer use_after_free: pointer ‘values’ used after ‘free’ [-Wuse-after-free] (line 24). (line 24)
+  RSI pass 2: completed; 1 retained finding(s); Corrected findings based on evidence ledger. Only syntax is valid; memory safety finding was unverified.
+    - syntax: Compiler: compiled=True; warnings=0; errors=0. (line n/a)
+  RSI pass 3: completed with deterministic fallback; 1 retained finding(s); Corrected findings based on evidence ledger. Only syntax is valid; memory safety finding was unverified.
+    - syntax: Compiler: compiled=True; warnings=0; errors=0. (line n/a)
+LLM scores missing: syntax, structure, modularity, complexity, readability
+Separate metric-scoring stage: completed_with_fallback
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The program allocates an array of 64 integers, populates them with even numbers, allocates a message string, prints 'grading sample' followed by a newline, frees the integer array, reads a volatile value from the array, and returns 0.
+Expected assignment behavior: The program is supposed to print 'grading sample' and exit, but the submission includes additional memory allocations and operations not specified in the assignment contract.
+Contract comparison: The submission's actual behavior partially aligns with the intended behavior (printing the message) but includes additional operations (memory allocation, volatile read) not specified in the assignment contract.
+Actual algorithm: The program initializes an array of integers, prints a predefined message, manages memory by freeing the array, and performs a volatile read to prevent optimization of the array's contents.
+Functions:
+  - main (lines 5-27): The entry point of the program that performs memory allocation, array initialization, message printing, and cleanup.
+Execution flow:
+  - Allocate and initialize integer array
+  - Allocate and populate message string
+  - Print message to stdout
+  - Free integer array
+  - Read volatile value from array
+Assumptions:
+  - Memory allocations succeed
+  - The volatile variable is not used elsewhere in the program
+Ambiguities:
+  - The purpose of the volatile variable is unclear in the context of the program's functionality
+  - The assignment contract does not specify the required behavior beyond printing the message
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] syntax — Compiler: compiled=True; warnings=0; errors=0. (source/evidence location not resolved)
+  Compiler: compiled=True; warnings=0; errors=0.
+  Evidence: E-SYNTAX-001
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 1.277 s
+LLM server readiness/startup: 4.527 s
+LLM requests: 821.157 s
+Total through scoring: 829.333 s
+  correctness: 0.000 s
+  syntax: 0.115 s
+  structure: 0.109 s
+  modularity: 0.009 s
+  complexity: 0.001 s
+  logical: 0.000 s
+  runtime_efficiency: 0.002 s
+  memory_safety: 0.186 s
+  readability: 0.001 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 6 (program understanding + sequential RSI passes + separate metric scoring; includes any configured retries)
+Program understanding: 78.731 s
+RSI pass 1: 152.775 s
+RSI pass 2: 154.428 s
+RSI pass 3: 175.919 s
+Metric-scoring request 1: 124.922 s
+Metric-scoring request 2: 134.382 s
+Total LLM time: 821.157 s
+LLM error: RSI iteration 1: Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.; RSI iteration 1: deterministic fallback retained the review state; Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.; RSI iteration 3: Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=932; prompt_tokens=3771; reasoning_content_chars=4517. The model did not emit final JSON. The request explicitly set reasoning_effort=none, the model did not place a parseable JSON object in its final content channel. Reasoning is enabled only when configured; increase the stage token budget or inspect the server's final content/reasoning channels.; RSI iteration 3: deterministic fallback retained the review state; Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=932; prompt_tokens=3771; reasoning_content_chars=4517. The model did not emit final JSON
+LLM diagnostic: RSI iteration 1: Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.
+LLM diagnostic: RSI iteration 1: deterministic fallback retained the review state; Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.
+LLM diagnostic: RSI iteration 3: Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=932; prompt_tokens=3771; reasoning_content_chars=4517. The model did not emit final JSON. The request explicitly set reasoning_effort=none, the model did not place a parseable JSON object in its final content channel. Reasoning is enabled only when configured; increase the stage token budget or inspect the server's final content/reasoning channels.
+LLM diagnostic: RSI iteration 3: deterministic fallback retained the review state; Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=932; prompt_tokens=3771; reasoning_content_chars=4517. The model did not emit final JSON. The request explicitly set reasoning_effort=none, the model did not place a parseable JSON object in its final content channel. Reasoning is enabled only when configured; increase the stage token budget or inspect the server's final
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

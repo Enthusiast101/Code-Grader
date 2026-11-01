@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "computation-error",
+      "severity": "medium",
+      "anchor": "double average = sum / count;",
+      "description": "Both operands are integers, so integer division truncates the fractional part before conversion to double.",
+      "line": 19,
+      "source_excerpt": "double average = sum / count;"
+    }
+  ],
+  "note": "Instructor-side oracle for regression and manual review. Keep separate from model input."
+}

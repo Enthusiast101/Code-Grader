@@ -1,0 +1,145 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: 42110d0d549cca9019484b5ebf5ec271698b3352245026f8ca5ff4750b4e4d5a
+Source SHA-256: 738c72427ccdc58c8a72fe2ac64be42a28a43d6ae7d82c2e14b7546aa51906db
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: compiled_smoke_skipped
+Compiled: True
+Smoke tested: False
+
+correctness            weight=0.220  score=0.00/100     status=completed
+  Analyzer=None  LLM RSI=0.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: Score reflects the rubric and the available source and analyzer evidence.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: No metric-specific defect was retained; available analyzer evidence supports this score.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+structure              weight=0.120  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: No metric-specific defect was retained; available analyzer evidence supports this score.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+modularity             weight=0.080  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: No metric-specific defect was retained; available analyzer evidence supports this score.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+complexity             weight=0.080  score=100.00/100   status=completed
+  Analyzer=100.0  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: No metric-specific defect was retained; available analyzer evidence supports this score.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+logical                weight=0.100  score=0.00/100     status=completed
+  Analyzer=None  LLM RSI=0.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: Score reflects the rubric and the available source and analyzer evidence.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+runtime_efficiency     weight=0.050  score=0.00/100     status=completed
+  Analyzer=None  LLM RSI=0.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: Score reflects the rubric and the available source and analyzer evidence.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+memory_safety          weight=0.170  score=100.00/100   status=completed
+  Analyzer=None  LLM RSI=100.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: No metric-specific defect was retained; available analyzer evidence supports this score.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+  Valgrind score: None
+  ASan/UBSan score (supplementary): None
+readability            weight=0.100  score=87.00/100    status=completed
+  Analyzer=87.0  LLM RSI=87.0  Basis=LLM RSI score based on rubric, source code, and analyzer evidence
+  RSI: Score reflects the rubric and the available source and analyzer evidence.
+  RSI iterations: 3/3 (completed)
+    - Iteration None: failed; no valid response
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 61.70/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+RSI iteration 1: Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3546; reasoning_content_chars=3740. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.; RSI iteration 1: Attempt 2: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3662; reasoning_content_chars=3973. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.; RSI iteration 1: deterministic fallback retained the review state; Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3546; reasoning_content_chars=3740. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.; Attempt 2: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3662; rea
+  RSI pass 1: failed; no valid response
+  RSI pass 2: 1 retained finding(s); Deterministic evidence fallback retained 1 supported finding(s). This fallback is not a substitute for a completed LLM review.
+    - syntax: Compiler: compiled=True; warnings=0; errors=0. (line n/a)
+  RSI pass 3: 0 retained finding(s); No supported findings identified; fallback analysis confirms no defects in the source code.
+  correctness: 0.0/100 — Score reflects the rubric and the available source and analyzer evidence.
+  syntax: 100.0/100 — No metric-specific defect was retained; available analyzer evidence supports this score.
+  structure: 100.0/100 — No metric-specific defect was retained; available analyzer evidence supports this score.
+  modularity: 100.0/100 — No metric-specific defect was retained; available analyzer evidence supports this score.
+  complexity: 100.0/100 — No metric-specific defect was retained; available analyzer evidence supports this score.
+  logical: 0.0/100 — Score reflects the rubric and the available source and analyzer evidence.
+  runtime_efficiency: 0.0/100 — Score reflects the rubric and the available source and analyzer evidence.
+  memory_safety: 100.0/100 — No metric-specific defect was retained; available analyzer evidence supports this score.
+  readability: 87.0/100 — Score reflects the rubric and the available source and analyzer evidence.
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The source contains 1 function definition(s). Included headers: stdio.h, stdlib.h, string.h. Input APIs observed: none detected. Output APIs observed: printf. Dynamic-memory APIs observed: malloc, free.
+Expected assignment behavior: grading
+Contract comparison: Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.
+Actual algorithm: Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.
+Functions:
+  - main (lines 5-5): Function declared/defined in the submitted source; behavior requires code inspection.
+Execution flow:
+  - Function definitions and API usage were inventoried from source text.
+Assumptions:
+  - This fallback is a lexical inventory, not a proof of program behavior.
+Ambiguities:
+  - LLM program understanding was unavailable; verify complex control/data flow manually.
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+No findings were retained from the latest successful RSI pass; the findings-review sequence or separate metric-scoring stage was incomplete.
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 0.910 s
+LLM server readiness/startup: 4.531 s
+LLM requests: 447.196 s
+Total through scoring: 453.406 s
+  correctness: 0.000 s
+  syntax: 0.106 s
+  structure: 0.104 s
+  modularity: 0.008 s
+  complexity: 0.001 s
+  logical: 0.000 s
+  runtime_efficiency: 0.001 s
+  memory_safety: 0.180 s
+  readability: 0.001 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 9 (one understanding request + up to three chained RSI passes + separate metric scoring)
+Program understanding: 65.664 s
+RSI pass 1: 72.704 s
+RSI pass 2: 69.555 s
+RSI pass 3: 72.735 s
+RSI pass 4: 39.338 s
+RSI pass 5: 71.954 s
+RSI pass 6: 47.815 s
+Metric-scoring request 1: 7.431 s
+Total LLM time: 447.196 s
+LLM error: RSI iteration 1: Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3546; reasoning_content_chars=3740. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.; RSI iteration 1: Attempt 2: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3662; reasoning_content_chars=3973. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.; RSI iteration 1: deterministic fallback retained the review state; Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3546; reasoning_content_chars=3740. The model did not emit final JSON. Structured grading disables reasoning by default; check th
+LLM diagnostic: RSI iteration 1: Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3546; reasoning_content_chars=3740. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.
+LLM diagnostic: RSI iteration 1: Attempt 2: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3662; reasoning_content_chars=3973. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.
+LLM diagnostic: RSI iteration 1: deterministic fallback retained the review state; Attempt 1: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=896; prompt_tokens=3546; reasoning_content_chars=3740. The model did not emit final JSON. Structured grading disables reasoning by default; check the server template or use the configured context compressor.; Attempt 2: response was not valid JSON: Empty final assistant content; finish_reason=length; completion_tokens=89
+LLM diagnostic: RSI iteration 2: Attempt 1: JSON was valid but lacked a usable overall_assessment or findings array.
+
+LLM execution note: program understanding is followed by sequential whole-program RSI rechecks; each recheck receives the complete immediately preceding model response. A separate compact request scores rubric metrics only after the final recheck, so missing scores cannot invalidate valid findings.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

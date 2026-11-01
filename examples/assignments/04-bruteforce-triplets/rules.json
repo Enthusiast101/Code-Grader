@@ -1,0 +1,74 @@
+{
+  "problem": "04_bruteforce_triplets",
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/04-bruteforce-triplets/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.25,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/04-bruteforce-triplets/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/04-bruteforce-triplets/edge_cases.json"
+      }
+    },
+    {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.25,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/04-bruteforce-triplets/runtime_cases.json",
+        "target_runtime_ms": 250,
+        "repetitions": 3
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/04-bruteforce-triplets/memory_cases.json",
+        "run_sanitizers": true
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Count all index triples i < j < k with values[i] + values[j] + values[k] == target. Do not count permutations of the same indices more than once. Must meet the N <= 20,000 constraint using an algorithm asymptotically better than O(N^3).",
+    "operand_type": "64-bit signed integers",
+    "sum_type": "64-bit signed integer count",
+    "input_range": "0 <= N <= 20,000; values and target fit in signed 32-bit integer",
+    "output_rule": "Print the exact triplet count as a decimal integer followed by a newline."
+  }
+}

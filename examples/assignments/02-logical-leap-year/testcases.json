@@ -1,0 +1,12 @@
+[
+  {
+    "id": "ordinary-leap",
+    "input": "2024\n",
+    "expected": "LEAP\n"
+  },
+  {
+    "id": "ordinary-common",
+    "input": "2023\n",
+    "expected": "COMMON\n"
+  }
+]
