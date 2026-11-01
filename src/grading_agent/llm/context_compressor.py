@@ -2,12 +2,15 @@
 
 Only natural-language summaries are compressible. Submitted source, source line
 numbers, finding identities, analyzer measurements, and evidence IDs remain
-protected; deterministic compaction is used if same-model compression fails.
+protected. The model is asked to shorten only sufficiently long prose fields;
+strict per-field output limits make useful reductions enforceable rather than
+merely requested. Deterministic compaction remains the safe fallback.
 """
 from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import time
 from contextvars import ContextVar
@@ -24,6 +27,15 @@ COMPRESSION_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "grading_context_compression_events", default=None
 )
 
+# Avoid spending a model call on short fields that cannot materially shrink.
+# Deterministic fallbacks cap semantic fields below this value, preventing the
+# same unchanged content from triggering another compression request next pass.
+MIN_COMPRESSIBLE_FIELD_CHARS = 240
+MIN_EXPECTED_SAVED_CHARS = 120
+RETAIN_RATIO = 0.60
+MAX_COMPRESSED_FIELD_CHARS = 180
+MAX_COMPRESSION_RESPONSE_TOKENS = 768
+
 
 def _record_compression_event(stage: str, metadata: dict[str, Any]) -> None:
     events = COMPRESSION_EVENTS.get()
@@ -37,9 +49,22 @@ def _record_compression_event(stage: str, metadata: dict[str, Any]) -> None:
         "input_chars": int(metadata.get("input_chars", 0)),
         "output_chars": int(metadata.get("output_chars", 0)),
         "saved_chars": int(metadata.get("saved_chars", 0)),
+        "potential_saved_chars": int(metadata.get("potential_saved_chars", 0)),
+        "compressible_chars": int(metadata.get("compressible_chars", 0)),
         "latency_seconds": float(metadata.get("latency_seconds", 0.0)),
+        "reason": metadata.get("reason"),
         "error": metadata.get("error"),
     })
+
+
+def _finish_compression_event(stage: str, metadata: dict[str, Any], started: float) -> None:
+    metadata["latency_seconds"] = round(time.perf_counter() - started, 3)
+    _record_compression_event(stage, metadata)
+
+
+def _target_length(value: str) -> int:
+    """Return a firm output cap that demands a meaningful reduction."""
+    return max(80, min(MAX_COMPRESSED_FIELD_CHARS, math.floor(len(value) * RETAIN_RATIO)))
 
 
 def _parse_json_object(value: Any) -> dict[str, Any] | None:
@@ -88,21 +113,13 @@ def _same_model_chat(
     system_prompt: str,
     user_payload: dict[str, Any],
     response_schema: dict[str, Any],
+    *,
+    response_token_budget: int | None = None,
 ) -> dict[str, Any] | None:
-    """Run one schema-constrained compression request through the grading model.
-
-    Compression never selects a second model or provider. JSON-schema response_format
-    constrains its output shape; the caller still validates all
-    protected anchors before accepting the shortened text.
-    """
+    """Run one schema-constrained compression request through the grading model."""
     if not settings.runtime_value("LLM_CONTEXT_COMPRESSION_ENABLED"):
         return None
 
-    # Compression is a structured transformation, not an open-ended analysis
-    # turn. Use the same grading model but direct constrained-output mode so
-    # JSON Schema decoding is active immediately; Qwen3 lazy grammar + thinking can
-    # emit unquoted-key pseudo-objects and cause the compressor to be rejected.
-    thinking = False
     schema_text = json.dumps(response_schema, ensure_ascii=False, separators=(",", ":"))
     messages = [
         {
@@ -115,28 +132,28 @@ def _same_model_chat(
         },
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
     ]
+    configured_budget = int(settings.runtime_value("LLM_CONTEXT_COMPRESSION_MAX_TOKENS"))
+    requested_budget = response_token_budget or configured_budget
     body: dict[str, Any] = {
         "model": str(settings.runtime_value("MODEL")),
         "stream": False,
         "temperature": 0.0,
         "seed": settings.SEED,
-        "max_tokens": int(settings.runtime_value("LLM_CONTEXT_COMPRESSION_MAX_TOKENS")),
-        "chat_template_kwargs": {"enable_thinking": thinking},
+        # A response schema with several summaries can need more than a tiny
+        # 256-token cap. Keep the increase bounded for low-memory deployments.
+        "max_tokens": min(
+            MAX_COMPRESSION_RESPONSE_TOKENS,
+            max(configured_budget, requested_budget),
+        ),
+        "chat_template_kwargs": {"enable_thinking": False},
         "messages": messages,
+        "response_format": {
+            "type": "json_schema",
+            "schema": response_schema,
+        },
+        "reasoning_effort": "none",
+        "reasoning_format": "none",
     }
-    # Use the documented /v1/chat/completions JSON Schema contract. The raw
-    # `grammar` field is not the response-format mechanism for this endpoint.
-    # Thinking is disabled for this structured transform so schema decoding is
-    # active from the first assistant token on Qwen3/llama.cpp.
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", "context_compression")[:48]
-    # llama.cpp expects the schema directly under response_format.schema.
-    # Do not send the OpenAI nested `json_schema` wrapper here.
-    body["response_format"] = {
-        "type": "json_schema",
-        "schema": response_schema,
-    }
-    body["reasoning_effort"] = "none"
-    body["reasoning_format"] = "none"
 
     response = requests.post(
         f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}",
@@ -148,11 +165,15 @@ def _same_model_chat(
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError("Same-model context compression returned an unexpected chat response.") from exc
+        raise ValueError(
+            "Same-model context compression returned an unexpected chat response."
+        ) from exc
+
     content = message.get("content", "") if isinstance(message, dict) else ""
     if isinstance(content, list):
         content = "\n".join(
-            str(part.get("text", "")) for part in content
+            str(part.get("text", ""))
+            for part in content
             if isinstance(part, dict) and part.get("type") in {"text", "output_text"}
         )
     parsed = _parse_json_object(content)
@@ -167,7 +188,12 @@ def _same_model_chat(
     return parsed
 
 
-def _deterministic_review_compaction(review: dict[str, Any]) -> dict[str, Any]:
+def _deterministic_review_compaction(
+    review: dict[str, Any],
+    *,
+    max_description_chars: int = 360,
+    max_assessment_chars: int = 700,
+) -> dict[str, Any]:
     """Compact a previous RSI response without dropping findings or evidence."""
     findings = review.get("findings", [])
     compact_findings: list[dict[str, Any]] = []
@@ -176,30 +202,31 @@ def _deterministic_review_compaction(review: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(item, dict):
                 continue
             compact_findings.append({
-                "metric": str(item.get("metric", "unmapped"))[:80],
-                "severity": str(item.get("severity", "medium"))[:20],
-                "title": str(item.get("title", "Potential issue"))[:140],
-                "description": str(item.get("description", item.get("text", "")))[:360],
+                # Finding identity/anchors are copied exactly; only prose
+                # descriptions are eligible for compression.
+                "metric": item.get("metric", "unmapped"),
+                "severity": item.get("severity", "medium"),
+                "title": item.get("title", "Potential issue"),
+                "description": str(item.get("description", item.get("text", "")))[:max_description_chars],
                 "line_start": item.get("line_start"),
                 "line_end": item.get("line_end", item.get("line_start")),
-                "evidence_ids": list(dict.fromkeys(str(ref) for ref in item.get("evidence_ids", []) if ref))[:8]
+                "evidence_ids": list(item.get("evidence_ids", []))
                 if isinstance(item.get("evidence_ids", []), list) else [],
                 "confidence": item.get("confidence", 0.5),
             })
     questions = review.get("unresolved_questions", [])
     return {
-        "overall_assessment": str(review.get("overall_assessment", review.get("summary", "RSI review state retained.")))[:700],
+        "overall_assessment": str(
+            review.get("overall_assessment", review.get("summary", "RSI review state retained."))
+        )[:max_assessment_chars],
         "findings": compact_findings,
-        "unresolved_questions": [str(item)[:180] for item in questions[:5]] if isinstance(questions, list) else [],
+        "unresolved_questions": [str(item)[:180] for item in questions[:5]]
+        if isinstance(questions, list) else [],
     }
 
 
 def compress_review_history(review: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Compress the preceding RSI response with the configured grading model when it is large.
-
-    All findings must survive compression with the same metric, source location,
-    and evidence IDs. A summary that drops or changes those anchors is rejected.
-    """
+    """Compress only long review prose while preserving every finding anchor."""
     started = time.perf_counter()
     original = _deterministic_review_compaction(review)
     original_text = json.dumps(original, ensure_ascii=False)
@@ -211,71 +238,151 @@ def compress_review_history(review: dict[str, Any]) -> tuple[dict[str, Any], dic
         "model": settings.runtime_value("MODEL"),
         "input_chars": len(original_text),
         "output_chars": len(original_text),
+        "saved_chars": 0,
         "latency_seconds": 0.0,
     }
+
     if not metadata["enabled"]:
         metadata["reason"] = "same-model compression disabled"
+        _finish_compression_event("review_history", metadata, started)
         return original, metadata
     if len(original_text) <= threshold:
         metadata["reason"] = "history below compression threshold"
+        _finish_compression_event("review_history", metadata, started)
         return original, metadata
 
-    try:
-        description_schema = {
+    assessment = original["overall_assessment"]
+    compress_assessment = len(assessment) > MIN_COMPRESSIBLE_FIELD_CHARS
+    assessment_target = _target_length(assessment) if compress_assessment else len(assessment)
+
+    finding_targets: dict[str, int] = {}
+    finding_inputs: dict[str, str] = {}
+    for index, item in enumerate(original["findings"]):
+        description = str(item.get("description", ""))
+        if len(description) > MIN_COMPRESSIBLE_FIELD_CHARS:
+            field_name = f"finding_{index}"
+            finding_inputs[field_name] = description
+            finding_targets[field_name] = _target_length(description)
+
+    selected_lengths = ([len(assessment)] if compress_assessment else []) + [
+        len(value) for value in finding_inputs.values()
+    ]
+    target_lengths = ([assessment_target] if compress_assessment else []) + list(finding_targets.values())
+    compressible_chars = sum(selected_lengths)
+    potential_saved = sum(
+        source_length - target_length
+        for source_length, target_length in zip(selected_lengths, target_lengths)
+    )
+    metadata.update({
+        "compressible_chars": compressible_chars,
+        "potential_saved_chars": potential_saved,
+    })
+
+    if not selected_lengths or potential_saved < MIN_EXPECTED_SAVED_CHARS:
+        metadata["reason"] = "not enough long review prose to justify a model call"
+        _finish_compression_event("review_history", metadata, started)
+        return original, metadata
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    if compress_assessment:
+        properties["overall_assessment"] = {
+            "type": "string", "minLength": 1, "maxLength": assessment_target
+        }
+        required.append("overall_assessment")
+    if finding_inputs:
+        properties["finding_descriptions"] = {
             "type": "object",
             "properties": {
-                "overall_assessment": {"type": "string", "maxLength": 240},
-                "finding_descriptions": {
-                    "type": "array",
-                    "items": {"type": "string", "maxLength": 220},
-                    "maxItems": len(original["findings"]),
-                },
+                name: {"type": "string", "minLength": 1, "maxLength": finding_targets[name]}
+                for name in finding_inputs
             },
-            "required": ["overall_assessment", "finding_descriptions"],
+            "required": list(finding_inputs),
+            "additionalProperties": False,
         }
+        required.append("finding_descriptions")
+    response_schema = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+    try:
+        payload: dict[str, Any] = {
+            "target_total_chars": potential_saved,
+        }
+        if compress_assessment:
+            payload["overall_assessment"] = assessment
+        if finding_inputs:
+            payload["finding_descriptions"] = finding_inputs
+
         metadata["model_calls"] = 1
         compressed = _same_model_chat(
-            "Compress the prose in this C-program review for the next RSI pass. "
-            "Return only overall_assessment and finding_descriptions. The descriptions "
-            "must remain in the same order and one-to-one with the input findings. Preserve "
-            "all technical meaning, defect certainty, and negations. The caller reattaches "
-            "the original finding objects, metrics, severity, titles, source locations, and "
-            "evidence IDs, so do not reproduce or modify those fields.",
-            {
-                "overall_assessment": original["overall_assessment"],
-                "finding_descriptions": [item["description"] for item in original["findings"]],
-                "target_chars": max(900, threshold),
-            },
-            description_schema,
+            "Shorten the supplied review prose for the next RSI pass. Rewrite each supplied field "
+            "substantially more concisely; do not copy it verbatim. Preserve the defect meaning, "
+            "certainty, negations, conditions, and important technical details. Do not invent facts. "
+            "The JSON schema imposes a strict maximum length for every field. Finding descriptions "
+            "are keyed by finding identity; do not add, remove, or rename keys. All metrics, titles, "
+            "severities, locations, confidence values, and evidence IDs are retained by the caller.",
+            payload,
+            response_schema,
+            response_token_budget=max(256, math.ceil((compressible_chars - potential_saved) / 3) + 128),
         )
-        if not isinstance(compressed, dict) or not isinstance(compressed.get("finding_descriptions"), list):
-            raise ValueError("the grading model returned no structured description array.")
-        candidate_descriptions = compressed["finding_descriptions"]
-        if len(candidate_descriptions) != len(original["findings"]):
-            raise ValueError("same-model compression changed the number of descriptions.")
-        validated: list[dict[str, Any]] = []
-        for original_item, candidate_description in zip(original["findings"], candidate_descriptions):
-            description = str(candidate_description).strip()
-            if not description:
-                raise ValueError("same-model compression returned an empty finding description.")
-            validated.append({**original_item, "description": description[:360]})
-        summary = str(compressed.get("overall_assessment", "")).strip() or original["overall_assessment"]
+        if not isinstance(compressed, dict):
+            raise ValueError("the grading model returned no structured review compression.")
+
+        result_findings = [dict(item) for item in original["findings"]]
+        if finding_inputs:
+            candidate_descriptions = compressed.get("finding_descriptions")
+            if not isinstance(candidate_descriptions, dict):
+                raise ValueError("the grading model omitted the finding_descriptions object.")
+            if set(candidate_descriptions) != set(finding_inputs):
+                raise ValueError("same-model compression changed the finding description keys.")
+            for field_name, source_description in finding_inputs.items():
+                candidate = candidate_descriptions[field_name]
+                if not isinstance(candidate, str) or not candidate.strip():
+                    raise ValueError(f"empty or invalid compressed description: {field_name}")
+                if len(candidate.strip()) > finding_targets[field_name]:
+                    raise ValueError(f"compressed description exceeded its length budget: {field_name}")
+                finding_index = int(field_name.removeprefix("finding_"))
+                result_findings[finding_index]["description"] = candidate.strip()
+
+        result_assessment = assessment
+        if compress_assessment:
+            candidate_assessment = compressed.get("overall_assessment")
+            if not isinstance(candidate_assessment, str) or not candidate_assessment.strip():
+                raise ValueError("the grading model omitted a valid overall_assessment.")
+            if len(candidate_assessment.strip()) > assessment_target:
+                raise ValueError("compressed overall_assessment exceeded its length budget.")
+            result_assessment = candidate_assessment.strip()
+
         result = {
-            "overall_assessment": summary[:700],
-            "findings": validated,
+            "overall_assessment": result_assessment,
+            "findings": result_findings,
             "unresolved_questions": original["unresolved_questions"],
         }
         result_text = json.dumps(result, ensure_ascii=False)
-        if len(result_text) >= len(original_text):
-            raise ValueError("the grading model output did not reduce the history size.")
+        saved_chars = len(original_text) - len(result_text)
+        if saved_chars < MIN_EXPECTED_SAVED_CHARS:
+            raise ValueError(
+                f"compression saved only {saved_chars} chars; "
+                f"at least {MIN_EXPECTED_SAVED_CHARS} are required."
+            )
         metadata.update({
             "method": "same_model",
             "output_chars": len(result_text),
-            "saved_chars": len(original_text) - len(result_text),
+            "saved_chars": saved_chars,
+            "reason": "model compression met per-field and total reduction requirements",
         })
         return result, metadata
     except Exception as exc:  # Compression must never break grading.
-        compact = _deterministic_review_compaction(review)
+        # Shorten the prose enough that the same uncompressible history is not
+        # sent to the model repeatedly on the next RSI pass. All finding anchors
+        # and evidence IDs remain intact.
+        compact = _deterministic_review_compaction(
+            review, max_description_chars=200, max_assessment_chars=220
+        )
         compact_text = json.dumps(compact, ensure_ascii=False)
         metadata.update({
             "method": "deterministic_fallback",
@@ -283,11 +390,12 @@ def compress_review_history(review: dict[str, Any]) -> tuple[dict[str, Any], dic
             "saved_chars": max(0, len(original_text) - len(compact_text)),
             "error": f"{type(exc).__name__}: {exc}"[:300],
         })
-        logger.info("same-model context compression unavailable; deterministic compaction used: %s", exc)
+        logger.info(
+            "same-model review compression rejected; deterministic compaction used: %s", exc
+        )
         return compact, metadata
     finally:
-        metadata["latency_seconds"] = round(time.perf_counter() - started, 3)
-        _record_compression_event("review_history", metadata)
+        _finish_compression_event("review_history", metadata, started)
 
 
 def compress_semantic_sections(
@@ -295,98 +403,155 @@ def compress_semantic_sections(
     *,
     target_chars: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Compress semantic prose while leaving source, metrics and evidence immutable.
-
-    The configured grading model may shorten only the natural-language fields in the prior
-    program-understanding summary. Function names/roles/line ranges, rubric rows,
-    analyzer measurements, source text, and evidence IDs are copied verbatim.
-    """
+    """Compress long program-understanding prose; keep structured evidence immutable."""
     started = time.perf_counter()
     copied = dict(payload)
     serialized = json.dumps(copied, ensure_ascii=False)
     metadata: dict[str, Any] = {
-        "method": "unchanged", "input_chars": len(serialized),
-        "output_chars": len(serialized), "saved_chars": 0, "model_calls": 0,
+        "method": "unchanged",
+        "input_chars": len(serialized),
+        "output_chars": len(serialized),
+        "saved_chars": 0,
+        "potential_saved_chars": 0,
+        "compressible_chars": 0,
+        "model_calls": 0,
         "enabled": bool(settings.runtime_value("LLM_CONTEXT_COMPRESSION_ENABLED")),
         "model": settings.runtime_value("MODEL"),
+        "latency_seconds": 0.0,
     }
+
+    def finish(result: dict[str, Any], reason: str | None = None):
+        if reason:
+            metadata["reason"] = reason
+        _finish_compression_event("program_understanding", metadata, started)
+        return result, metadata
+
     if len(serialized) <= target_chars:
-        return copied, metadata
+        return finish(copied, "payload below compression target")
 
     original_understanding = copied.get("program_understanding")
     if not isinstance(original_understanding, dict):
-        return _deterministic_semantic_compaction(copied, metadata)
+        compacted, metadata = _deterministic_semantic_compaction(copied, metadata)
+        return finish(compacted, "program_understanding object unavailable")
 
-    # Only prose fields enter the compression model. Structured function and
-    # source-location data are retained locally and reattached after validation.
     prose_keys = (
-        "actual_behavior", "program_purpose", "intended_behavior",
-        "contract_alignment", "algorithm_overview",
+        "actual_behavior",
+        "program_purpose",
+        "intended_behavior",
+        "contract_alignment",
+        "algorithm_overview",
     )
     prose = {
         key: str(original_understanding.get(key, ""))[:4_000]
-        for key in prose_keys if original_understanding.get(key)
+        for key in prose_keys
+        if isinstance(original_understanding.get(key), str)
+        and len(str(original_understanding.get(key, ""))) > MIN_COMPRESSIBLE_FIELD_CHARS
     }
-    if not prose:
-        return _deterministic_semantic_compaction(copied, metadata)
     if not metadata["enabled"]:
-        return _deterministic_semantic_compaction(copied, metadata)
+        compacted, metadata = _deterministic_semantic_compaction(copied, metadata)
+        return finish(compacted, "same-model compression disabled")
+    if not prose:
+        # The payload may be large because of protected structured data. Do not
+        # spend an LLM call trying to compress data the compressor must preserve.
+        compacted, metadata = _deterministic_semantic_compaction(copied, metadata)
+        return finish(compacted, "no sufficiently long compressible prose fields")
+
+    target_lengths = {key: _target_length(value) for key, value in prose.items()}
+    compressible_chars = sum(len(value) for value in prose.values())
+    potential_saved = sum(len(prose[key]) - target_lengths[key] for key in prose)
+    metadata.update({
+        "compressible_chars": compressible_chars,
+        "potential_saved_chars": potential_saved,
+    })
+    if potential_saved < MIN_EXPECTED_SAVED_CHARS:
+        compacted, metadata = _deterministic_semantic_compaction(copied, metadata)
+        return finish(compacted, "not enough compressible prose to justify a model call")
+
+    prose_schema = {
+        "type": "object",
+        "properties": {
+            "program_understanding_prose": {
+                "type": "object",
+                "properties": {
+                    key: {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": target_lengths[key],
+                    }
+                    for key in prose
+                },
+                "required": list(prose),
+                "additionalProperties": False,
+            }
+        },
+        "required": ["program_understanding_prose"],
+        "additionalProperties": False,
+    }
 
     try:
-        prose_schema = {
-            "type": "object",
-            "properties": {
-                "program_understanding_prose": {
-                    "type": "object",
-                    "properties": {key: {"type": "string", "maxLength": 600} for key in prose},
-                    "required": list(prose),
-                }
-            },
-            "required": ["program_understanding_prose"],
-        }
         metadata["model_calls"] = 1
         compressed = _same_model_chat(
-            "Compress this program-understanding prose for a C grader. Preserve actual source "
-            "behavior separately from assignment intent, all important operations and negations, "
-            "and any behavior mismatch. Do not add facts, functions, line numbers, findings, or scores. "
-            "Use concise sentences and keep the provided fields unchanged.",
-            {"program_understanding_prose": prose, "target_chars": max(400, target_chars // 3)},
+            "Compress the supplied program-understanding prose for a C grader. Rewrite each field "
+            "as a materially shorter summary; do not copy sentences verbatim. Preserve the distinction "
+            "between actual source behavior and assignment intent, all important operations, conditions, "
+            "negations, and behavior mismatches. Do not add facts, functions, line numbers, findings, "
+            "scores, or assumptions. The JSON schema gives a strict maximum character count for each "
+            "field. Return every requested field exactly once.",
+            {
+                "program_understanding_prose": prose,
+                "target_total_chars": sum(target_lengths.values()),
+            },
             prose_schema,
+            response_token_budget=max(256, math.ceil(sum(target_lengths.values()) / 3) + 128),
         )
-        candidate = compressed.get("program_understanding_prose") if isinstance(compressed, dict) else None
+        candidate = (
+            compressed.get("program_understanding_prose")
+            if isinstance(compressed, dict) else None
+        )
         if not isinstance(candidate, dict):
-            raise ValueError("The grading model omitted the program_understanding_prose object.")
+            raise ValueError("the grading model omitted the program_understanding_prose object.")
+        if set(candidate) != set(prose):
+            raise ValueError("same-model compression changed the requested prose fields.")
 
         new_understanding = dict(original_understanding)
-        for key in prose_keys:
-            if key not in prose:
-                continue
-            value = candidate.get(key)
+        for key, source_text in prose.items():
+            value = candidate[key]
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"the grading model returned an empty or invalid {key} summary.")
-            # Reject expansions: the model must genuinely compact the prose.
-            if len(value) > len(prose[key]):
-                raise ValueError(f"The grading model expanded {key} instead of compressing it.")
-            new_understanding[key] = value.strip()[:1_200]
+            value = value.strip()
+            if len(value) > target_lengths[key]:
+                raise ValueError(
+                    f"the grading model exceeded the {key} length budget "
+                    f"({len(value)} > {target_lengths[key]})."
+                )
+            new_understanding[key] = value
 
-        # Keep all structured semantics untouched.
-        copied["program_understanding"] = new_understanding
-        new_text = json.dumps(copied, ensure_ascii=False)
-        if len(new_text) >= len(serialized):
-            raise ValueError("the grading model output did not reduce the complete prompt payload.")
+        # Replace only selected natural-language fields. Every other payload
+        # field and every structured program-understanding field stays untouched.
+        result = dict(copied)
+        result["program_understanding"] = new_understanding
+        new_text = json.dumps(result, ensure_ascii=False)
+        saved_chars = len(serialized) - len(new_text)
+        if saved_chars < MIN_EXPECTED_SAVED_CHARS:
+            raise ValueError(
+                f"compression saved only {saved_chars} chars; "
+                f"at least {MIN_EXPECTED_SAVED_CHARS} are required."
+            )
+
         metadata.update({
             "method": "same_model",
             "output_chars": len(new_text),
-            "saved_chars": len(serialized) - len(new_text),
+            "saved_chars": saved_chars,
+            "reason": "model compression met per-field and total reduction requirements",
         })
-        return copied, metadata
+        return finish(result)
     except Exception as exc:  # Compression must never break evaluation.
-        logger.info("same-model semantic compression rejected; deterministic compaction used: %s", exc)
+        logger.info(
+            "same-model semantic compression rejected; deterministic compaction used: %s", exc
+        )
         metadata["error"] = f"{type(exc).__name__}: {exc}"[:300]
-        return _deterministic_semantic_compaction(copied, metadata)
-    finally:
-        metadata["latency_seconds"] = round(time.perf_counter() - started, 3) if "started" in locals() else 0.0
-        _record_compression_event("program_understanding", metadata)
+        compacted, metadata = _deterministic_semantic_compaction(copied, metadata)
+        return finish(compacted)
 
 
 def _deterministic_semantic_compaction(
@@ -398,8 +563,11 @@ def _deterministic_semantic_compaction(
     if isinstance(understanding, dict):
         shortened = dict(understanding)
         for key in (
-            "actual_behavior", "program_purpose", "intended_behavior",
-            "contract_alignment", "algorithm_overview",
+            "actual_behavior",
+            "program_purpose",
+            "intended_behavior",
+            "contract_alignment",
+            "algorithm_overview",
         ):
             value = shortened.get(key)
             if isinstance(value, str):
@@ -423,4 +591,3 @@ def _deterministic_semantic_compaction(
         "saved_chars": max(0, len(json.dumps(payload, ensure_ascii=False)) - len(new_text)),
     })
     return compacted, metadata
-
