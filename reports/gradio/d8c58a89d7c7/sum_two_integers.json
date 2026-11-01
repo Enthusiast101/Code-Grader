@@ -1,0 +1,2337 @@
+{
+  "submission": "submission.c",
+  "source_code": "#include <inttypes.h>\n#include <stdint.h>\n#include <stdio.h>\n\nint main(void) {\n    int32_t left;\n    int32_t right;\n\n    if (scanf(\"%\" SCNd32 \" %\" SCNd32, &left, &right) != 2) {\n        return 1;\n    }\n\n    int64_t sum = (int64_t)left + (int64_t)right;\n    printf(\"%\" PRId64 \"\\n\", sum);\n    return 0;\n}\n",
+  "source_sha256": "61e481c31a63ee22adffd599c935dfcf77db9e4c12f22d463a5abc42790cce95",
+  "problem": "sum_two_integers",
+  "rules_hash": "f38c7d80ef67b556ab1544f3eba924c858ad2b4139cea2ab3ac023c0c2a54b28",
+  "configuration": {
+    "time_limit_s": 2.0,
+    "memory_limit_mb": 512,
+    "problem_contract": {
+      "description": "Read two signed 32-bit integers separated by whitespace and print their mathematical sum followed by a newline.",
+      "operand_type": "int32",
+      "sum_type": "int64",
+      "input_range": "-2147483648 through 2147483647 for each operand",
+      "output_rule": "The sum must be printed exactly as a signed 64-bit decimal integer."
+    },
+    "enabled_metrics": [
+      {
+        "name": "correctness",
+        "analyzer": "io_tests",
+        "weight": 0.22
+      },
+      {
+        "name": "syntax",
+        "analyzer": "compiler_diagnostics",
+        "weight": 0.08
+      },
+      {
+        "name": "structure",
+        "analyzer": "static_analysis",
+        "weight": 0.12
+      },
+      {
+        "name": "modularity",
+        "analyzer": "modularity",
+        "weight": 0.08
+      },
+      {
+        "name": "complexity",
+        "analyzer": "complexity_estimator",
+        "weight": 0.08
+      },
+      {
+        "name": "logical",
+        "analyzer": "edge_case_runner",
+        "weight": 0.1
+      },
+      {
+        "name": "runtime_efficiency",
+        "analyzer": "runtime_profile",
+        "weight": 0.05
+      },
+      {
+        "name": "memory_safety",
+        "analyzer": "memory_safety",
+        "weight": 0.17,
+        "component_weights": {
+          "valgrind": 0.7,
+          "llm_source_audit": 0.3
+        }
+      },
+      {
+        "name": "readability",
+        "analyzer": "readability",
+        "weight": 0.1
+      }
+    ]
+  },
+  "sandbox": {
+    "status": "available",
+    "image": "agent-sandbox:latest"
+  },
+  "tool_versions": {
+    "gcc": "gcc (Debian 14.2.0-19) 14.2.0",
+    "cppcheck": "Cppcheck 2.17.1",
+    "valgrind": "valgrind-3.24.0",
+    "lizard": "1.17.10"
+  },
+  "preflight": {
+    "status": "passed",
+    "compiled": true,
+    "smoke_tested": true,
+    "suspected_infinite_loop": false,
+    "crashed": false,
+    "smoke_input": "3 4\n",
+    "smoke_output": "7\n",
+    "exit_code": 0,
+    "timed_out": false,
+    "output_may_be_truncated": false
+  },
+  "correctness": {
+    "compiled": true,
+    "compiler_output": "",
+    "tests_passed": 4,
+    "tests_total": 4,
+    "score": 100.0,
+    "score_scale": "0-100",
+    "results": [
+      {
+        "test_id": "C01",
+        "description": "Small positive values",
+        "tags": [
+          "basic"
+        ],
+        "passed": true,
+        "input": "3 4\n",
+        "expected": "7\n",
+        "actual": "7\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "C02",
+        "description": "Larger positive values",
+        "tags": [
+          "basic"
+        ],
+        "passed": true,
+        "input": "10 20\n",
+        "expected": "30\n",
+        "actual": "30\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "C03",
+        "description": "Mixed-sign values",
+        "tags": [
+          "basic"
+        ],
+        "passed": true,
+        "input": "-5 2\n",
+        "expected": "-3\n",
+        "actual": "-3\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "C04",
+        "description": "Zero operands",
+        "tags": [
+          "basic"
+        ],
+        "passed": true,
+        "input": "0 0\n",
+        "expected": "0\n",
+        "actual": "0\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      }
+    ],
+    "metric_name": "correctness",
+    "analyzer": "io_tests",
+    "weight": 0.22
+  },
+  "syntax": {
+    "status": "completed",
+    "compiled": true,
+    "exit_code": 0,
+    "timed_out": false,
+    "warning_count": 0,
+    "warnings": [],
+    "error_count": 0,
+    "errors": [],
+    "compiler_output": "",
+    "score": 100.0,
+    "score_scale": "0-100",
+    "metric_name": "syntax",
+    "analyzer": "compiler_diagnostics",
+    "weight": 0.08
+  },
+  "structure": {
+    "status": "completed",
+    "tool": "cppcheck",
+    "finding_count": 0,
+    "findings": [],
+    "severity_counts": {
+      "error": 0,
+      "warning": 0,
+      "style": 0,
+      "performance": 0,
+      "portability": 0,
+      "information": 0
+    },
+    "raw_output": "Checking submission.c ...\n",
+    "score": 100.0,
+    "score_scale": "0-100",
+    "scoring_note": "Configured deterministic severity deductions; findings are not proof of exploitability.",
+    "metric_name": "structure",
+    "analyzer": "static_analysis",
+    "weight": 0.12
+  },
+  "modularity": {
+    "status": "completed",
+    "function_count": 1,
+    "helper_function_count": 0,
+    "functions": [
+      {
+        "name": "main",
+        "start_line": 5,
+        "end_line": null,
+        "length": 10,
+        "nloc": 10,
+        "cyclomatic_complexity_estimate": 2,
+        "parameter_count_estimate": 1,
+        "token_count": 60
+      }
+    ],
+    "minimum_functions": 1,
+    "helpers_expected": false,
+    "score": 100.0,
+    "score_scale": "0-100",
+    "measurement_note": "Lizard-based cyclomatic complexity and per-function NLOC.",
+    "metric_name": "modularity",
+    "analyzer": "modularity",
+    "weight": 0.08
+  },
+  "complexity": {
+    "status": "completed",
+    "functions": [
+      {
+        "name": "main",
+        "start_line": 5,
+        "end_line": null,
+        "length": 10,
+        "nloc": 10,
+        "cyclomatic_complexity_estimate": 2,
+        "parameter_count_estimate": 1,
+        "token_count": 60
+      }
+    ],
+    "max_cyclomatic_complexity_estimate": 2,
+    "max_function_length": 10,
+    "thresholds": {
+      "max_cyclomatic": 8,
+      "max_function_length": 40
+    },
+    "complexity_violations": [],
+    "length_violations": [],
+    "score": 100.0,
+    "score_scale": "0-100",
+    "measurement_note": "Lizard-based cyclomatic complexity and per-function NLOC.",
+    "metric_name": "complexity",
+    "analyzer": "complexity_estimator",
+    "weight": 0.08
+  },
+  "logical": {
+    "compiled": true,
+    "compiler_output": "",
+    "tests_passed": 9,
+    "tests_total": 9,
+    "score": 100.0,
+    "score_scale": "0-100",
+    "results": [
+      {
+        "test_id": "E01",
+        "description": "Largest signed 32-bit operand plus zero",
+        "tags": [
+          "int32_boundary"
+        ],
+        "passed": true,
+        "input": "2147483647 0\n",
+        "expected": "2147483647\n",
+        "actual": "2147483647\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E02",
+        "description": "Smallest signed 32-bit operand plus zero",
+        "tags": [
+          "int32_boundary"
+        ],
+        "passed": true,
+        "input": "-2147483648 0\n",
+        "expected": "-2147483648\n",
+        "actual": "-2147483648\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E03",
+        "description": "Input separated by irregular whitespace",
+        "tags": [
+          "whitespace"
+        ],
+        "passed": true,
+        "input": "  12     30   \n",
+        "expected": "42\n",
+        "actual": "42\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E04",
+        "description": "Two negative operands",
+        "tags": [
+          "negative"
+        ],
+        "passed": true,
+        "input": "-100 -200\n",
+        "expected": "-300\n",
+        "actual": "-300\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E05",
+        "description": "Large sum still within signed 32-bit range",
+        "tags": [
+          "large_value"
+        ],
+        "passed": true,
+        "input": "1000000000 1000000000\n",
+        "expected": "2000000000\n",
+        "actual": "2000000000\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E06",
+        "description": "Positive signed 32-bit addition overflow",
+        "tags": [
+          "signed_int32_overflow",
+          "positive_overflow"
+        ],
+        "passed": true,
+        "input": "2147483647 1\n",
+        "expected": "2147483648\n",
+        "actual": "2147483648\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E07",
+        "description": "Negative signed 32-bit addition overflow",
+        "tags": [
+          "signed_int32_overflow",
+          "negative_overflow"
+        ],
+        "passed": true,
+        "input": "-2147483648 -1\n",
+        "expected": "-2147483649\n",
+        "actual": "-2147483649\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E08",
+        "description": "Maximum signed 32-bit operands",
+        "tags": [
+          "signed_int32_overflow",
+          "maximum_operands"
+        ],
+        "passed": true,
+        "input": "2147483647 2147483647\n",
+        "expected": "4294967294\n",
+        "actual": "4294967294\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      },
+      {
+        "test_id": "E09",
+        "description": "Minimum signed 32-bit operands",
+        "tags": [
+          "signed_int32_overflow",
+          "minimum_operands"
+        ],
+        "passed": true,
+        "input": "-2147483648 -2147483648\n",
+        "expected": "-4294967296\n",
+        "actual": "-4294967296\n",
+        "exit_code": 0,
+        "timed_out": false,
+        "output_may_be_truncated": false
+      }
+    ],
+    "analyzer": "edge_case_runner",
+    "score_basis": "fraction of configured edge/corner cases passed",
+    "metric_name": "logical",
+    "weight": 0.1
+  },
+  "runtime_efficiency": {
+    "status": "completed",
+    "samples": [
+      {
+        "test_id": 1,
+        "description": "",
+        "tags": [],
+        "durations_ms": [
+          132.847,
+          128.398,
+          136.236
+        ],
+        "median_ms": 132.847,
+        "failure": null
+      },
+      {
+        "test_id": 2,
+        "description": "",
+        "tags": [],
+        "durations_ms": [
+          134.727,
+          131.066,
+          131.968
+        ],
+        "median_ms": 131.968,
+        "failure": null
+      }
+    ],
+    "median_runtime_ms": 132.407,
+    "p95_per_test_median_ms": 132.847,
+    "target_runtime_ms": 1000.0,
+    "repetitions": 3,
+    "score": 100.0,
+    "score_scale": "0-100",
+    "measurement_note": "Wall time includes Docker exec overhead; use for relative grading in the same environment, not as isolated CPU time.",
+    "metric_name": "runtime_efficiency",
+    "analyzer": "runtime_profile",
+    "weight": 0.05
+  },
+  "memory_safety": {
+    "analyzer": "memory_safety",
+    "status": "completed",
+    "compiled": true,
+    "tests_total": 9,
+    "tests_checked": 9,
+    "tests_clean": 9,
+    "memory_safe": true,
+    "analysis_error": false,
+    "runtime_tools": {
+      "status": "completed",
+      "score": 100.0,
+      "score_scale": "0-100",
+      "valgrind_score": 100.0,
+      "asan_ubsan_score": 100.0,
+      "valgrind_results": [
+        {
+          "test_id": "E01",
+          "description": "Largest signed 32-bit operand plus zero",
+          "tags": [
+            "int32_boundary"
+          ],
+          "input": "2147483647 0\n",
+          "captured_output": "==820== Memcheck, a memory error detector\n==820== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==820== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==820== Command: ./student_program_memcheck\n==820== \n2147483647\n==820== \n==820== HEAP SUMMARY:\n==820==     in use at exit: 0 bytes in 0 blocks\n==820==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==820== \n==820== All heap blocks were freed -- no leaks are possible\n==820== \n==820== For lists of detected and suppressed errors, rerun with: -s\n==820== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==820== Memcheck, a memory error detector\n==820== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==820== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==820== Command: ./student_program_memcheck\n==820== \n2147483647\n==820== \n==820== HEAP SUMMARY:\n==820==     in use at exit: 0 bytes in 0 blocks\n==820==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==820== \n==820== All heap blocks were freed -- no leaks are possible\n==820== \n==820== For lists of detected and suppressed errors, rerun with: -s\n==820== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E02",
+          "description": "Smallest signed 32-bit operand plus zero",
+          "tags": [
+            "int32_boundary"
+          ],
+          "input": "-2147483648 0\n",
+          "captured_output": "==849== Memcheck, a memory error detector\n==849== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==849== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==849== Command: ./student_program_memcheck\n==849== \n-2147483648\n==849== \n==849== HEAP SUMMARY:\n==849==     in use at exit: 0 bytes in 0 blocks\n==849==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==849== \n==849== All heap blocks were freed -- no leaks are possible\n==849== \n==849== For lists of detected and suppressed errors, rerun with: -s\n==849== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==849== Memcheck, a memory error detector\n==849== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==849== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==849== Command: ./student_program_memcheck\n==849== \n-2147483648\n==849== \n==849== HEAP SUMMARY:\n==849==     in use at exit: 0 bytes in 0 blocks\n==849==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==849== \n==849== All heap blocks were freed -- no leaks are possible\n==849== \n==849== For lists of detected and suppressed errors, rerun with: -s\n==849== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E03",
+          "description": "Input separated by irregular whitespace",
+          "tags": [
+            "whitespace"
+          ],
+          "input": "  12     30   \n",
+          "captured_output": "==878== Memcheck, a memory error detector\n==878== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==878== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==878== Command: ./student_program_memcheck\n==878== \n42\n==878== \n==878== HEAP SUMMARY:\n==878==     in use at exit: 0 bytes in 0 blocks\n==878==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==878== \n==878== All heap blocks were freed -- no leaks are possible\n==878== \n==878== For lists of detected and suppressed errors, rerun with: -s\n==878== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==878== Memcheck, a memory error detector\n==878== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==878== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==878== Command: ./student_program_memcheck\n==878== \n42\n==878== \n==878== HEAP SUMMARY:\n==878==     in use at exit: 0 bytes in 0 blocks\n==878==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==878== \n==878== All heap blocks were freed -- no leaks are possible\n==878== \n==878== For lists of detected and suppressed errors, rerun with: -s\n==878== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E04",
+          "description": "Two negative operands",
+          "tags": [
+            "negative"
+          ],
+          "input": "-100 -200\n",
+          "captured_output": "==907== Memcheck, a memory error detector\n==907== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==907== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==907== Command: ./student_program_memcheck\n==907== \n-300\n==907== \n==907== HEAP SUMMARY:\n==907==     in use at exit: 0 bytes in 0 blocks\n==907==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==907== \n==907== All heap blocks were freed -- no leaks are possible\n==907== \n==907== For lists of detected and suppressed errors, rerun with: -s\n==907== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==907== Memcheck, a memory error detector\n==907== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==907== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==907== Command: ./student_program_memcheck\n==907== \n-300\n==907== \n==907== HEAP SUMMARY:\n==907==     in use at exit: 0 bytes in 0 blocks\n==907==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==907== \n==907== All heap blocks were freed -- no leaks are possible\n==907== \n==907== For lists of detected and suppressed errors, rerun with: -s\n==907== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E05",
+          "description": "Large sum still within signed 32-bit range",
+          "tags": [
+            "large_value"
+          ],
+          "input": "1000000000 1000000000\n",
+          "captured_output": "==936== Memcheck, a memory error detector\n==936== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==936== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==936== Command: ./student_program_memcheck\n==936== \n2000000000\n==936== \n==936== HEAP SUMMARY:\n==936==     in use at exit: 0 bytes in 0 blocks\n==936==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==936== \n==936== All heap blocks were freed -- no leaks are possible\n==936== \n==936== For lists of detected and suppressed errors, rerun with: -s\n==936== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==936== Memcheck, a memory error detector\n==936== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==936== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==936== Command: ./student_program_memcheck\n==936== \n2000000000\n==936== \n==936== HEAP SUMMARY:\n==936==     in use at exit: 0 bytes in 0 blocks\n==936==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==936== \n==936== All heap blocks were freed -- no leaks are possible\n==936== \n==936== For lists of detected and suppressed errors, rerun with: -s\n==936== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E06",
+          "description": "Positive signed 32-bit addition overflow",
+          "tags": [
+            "signed_int32_overflow",
+            "positive_overflow"
+          ],
+          "input": "2147483647 1\n",
+          "captured_output": "==965== Memcheck, a memory error detector\n==965== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==965== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==965== Command: ./student_program_memcheck\n==965== \n2147483648\n==965== \n==965== HEAP SUMMARY:\n==965==     in use at exit: 0 bytes in 0 blocks\n==965==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==965== \n==965== All heap blocks were freed -- no leaks are possible\n==965== \n==965== For lists of detected and suppressed errors, rerun with: -s\n==965== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==965== Memcheck, a memory error detector\n==965== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==965== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==965== Command: ./student_program_memcheck\n==965== \n2147483648\n==965== \n==965== HEAP SUMMARY:\n==965==     in use at exit: 0 bytes in 0 blocks\n==965==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==965== \n==965== All heap blocks were freed -- no leaks are possible\n==965== \n==965== For lists of detected and suppressed errors, rerun with: -s\n==965== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E07",
+          "description": "Negative signed 32-bit addition overflow",
+          "tags": [
+            "signed_int32_overflow",
+            "negative_overflow"
+          ],
+          "input": "-2147483648 -1\n",
+          "captured_output": "==994== Memcheck, a memory error detector\n==994== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==994== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==994== Command: ./student_program_memcheck\n==994== \n-2147483649\n==994== \n==994== HEAP SUMMARY:\n==994==     in use at exit: 0 bytes in 0 blocks\n==994==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==994== \n==994== All heap blocks were freed -- no leaks are possible\n==994== \n==994== For lists of detected and suppressed errors, rerun with: -s\n==994== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==994== Memcheck, a memory error detector\n==994== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==994== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==994== Command: ./student_program_memcheck\n==994== \n-2147483649\n==994== \n==994== HEAP SUMMARY:\n==994==     in use at exit: 0 bytes in 0 blocks\n==994==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==994== \n==994== All heap blocks were freed -- no leaks are possible\n==994== \n==994== For lists of detected and suppressed errors, rerun with: -s\n==994== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E08",
+          "description": "Maximum signed 32-bit operands",
+          "tags": [
+            "signed_int32_overflow",
+            "maximum_operands"
+          ],
+          "input": "2147483647 2147483647\n",
+          "captured_output": "==1023== Memcheck, a memory error detector\n==1023== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1023== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1023== Command: ./student_program_memcheck\n==1023== \n4294967294\n==1023== \n==1023== HEAP SUMMARY:\n==1023==     in use at exit: 0 bytes in 0 blocks\n==1023==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1023== \n==1023== All heap blocks were freed -- no leaks are possible\n==1023== \n==1023== For lists of detected and suppressed errors, rerun with: -s\n==1023== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==1023== Memcheck, a memory error detector\n==1023== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1023== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1023== Command: ./student_program_memcheck\n==1023== \n4294967294\n==1023== \n==1023== HEAP SUMMARY:\n==1023==     in use at exit: 0 bytes in 0 blocks\n==1023==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1023== \n==1023== All heap blocks were freed -- no leaks are possible\n==1023== \n==1023== For lists of detected and suppressed errors, rerun with: -s\n==1023== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        },
+        {
+          "test_id": "E09",
+          "description": "Minimum signed 32-bit operands",
+          "tags": [
+            "signed_int32_overflow",
+            "minimum_operands"
+          ],
+          "input": "-2147483648 -2147483648\n",
+          "captured_output": "==1052== Memcheck, a memory error detector\n==1052== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1052== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1052== Command: ./student_program_memcheck\n==1052== \n-4294967296\n==1052== \n==1052== HEAP SUMMARY:\n==1052==     in use at exit: 0 bytes in 0 blocks\n==1052==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1052== \n==1052== All heap blocks were freed -- no leaks are possible\n==1052== \n==1052== For lists of detected and suppressed errors, rerun with: -s\n==1052== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+          "timed_out": false,
+          "exit_code": 0,
+          "analysis_error": false,
+          "log_read_error": null,
+          "log_truncated": false,
+          "memory_safe": true,
+          "parsed_summary": {
+            "error_count": 0,
+            "definitely_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "indirectly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "possibly_lost": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "still_reachable": {
+              "bytes": 0,
+              "blocks": 0
+            },
+            "all_heap_blocks_freed": true,
+            "diagnostics": []
+          },
+          "raw_log": "==1052== Memcheck, a memory error detector\n==1052== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1052== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1052== Command: ./student_program_memcheck\n==1052== \n-4294967296\n==1052== \n==1052== HEAP SUMMARY:\n==1052==     in use at exit: 0 bytes in 0 blocks\n==1052==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1052== \n==1052== All heap blocks were freed -- no leaks are possible\n==1052== \n==1052== For lists of detected and suppressed errors, rerun with: -s\n==1052== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+        }
+      ],
+      "asan_ubsan_results": [
+        {
+          "test_id": "E01",
+          "description": "Largest signed 32-bit operand plus zero",
+          "tags": [
+            "int32_boundary"
+          ],
+          "input": "2147483647 0\n",
+          "output": "2147483647\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E02",
+          "description": "Smallest signed 32-bit operand plus zero",
+          "tags": [
+            "int32_boundary"
+          ],
+          "input": "-2147483648 0\n",
+          "output": "-2147483648\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E03",
+          "description": "Input separated by irregular whitespace",
+          "tags": [
+            "whitespace"
+          ],
+          "input": "  12     30   \n",
+          "output": "42\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E04",
+          "description": "Two negative operands",
+          "tags": [
+            "negative"
+          ],
+          "input": "-100 -200\n",
+          "output": "-300\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E05",
+          "description": "Large sum still within signed 32-bit range",
+          "tags": [
+            "large_value"
+          ],
+          "input": "1000000000 1000000000\n",
+          "output": "2000000000\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E06",
+          "description": "Positive signed 32-bit addition overflow",
+          "tags": [
+            "signed_int32_overflow",
+            "positive_overflow"
+          ],
+          "input": "2147483647 1\n",
+          "output": "2147483648\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E07",
+          "description": "Negative signed 32-bit addition overflow",
+          "tags": [
+            "signed_int32_overflow",
+            "negative_overflow"
+          ],
+          "input": "-2147483648 -1\n",
+          "output": "-2147483649\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E08",
+          "description": "Maximum signed 32-bit operands",
+          "tags": [
+            "signed_int32_overflow",
+            "maximum_operands"
+          ],
+          "input": "2147483647 2147483647\n",
+          "output": "4294967294\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        },
+        {
+          "test_id": "E09",
+          "description": "Minimum signed 32-bit operands",
+          "tags": [
+            "signed_int32_overflow",
+            "minimum_operands"
+          ],
+          "input": "-2147483648 -2147483648\n",
+          "output": "-4294967296\n",
+          "exit_code": 0,
+          "timed_out": false,
+          "address_sanitizer_finding": false,
+          "undefined_behavior_finding": false,
+          "sanitizer_error": false,
+          "analysis_error": false,
+          "clean": true
+        }
+      ],
+      "scoring_note": "The configured runtime-tools component score is the Valgrind score; ASan/UBSan is supplementary evidence and is not additionally weighted."
+    },
+    "results": [
+      {
+        "test_id": "E01",
+        "description": "Largest signed 32-bit operand plus zero",
+        "tags": [
+          "int32_boundary"
+        ],
+        "input": "2147483647 0\n",
+        "captured_output": "==820== Memcheck, a memory error detector\n==820== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==820== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==820== Command: ./student_program_memcheck\n==820== \n2147483647\n==820== \n==820== HEAP SUMMARY:\n==820==     in use at exit: 0 bytes in 0 blocks\n==820==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==820== \n==820== All heap blocks were freed -- no leaks are possible\n==820== \n==820== For lists of detected and suppressed errors, rerun with: -s\n==820== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==820== Memcheck, a memory error detector\n==820== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==820== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==820== Command: ./student_program_memcheck\n==820== \n2147483647\n==820== \n==820== HEAP SUMMARY:\n==820==     in use at exit: 0 bytes in 0 blocks\n==820==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==820== \n==820== All heap blocks were freed -- no leaks are possible\n==820== \n==820== For lists of detected and suppressed errors, rerun with: -s\n==820== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E02",
+        "description": "Smallest signed 32-bit operand plus zero",
+        "tags": [
+          "int32_boundary"
+        ],
+        "input": "-2147483648 0\n",
+        "captured_output": "==849== Memcheck, a memory error detector\n==849== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==849== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==849== Command: ./student_program_memcheck\n==849== \n-2147483648\n==849== \n==849== HEAP SUMMARY:\n==849==     in use at exit: 0 bytes in 0 blocks\n==849==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==849== \n==849== All heap blocks were freed -- no leaks are possible\n==849== \n==849== For lists of detected and suppressed errors, rerun with: -s\n==849== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==849== Memcheck, a memory error detector\n==849== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==849== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==849== Command: ./student_program_memcheck\n==849== \n-2147483648\n==849== \n==849== HEAP SUMMARY:\n==849==     in use at exit: 0 bytes in 0 blocks\n==849==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==849== \n==849== All heap blocks were freed -- no leaks are possible\n==849== \n==849== For lists of detected and suppressed errors, rerun with: -s\n==849== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E03",
+        "description": "Input separated by irregular whitespace",
+        "tags": [
+          "whitespace"
+        ],
+        "input": "  12     30   \n",
+        "captured_output": "==878== Memcheck, a memory error detector\n==878== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==878== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==878== Command: ./student_program_memcheck\n==878== \n42\n==878== \n==878== HEAP SUMMARY:\n==878==     in use at exit: 0 bytes in 0 blocks\n==878==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==878== \n==878== All heap blocks were freed -- no leaks are possible\n==878== \n==878== For lists of detected and suppressed errors, rerun with: -s\n==878== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==878== Memcheck, a memory error detector\n==878== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==878== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==878== Command: ./student_program_memcheck\n==878== \n42\n==878== \n==878== HEAP SUMMARY:\n==878==     in use at exit: 0 bytes in 0 blocks\n==878==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==878== \n==878== All heap blocks were freed -- no leaks are possible\n==878== \n==878== For lists of detected and suppressed errors, rerun with: -s\n==878== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E04",
+        "description": "Two negative operands",
+        "tags": [
+          "negative"
+        ],
+        "input": "-100 -200\n",
+        "captured_output": "==907== Memcheck, a memory error detector\n==907== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==907== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==907== Command: ./student_program_memcheck\n==907== \n-300\n==907== \n==907== HEAP SUMMARY:\n==907==     in use at exit: 0 bytes in 0 blocks\n==907==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==907== \n==907== All heap blocks were freed -- no leaks are possible\n==907== \n==907== For lists of detected and suppressed errors, rerun with: -s\n==907== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==907== Memcheck, a memory error detector\n==907== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==907== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==907== Command: ./student_program_memcheck\n==907== \n-300\n==907== \n==907== HEAP SUMMARY:\n==907==     in use at exit: 0 bytes in 0 blocks\n==907==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==907== \n==907== All heap blocks were freed -- no leaks are possible\n==907== \n==907== For lists of detected and suppressed errors, rerun with: -s\n==907== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E05",
+        "description": "Large sum still within signed 32-bit range",
+        "tags": [
+          "large_value"
+        ],
+        "input": "1000000000 1000000000\n",
+        "captured_output": "==936== Memcheck, a memory error detector\n==936== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==936== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==936== Command: ./student_program_memcheck\n==936== \n2000000000\n==936== \n==936== HEAP SUMMARY:\n==936==     in use at exit: 0 bytes in 0 blocks\n==936==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==936== \n==936== All heap blocks were freed -- no leaks are possible\n==936== \n==936== For lists of detected and suppressed errors, rerun with: -s\n==936== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==936== Memcheck, a memory error detector\n==936== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==936== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==936== Command: ./student_program_memcheck\n==936== \n2000000000\n==936== \n==936== HEAP SUMMARY:\n==936==     in use at exit: 0 bytes in 0 blocks\n==936==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==936== \n==936== All heap blocks were freed -- no leaks are possible\n==936== \n==936== For lists of detected and suppressed errors, rerun with: -s\n==936== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E06",
+        "description": "Positive signed 32-bit addition overflow",
+        "tags": [
+          "signed_int32_overflow",
+          "positive_overflow"
+        ],
+        "input": "2147483647 1\n",
+        "captured_output": "==965== Memcheck, a memory error detector\n==965== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==965== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==965== Command: ./student_program_memcheck\n==965== \n2147483648\n==965== \n==965== HEAP SUMMARY:\n==965==     in use at exit: 0 bytes in 0 blocks\n==965==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==965== \n==965== All heap blocks were freed -- no leaks are possible\n==965== \n==965== For lists of detected and suppressed errors, rerun with: -s\n==965== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==965== Memcheck, a memory error detector\n==965== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==965== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==965== Command: ./student_program_memcheck\n==965== \n2147483648\n==965== \n==965== HEAP SUMMARY:\n==965==     in use at exit: 0 bytes in 0 blocks\n==965==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==965== \n==965== All heap blocks were freed -- no leaks are possible\n==965== \n==965== For lists of detected and suppressed errors, rerun with: -s\n==965== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E07",
+        "description": "Negative signed 32-bit addition overflow",
+        "tags": [
+          "signed_int32_overflow",
+          "negative_overflow"
+        ],
+        "input": "-2147483648 -1\n",
+        "captured_output": "==994== Memcheck, a memory error detector\n==994== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==994== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==994== Command: ./student_program_memcheck\n==994== \n-2147483649\n==994== \n==994== HEAP SUMMARY:\n==994==     in use at exit: 0 bytes in 0 blocks\n==994==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==994== \n==994== All heap blocks were freed -- no leaks are possible\n==994== \n==994== For lists of detected and suppressed errors, rerun with: -s\n==994== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==994== Memcheck, a memory error detector\n==994== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==994== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==994== Command: ./student_program_memcheck\n==994== \n-2147483649\n==994== \n==994== HEAP SUMMARY:\n==994==     in use at exit: 0 bytes in 0 blocks\n==994==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==994== \n==994== All heap blocks were freed -- no leaks are possible\n==994== \n==994== For lists of detected and suppressed errors, rerun with: -s\n==994== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E08",
+        "description": "Maximum signed 32-bit operands",
+        "tags": [
+          "signed_int32_overflow",
+          "maximum_operands"
+        ],
+        "input": "2147483647 2147483647\n",
+        "captured_output": "==1023== Memcheck, a memory error detector\n==1023== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1023== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1023== Command: ./student_program_memcheck\n==1023== \n4294967294\n==1023== \n==1023== HEAP SUMMARY:\n==1023==     in use at exit: 0 bytes in 0 blocks\n==1023==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1023== \n==1023== All heap blocks were freed -- no leaks are possible\n==1023== \n==1023== For lists of detected and suppressed errors, rerun with: -s\n==1023== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==1023== Memcheck, a memory error detector\n==1023== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1023== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1023== Command: ./student_program_memcheck\n==1023== \n4294967294\n==1023== \n==1023== HEAP SUMMARY:\n==1023==     in use at exit: 0 bytes in 0 blocks\n==1023==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1023== \n==1023== All heap blocks were freed -- no leaks are possible\n==1023== \n==1023== For lists of detected and suppressed errors, rerun with: -s\n==1023== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      },
+      {
+        "test_id": "E09",
+        "description": "Minimum signed 32-bit operands",
+        "tags": [
+          "signed_int32_overflow",
+          "minimum_operands"
+        ],
+        "input": "-2147483648 -2147483648\n",
+        "captured_output": "==1052== Memcheck, a memory error detector\n==1052== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1052== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1052== Command: ./student_program_memcheck\n==1052== \n-4294967296\n==1052== \n==1052== HEAP SUMMARY:\n==1052==     in use at exit: 0 bytes in 0 blocks\n==1052==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1052== \n==1052== All heap blocks were freed -- no leaks are possible\n==1052== \n==1052== For lists of detected and suppressed errors, rerun with: -s\n==1052== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n",
+        "timed_out": false,
+        "exit_code": 0,
+        "analysis_error": false,
+        "log_read_error": null,
+        "log_truncated": false,
+        "memory_safe": true,
+        "parsed_summary": {
+          "error_count": 0,
+          "definitely_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "indirectly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "possibly_lost": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "still_reachable": {
+            "bytes": 0,
+            "blocks": 0
+          },
+          "all_heap_blocks_freed": true,
+          "diagnostics": []
+        },
+        "raw_log": "==1052== Memcheck, a memory error detector\n==1052== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.\n==1052== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info\n==1052== Command: ./student_program_memcheck\n==1052== \n-4294967296\n==1052== \n==1052== HEAP SUMMARY:\n==1052==     in use at exit: 0 bytes in 0 blocks\n==1052==   total heap usage: 2 allocs, 2 frees, 8,192 bytes allocated\n==1052== \n==1052== All heap blocks were freed -- no leaks are possible\n==1052== \n==1052== For lists of detected and suppressed errors, rerun with: -s\n==1052== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)\n"
+      }
+    ],
+    "raw_compiler_output": "",
+    "component_config": {
+      "valgrind_weight": 0.7,
+      "llm_audit_weight": 0.3,
+      "severity_penalties": {
+        "critical": 40.0,
+        "high": 25.0,
+        "medium": 10.0,
+        "low": 3.0
+      },
+      "llm_audit_max_findings": 30
+    },
+    "metric_name": "memory_safety",
+    "weight": 0.17,
+    "llm_source_audit": {
+      "status": "completed",
+      "model": "Qwen/Qwen3-4B-GGUF:Q4_K_M",
+      "audit": {
+        "summary": "No concrete memory-safety defects found in the provided code.",
+        "findings": [],
+        "limitations": [
+          "Audit was limited to the provided code snippet and did not analyze external dependencies.",
+          "No dynamic memory allocations or complex data structures were present to analyze."
+        ],
+        "rejected_findings": []
+      },
+      "source_code_chars": 303,
+      "attempts": 1,
+      "audit_domain": "memory-safety"
+    },
+    "composite_score": {
+      "status": "completed",
+      "score": 100.0,
+      "scale": "0-100",
+      "weights": {
+        "valgrind": 0.7,
+        "llm_source_audit": 0.3
+      },
+      "runtime_tools": {
+        "status": "completed",
+        "score": 100.0,
+        "valgrind_score": 100.0,
+        "asan_ubsan_score": 100.0,
+        "basis": "The configured runtime-tools component score is the Valgrind score; ASan/UBSan is supplementary evidence and is not additionally weighted."
+      },
+      "valgrind": {
+        "status": "completed",
+        "score": 100.0,
+        "tests_clean": 9,
+        "tests_total": 9,
+        "basis": "fraction of test executions with no reported Memcheck errors or leak findings"
+      },
+      "llm_source_audit": {
+        "status": "completed",
+        "score": 100.0,
+        "unique_findings": 0,
+        "penalties_applied": [],
+        "total_penalty": 0,
+        "basis": "100 minus configured severity penalties for unique source-level findings"
+      },
+      "formula": "valgrind_weight * runtime_tools_score + llm_audit_weight * llm_score"
+    },
+    "score": 100.0,
+    "score_scale": "0-100"
+  },
+  "readability": {
+    "status": "completed",
+    "long_lines": [],
+    "comment_line_count": 0,
+    "identifier_count": 28,
+    "single_character_identifier_count": 3,
+    "average_line_length": 22.08,
+    "score": 92.0,
+    "score_scale": "0-100",
+    "measurement_note": "Deterministic style heuristics; naming and comments require contextual human/LLM judgment.",
+    "metric_name": "readability",
+    "analyzer": "readability",
+    "weight": 0.1
+  },
+  "scoring": {
+    "status": "completed",
+    "score": 99.2,
+    "scale": "0-100",
+    "weights_sum": 1.0,
+    "contributions": [
+      {
+        "metric": "correctness",
+        "analyzer": "io_tests",
+        "weight": 0.22,
+        "score": 100.0,
+        "contribution": 22.0
+      },
+      {
+        "metric": "syntax",
+        "analyzer": "compiler_diagnostics",
+        "weight": 0.08,
+        "score": 100.0,
+        "contribution": 8.0
+      },
+      {
+        "metric": "structure",
+        "analyzer": "static_analysis",
+        "weight": 0.12,
+        "score": 100.0,
+        "contribution": 12.0
+      },
+      {
+        "metric": "modularity",
+        "analyzer": "modularity",
+        "weight": 0.08,
+        "score": 100.0,
+        "contribution": 8.0
+      },
+      {
+        "metric": "complexity",
+        "analyzer": "complexity_estimator",
+        "weight": 0.08,
+        "score": 100.0,
+        "contribution": 8.0
+      },
+      {
+        "metric": "logical",
+        "analyzer": "edge_case_runner",
+        "weight": 0.1,
+        "score": 100.0,
+        "contribution": 10.0
+      },
+      {
+        "metric": "runtime_efficiency",
+        "analyzer": "runtime_profile",
+        "weight": 0.05,
+        "score": 100.0,
+        "contribution": 5.0
+      },
+      {
+        "metric": "memory_safety",
+        "analyzer": "memory_safety",
+        "weight": 0.17,
+        "score": 100.0,
+        "contribution": 17.0
+      },
+      {
+        "metric": "readability",
+        "analyzer": "readability",
+        "weight": 0.1,
+        "score": 92.0,
+        "contribution": 9.2
+      }
+    ],
+    "formula": "sum(metric_weight * metric_score)"
+  },
+  "evidence_ledger": [
+    {
+      "id": "E-PREFLIGHT-001",
+      "kind": "preflight",
+      "statement": "Preflight: status=passed, compiled=True, smoke_tested=True, suspected_infinite_loop=False, crashed=False, exit_code=0, timed_out=False",
+      "facts": {
+        "status": "passed",
+        "compiled": true,
+        "smoke_tested": true,
+        "suspected_infinite_loop": false
+      }
+    },
+    {
+      "id": "E-RULE-CONTRACT-001",
+      "kind": "rubric",
+      "statement": "Instructor-defined problem contract.",
+      "facts": {
+        "description": "Read two signed 32-bit integers separated by whitespace and print their mathematical sum followed by a newline.",
+        "operand_type": "int32",
+        "sum_type": "int64",
+        "input_range": "-2147483648 through 2147483647 for each operand",
+        "output_rule": "The sum must be printed exactly as a signed 64-bit decimal integer."
+      }
+    },
+    {
+      "id": "E-METRIC-CORRECTNESS-001",
+      "kind": "metric_summary",
+      "statement": "Metric correctness: status=unknown, score=100.0/100, weight=0.22.",
+      "facts": {
+        "metric": "correctness",
+        "status": "unknown",
+        "score": 100.0,
+        "weight": 0.22
+      }
+    },
+    {
+      "id": "E-CORRECTNESS-SUMMARY-001",
+      "kind": "test_summary",
+      "statement": "correctness test summary: 4/4 passed.",
+      "facts": {
+        "metric": "correctness",
+        "tests_passed": 4,
+        "tests_total": 4
+      }
+    },
+    {
+      "id": "E-CORRECTNESS-TEST-001",
+      "kind": "test_result",
+      "statement": "correctness test C01: passed=True; input='3 4\\n'; expected='7\\n'; actual='7\\n'; tags=['basic'].",
+      "facts": {
+        "metric": "correctness",
+        "test_id": "C01",
+        "passed": true,
+        "input": "3 4\n",
+        "expected": "7\n",
+        "actual": "7\n",
+        "tags": [
+          "basic"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-CORRECTNESS-TEST-002",
+      "kind": "test_result",
+      "statement": "correctness test C02: passed=True; input='10 20\\n'; expected='30\\n'; actual='30\\n'; tags=['basic'].",
+      "facts": {
+        "metric": "correctness",
+        "test_id": "C02",
+        "passed": true,
+        "input": "10 20\n",
+        "expected": "30\n",
+        "actual": "30\n",
+        "tags": [
+          "basic"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-CORRECTNESS-TEST-003",
+      "kind": "test_result",
+      "statement": "correctness test C03: passed=True; input='-5 2\\n'; expected='-3\\n'; actual='-3\\n'; tags=['basic'].",
+      "facts": {
+        "metric": "correctness",
+        "test_id": "C03",
+        "passed": true,
+        "input": "-5 2\n",
+        "expected": "-3\n",
+        "actual": "-3\n",
+        "tags": [
+          "basic"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-CORRECTNESS-TEST-004",
+      "kind": "test_result",
+      "statement": "correctness test C04: passed=True; input='0 0\\n'; expected='0\\n'; actual='0\\n'; tags=['basic'].",
+      "facts": {
+        "metric": "correctness",
+        "test_id": "C04",
+        "passed": true,
+        "input": "0 0\n",
+        "expected": "0\n",
+        "actual": "0\n",
+        "tags": [
+          "basic"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-METRIC-SYNTAX-001",
+      "kind": "metric_summary",
+      "statement": "Metric syntax: status=completed, score=100.0/100, weight=0.08.",
+      "facts": {
+        "metric": "syntax",
+        "status": "completed",
+        "score": 100.0,
+        "weight": 0.08
+      }
+    },
+    {
+      "id": "E-SYNTAX-001",
+      "kind": "compiler_diagnostics",
+      "statement": "Compiler: compiled=True; warnings=0; errors=0.",
+      "facts": {
+        "compiled": true,
+        "warning_count": 0,
+        "error_count": 0,
+        "warnings": [],
+        "errors": []
+      }
+    },
+    {
+      "id": "E-METRIC-STRUCTURE-001",
+      "kind": "metric_summary",
+      "statement": "Metric structure: status=completed, score=100.0/100, weight=0.12.",
+      "facts": {
+        "metric": "structure",
+        "status": "completed",
+        "score": 100.0,
+        "weight": 0.12
+      }
+    },
+    {
+      "id": "E-STRUCTURE-SUMMARY-001",
+      "kind": "static_analysis",
+      "statement": "Static analysis: tool=cppcheck; finding_count=0; severity_counts={'error': 0, 'warning': 0, 'style': 0, 'performance': 0, 'portability': 0, 'information': 0}.",
+      "facts": {
+        "tool": "cppcheck",
+        "finding_count": 0,
+        "severity_counts": {
+          "error": 0,
+          "warning": 0,
+          "style": 0,
+          "performance": 0,
+          "portability": 0,
+          "information": 0
+        }
+      }
+    },
+    {
+      "id": "E-METRIC-MODULARITY-001",
+      "kind": "metric_summary",
+      "statement": "Metric modularity: status=completed, score=100.0/100, weight=0.08.",
+      "facts": {
+        "metric": "modularity",
+        "status": "completed",
+        "score": 100.0,
+        "weight": 0.08
+      }
+    },
+    {
+      "id": "E-RULE-MODULARITY-001",
+      "kind": "rubric",
+      "statement": "Modularity rubric: minimum_functions=1; helpers_expected=False.",
+      "facts": {
+        "minimum_functions": 1,
+        "helpers_expected": false
+      }
+    },
+    {
+      "id": "E-MODULARITY-001",
+      "kind": "source_metric",
+      "statement": "Detected 1 functions and 0 helper functions.",
+      "facts": {
+        "function_count": 1,
+        "helper_function_count": 0,
+        "functions": [
+          {
+            "name": "main",
+            "start_line": 5,
+            "end_line": null,
+            "length": 10,
+            "nloc": 10,
+            "cyclomatic_complexity_estimate": 2,
+            "parameter_count_estimate": 1,
+            "token_count": 60
+          }
+        ]
+      }
+    },
+    {
+      "id": "E-METRIC-COMPLEXITY-001",
+      "kind": "metric_summary",
+      "statement": "Metric complexity: status=completed, score=100.0/100, weight=0.08.",
+      "facts": {
+        "metric": "complexity",
+        "status": "completed",
+        "score": 100.0,
+        "weight": 0.08
+      }
+    },
+    {
+      "id": "E-COMPLEXITY-001",
+      "kind": "source_metric",
+      "statement": "Static complexity estimates: max cyclomatic=2; max function length=10; thresholds={'max_cyclomatic': 8, 'max_function_length': 40}.",
+      "facts": {
+        "max_cyclomatic": 2,
+        "max_function_length": 10,
+        "thresholds": {
+          "max_cyclomatic": 8,
+          "max_function_length": 40
+        },
+        "complexity_violations": [],
+        "length_violations": [],
+        "measurement_note": "Lizard-based cyclomatic complexity and per-function NLOC."
+      }
+    },
+    {
+      "id": "E-METRIC-LOGICAL-001",
+      "kind": "metric_summary",
+      "statement": "Metric logical: status=unknown, score=100.0/100, weight=0.1.",
+      "facts": {
+        "metric": "logical",
+        "status": "unknown",
+        "score": 100.0,
+        "weight": 0.1
+      }
+    },
+    {
+      "id": "E-LOGICAL-SUMMARY-001",
+      "kind": "test_summary",
+      "statement": "logical test summary: 9/9 passed.",
+      "facts": {
+        "metric": "logical",
+        "tests_passed": 9,
+        "tests_total": 9
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-001",
+      "kind": "test_result",
+      "statement": "logical test E01: passed=True; input='2147483647 0\\n'; expected='2147483647\\n'; actual='2147483647\\n'; tags=['int32_boundary'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E01",
+        "passed": true,
+        "input": "2147483647 0\n",
+        "expected": "2147483647\n",
+        "actual": "2147483647\n",
+        "tags": [
+          "int32_boundary"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-002",
+      "kind": "test_result",
+      "statement": "logical test E02: passed=True; input='-2147483648 0\\n'; expected='-2147483648\\n'; actual='-2147483648\\n'; tags=['int32_boundary'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E02",
+        "passed": true,
+        "input": "-2147483648 0\n",
+        "expected": "-2147483648\n",
+        "actual": "-2147483648\n",
+        "tags": [
+          "int32_boundary"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-003",
+      "kind": "test_result",
+      "statement": "logical test E03: passed=True; input='  12     30   \\n'; expected='42\\n'; actual='42\\n'; tags=['whitespace'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E03",
+        "passed": true,
+        "input": "  12     30   \n",
+        "expected": "42\n",
+        "actual": "42\n",
+        "tags": [
+          "whitespace"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-004",
+      "kind": "test_result",
+      "statement": "logical test E04: passed=True; input='-100 -200\\n'; expected='-300\\n'; actual='-300\\n'; tags=['negative'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E04",
+        "passed": true,
+        "input": "-100 -200\n",
+        "expected": "-300\n",
+        "actual": "-300\n",
+        "tags": [
+          "negative"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-005",
+      "kind": "test_result",
+      "statement": "logical test E05: passed=True; input='1000000000 1000000000\\n'; expected='2000000000\\n'; actual='2000000000\\n'; tags=['large_value'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E05",
+        "passed": true,
+        "input": "1000000000 1000000000\n",
+        "expected": "2000000000\n",
+        "actual": "2000000000\n",
+        "tags": [
+          "large_value"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-006",
+      "kind": "test_result",
+      "statement": "logical test E06: passed=True; input='2147483647 1\\n'; expected='2147483648\\n'; actual='2147483648\\n'; tags=['signed_int32_overflow', 'positive_overflow'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E06",
+        "passed": true,
+        "input": "2147483647 1\n",
+        "expected": "2147483648\n",
+        "actual": "2147483648\n",
+        "tags": [
+          "signed_int32_overflow",
+          "positive_overflow"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-007",
+      "kind": "test_result",
+      "statement": "logical test E07: passed=True; input='-2147483648 -1\\n'; expected='-2147483649\\n'; actual='-2147483649\\n'; tags=['signed_int32_overflow', 'negative_overflow'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E07",
+        "passed": true,
+        "input": "-2147483648 -1\n",
+        "expected": "-2147483649\n",
+        "actual": "-2147483649\n",
+        "tags": [
+          "signed_int32_overflow",
+          "negative_overflow"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-008",
+      "kind": "test_result",
+      "statement": "logical test E08: passed=True; input='2147483647 2147483647\\n'; expected='4294967294\\n'; actual='4294967294\\n'; tags=['signed_int32_overflow', 'maximum_operands'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E08",
+        "passed": true,
+        "input": "2147483647 2147483647\n",
+        "expected": "4294967294\n",
+        "actual": "4294967294\n",
+        "tags": [
+          "signed_int32_overflow",
+          "maximum_operands"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-TEST-009",
+      "kind": "test_result",
+      "statement": "logical test E09: passed=True; input='-2147483648 -2147483648\\n'; expected='-4294967296\\n'; actual='-4294967296\\n'; tags=['signed_int32_overflow', 'minimum_operands'].",
+      "facts": {
+        "metric": "logical",
+        "test_id": "E09",
+        "passed": true,
+        "input": "-2147483648 -2147483648\n",
+        "expected": "-4294967296\n",
+        "actual": "-4294967296\n",
+        "tags": [
+          "signed_int32_overflow",
+          "minimum_operands"
+        ],
+        "exit_code": 0,
+        "timed_out": false
+      }
+    },
+    {
+      "id": "E-LOGICAL-OVERFLOW-COVERAGE-001",
+      "kind": "coverage_summary",
+      "statement": "Signed int32 overflow coverage: 4 configured cases; 4 passed; 0 failed.",
+      "facts": {
+        "overflow_tests_total": 4,
+        "overflow_tests_passed": 4,
+        "overflow_tests_failed": 0,
+        "contract_operand_type": "int32",
+        "contract_sum_type": "int64"
+      }
+    },
+    {
+      "id": "E-METRIC-RUNTIME_EFFICIENCY-001",
+      "kind": "metric_summary",
+      "statement": "Metric runtime_efficiency: status=completed, score=100.0/100, weight=0.05.",
+      "facts": {
+        "metric": "runtime_efficiency",
+        "status": "completed",
+        "score": 100.0,
+        "weight": 0.05
+      }
+    },
+    {
+      "id": "E-RUNTIME-001",
+      "kind": "runtime_measurement",
+      "statement": "Runtime profile: median=132.407 ms; p95 per-test median=132.847 ms; target=1000.0 ms.",
+      "facts": {
+        "median_runtime_ms": 132.407,
+        "p95_per_test_median_ms": 132.847,
+        "target_runtime_ms": 1000.0,
+        "measurement_note": "Wall time includes Docker exec overhead; use for relative grading in the same environment, not as isolated CPU time."
+      }
+    },
+    {
+      "id": "E-METRIC-MEMORY_SAFETY-001",
+      "kind": "metric_summary",
+      "statement": "Metric memory_safety: status=completed, score=100.0/100, weight=0.17.",
+      "facts": {
+        "metric": "memory_safety",
+        "status": "completed",
+        "score": 100.0,
+        "weight": 0.17
+      }
+    },
+    {
+      "id": "E-MEMORY-SUMMARY-001",
+      "kind": "memory_safety_measurement",
+      "statement": "Memory-safety checks: status=completed; runtime status=completed; tests_clean=9/9; memory_safe=True.",
+      "facts": {
+        "tests_clean": 9,
+        "tests_total": 9,
+        "memory_safe": true,
+        "runtime_status": "completed"
+      }
+    },
+    {
+      "id": "E-SANITIZER-001",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E01: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E01",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-002",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E02: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E02",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-003",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E03: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E03",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-004",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E04: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E04",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-005",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E05: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E05",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-006",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E06: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E06",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-007",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E07: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E07",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-008",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E08: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E08",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-SANITIZER-009",
+      "kind": "sanitizer_result",
+      "statement": "ASan/UBSan test E09: clean=True; address_error=False; undefined_behavior=False; sanitizer_error=False.",
+      "facts": {
+        "test_id": "E09",
+        "clean": true,
+        "address_sanitizer_finding": false,
+        "undefined_behavior_finding": false,
+        "sanitizer_error": false
+      }
+    },
+    {
+      "id": "E-MEMORY-SOURCE-AUDIT-001",
+      "kind": "model_audit",
+      "statement": "Separate model source audit status=completed; findings=0. Model-derived analysis is not independent runtime proof.",
+      "facts": {
+        "status": "completed",
+        "finding_count": 0
+      }
+    },
+    {
+      "id": "E-METRIC-READABILITY-001",
+      "kind": "metric_summary",
+      "statement": "Metric readability: status=completed, score=92.0/100, weight=0.1.",
+      "facts": {
+        "metric": "readability",
+        "status": "completed",
+        "score": 92.0,
+        "weight": 0.1
+      }
+    },
+    {
+      "id": "E-READABILITY-001",
+      "kind": "readability_measurement",
+      "statement": "Readability heuristics: score=92.0; single_character_identifiers=3; identifiers=28; long_lines=[]; comment_lines=0.",
+      "facts": {
+        "score": 92.0,
+        "single_character_identifier_count": 3,
+        "identifier_count": 28,
+        "long_lines": [],
+        "comment_line_count": 0,
+        "measurement_note": "Deterministic style heuristics; naming and comments require contextual human/LLM judgment."
+      }
+    },
+    {
+      "id": "E-SOURCE-L001",
+      "kind": "source_line",
+      "statement": "Source line 1: '#include <inttypes.h>'.",
+      "facts": {
+        "line": 1,
+        "code": "#include <inttypes.h>"
+      }
+    },
+    {
+      "id": "E-SOURCE-L002",
+      "kind": "source_line",
+      "statement": "Source line 2: '#include <stdint.h>'.",
+      "facts": {
+        "line": 2,
+        "code": "#include <stdint.h>"
+      }
+    },
+    {
+      "id": "E-SOURCE-L003",
+      "kind": "source_line",
+      "statement": "Source line 3: '#include <stdio.h>'.",
+      "facts": {
+        "line": 3,
+        "code": "#include <stdio.h>"
+      }
+    },
+    {
+      "id": "E-SOURCE-L004",
+      "kind": "source_line",
+      "statement": "Source line 4: ''.",
+      "facts": {
+        "line": 4,
+        "code": ""
+      }
+    },
+    {
+      "id": "E-SOURCE-L005",
+      "kind": "source_line",
+      "statement": "Source line 5: 'int main(void) {'.",
+      "facts": {
+        "line": 5,
+        "code": "int main(void) {"
+      }
+    },
+    {
+      "id": "E-SOURCE-L006",
+      "kind": "source_line",
+      "statement": "Source line 6: '    int32_t left;'.",
+      "facts": {
+        "line": 6,
+        "code": "    int32_t left;"
+      }
+    },
+    {
+      "id": "E-SOURCE-L007",
+      "kind": "source_line",
+      "statement": "Source line 7: '    int32_t right;'.",
+      "facts": {
+        "line": 7,
+        "code": "    int32_t right;"
+      }
+    },
+    {
+      "id": "E-SOURCE-L008",
+      "kind": "source_line",
+      "statement": "Source line 8: ''.",
+      "facts": {
+        "line": 8,
+        "code": ""
+      }
+    },
+    {
+      "id": "E-SOURCE-L009",
+      "kind": "source_line",
+      "statement": "Source line 9: '    if (scanf(\"%\" SCNd32 \" %\" SCNd32, &left, &right) != 2) {'.",
+      "facts": {
+        "line": 9,
+        "code": "    if (scanf(\"%\" SCNd32 \" %\" SCNd32, &left, &right) != 2) {"
+      }
+    },
+    {
+      "id": "E-SOURCE-L010",
+      "kind": "source_line",
+      "statement": "Source line 10: '        return 1;'.",
+      "facts": {
+        "line": 10,
+        "code": "        return 1;"
+      }
+    },
+    {
+      "id": "E-SOURCE-L011",
+      "kind": "source_line",
+      "statement": "Source line 11: '    }'.",
+      "facts": {
+        "line": 11,
+        "code": "    }"
+      }
+    },
+    {
+      "id": "E-SOURCE-L012",
+      "kind": "source_line",
+      "statement": "Source line 12: ''.",
+      "facts": {
+        "line": 12,
+        "code": ""
+      }
+    },
+    {
+      "id": "E-SOURCE-L013",
+      "kind": "source_line",
+      "statement": "Source line 13: '    int64_t sum = (int64_t)left + (int64_t)right;'.",
+      "facts": {
+        "line": 13,
+        "code": "    int64_t sum = (int64_t)left + (int64_t)right;"
+      }
+    },
+    {
+      "id": "E-SOURCE-L014",
+      "kind": "source_line",
+      "statement": "Source line 14: '    printf(\"%\" PRId64 \"\\\\n\", sum);'.",
+      "facts": {
+        "line": 14,
+        "code": "    printf(\"%\" PRId64 \"\\n\", sum);"
+      }
+    },
+    {
+      "id": "E-SOURCE-L015",
+      "kind": "source_line",
+      "statement": "Source line 15: '    return 0;'.",
+      "facts": {
+        "line": 15,
+        "code": "    return 0;"
+      }
+    },
+    {
+      "id": "E-SOURCE-L016",
+      "kind": "source_line",
+      "statement": "Source line 16: '}'.",
+      "facts": {
+        "line": 16,
+        "code": "}"
+      }
+    }
+  ],
+  "usefulness_and_limitations": {
+    "usefulness": [
+      {
+        "use_case": "Course assignment triage",
+        "example": "An instructor evaluates a class set of C submissions against the same versioned rules and hidden tests, then reviews the failing inputs and per-metric evidence.",
+        "benefit": "Reduces repetitive compile-and-test work while keeping grades reproducible from the source hash and rules hash."
+      },
+      {
+        "use_case": "Fast formative feedback",
+        "example": "A student submits a program before the deadline and receives exact failing inputs, expected outputs, compiler diagnostics, and bounded runtime findings.",
+        "benefit": "Helps students reproduce and fix defects before manual assessment."
+      },
+      {
+        "use_case": "Security and memory-risk screening",
+        "example": "A course uses Valgrind, ASan/UBSan, static diagnostics, and source review to prioritize submissions that need a closer manual check.",
+        "benefit": "Combines independent runtime and source-level signals instead of relying on output correctness alone."
+      },
+      {
+        "use_case": "Similarity triage across a course corpus",
+        "example": "With an instructor-authorized corpus populated, the similarity analyzer flags submissions whose token-shingle overlap exceeds the configured threshold.",
+        "benefit": "Narrows the set of submissions an instructor needs to inspect; it does not determine plagiarism or authorship."
+      }
+    ],
+    "limitations": [
+      {
+        "limitation": "Finite tests cannot prove correctness",
+        "example": "A sum program passes every supplied case but receives 2147483647 and 1 when no overflow case is configured; the program may invoke signed integer overflow.",
+        "mitigation": "Define the numeric contract in rules, include boundary/counterexample tests, and state exactly which inputs were exercised."
+      },
+      {
+        "limitation": "Dynamic tools only observe executed paths",
+        "example": "A memory leak occurs only after a rare error branch; if none of the configured tests enters that branch, Valgrind may report a clean run.",
+        "mitigation": "Expand tests to exercise error paths and retain source-level review as a complementary, non-conclusive signal."
+      },
+      {
+        "limitation": "Heuristic and LLM judgments can be subjective",
+        "example": "A short, clear program uses single-letter loop indices; a style heuristic may penalize it even when the instructor rubric does not require longer names or comments.",
+        "mitigation": "Keep the instructor rubric authoritative, classify non-rubric suggestions as optional, and require evidence IDs for factual claims."
+      },
+      {
+        "limitation": "Similarity is not proof of copying or LLM use",
+        "example": "Two students independently write the same short scanf/printf solution and exceed a similarity threshold because the task has very little possible code structure.",
+        "mitigation": "Use similarity only to flag candidates for instructor review; compare distinctive logic and context before drawing conclusions."
+      }
+    ]
+  },
+  "llm_review": {
+    "status": "unavailable",
+    "model": "Qwen/Qwen3-4B-GGUF:Q4_K_M",
+    "review_iterations": 3,
+    "request_attempts": 6,
+    "final_synthesis_status": "failed_no_valid_review",
+    "evidence_metadata": {
+      "max_evidence_chars": 4200,
+      "evidence_chars": 2819,
+      "ledger_records_total": 61,
+      "ledger_records_sent": 16,
+      "full_logs_preserved_in_report": true,
+      "full_source_preserved_in_report": true,
+      "ground_truth_labels_included": false
+    },
+    "claim_validation": {
+      "status": "invalid",
+      "reason": "No response."
+    },
+    "intermediate_reviews": [
+      {
+        "iteration": 1,
+        "status": "invalid_response",
+        "review": {
+          "summary": "LLM review pass 1 did not pass evidence validation.",
+          "summary_evidence_ids": [],
+          "findings": [],
+          "contradictions": [],
+          "recommendations": [],
+          "uncertainties": [
+            {
+              "text": "This pass is incomplete; inspect the response diagnostic.",
+              "evidence_ids": [
+                "E-PREFLIGHT-001"
+              ]
+            }
+          ],
+          "evidence_references": []
+        },
+        "validation": {
+          "status": "invalid",
+          "reason": "No response."
+        },
+        "error": "Response attempt 1: {\n  \"summary\": \"The submission for 'sum_two_integers' meets all rubric requirements and\nResponse attempt 2: empty or invalid JSON response"
+      },
+      {
+        "iteration": 2,
+        "status": "invalid_response",
+        "review": {
+          "summary": "LLM review pass 2 did not pass evidence validation.",
+          "summary_evidence_ids": [],
+          "findings": [],
+          "contradictions": [],
+          "recommendations": [],
+          "uncertainties": [
+            {
+              "text": "This pass is incomplete; inspect the response diagnostic.",
+              "evidence_ids": [
+                "E-PREFLIGHT-001"
+              ]
+            }
+          ],
+          "evidence_references": []
+        },
+        "validation": {
+          "status": "invalid",
+          "reason": "No response."
+        },
+        "error": "Response attempt 1: empty or invalid JSON response\nResponse attempt 2: empty or invalid JSON response"
+      }
+    ],
+    "failed_passes": [
+      {
+        "iteration": 1,
+        "error": "Response attempt 1: {\n  \"summary\": \"The submission for 'sum_two_integers' meets all rubric requirements and\nResponse attempt 2: empty or invalid JSON response"
+      },
+      {
+        "iteration": 2,
+        "error": "Response attempt 1: empty or invalid JSON response\nResponse attempt 2: empty or invalid JSON response"
+      },
+      {
+        "iteration": 3,
+        "error": "Response attempt 1: empty or invalid JSON response\nResponse attempt 2: empty or invalid JSON response"
+      }
+    ],
+    "review": {
+      "summary": "No valid evidence-grounded LLM review was obtained; deterministic analyzer results remain authoritative.",
+      "summary_evidence_ids": [],
+      "findings": [],
+      "contradictions": [],
+      "recommendations": [],
+      "uncertainties": [],
+      "evidence_references": []
+    },
+    "scoring_authority": "Python deterministic scoring engine; LLM review does not assign or change scores."
+  }
+}

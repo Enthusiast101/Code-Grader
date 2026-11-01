@@ -1,0 +1,29 @@
+{
+  "seed": 42,
+  "validation_fraction": 0.2,
+  "test_fraction": 0.2,
+  "splits": {
+    "train": {
+      "count": 300,
+      "vulnerable": 150,
+      "safe": 150,
+      "source_inputs": "benchmark/splits/train_inputs.jsonl",
+      "labels": "benchmark/splits/train_labels.json"
+    },
+    "validation": {
+      "count": 100,
+      "vulnerable": 50,
+      "safe": 50,
+      "source_inputs": "benchmark/splits/validation_inputs.jsonl",
+      "labels": "benchmark/splits/validation_labels.json"
+    },
+    "test": {
+      "count": 100,
+      "vulnerable": 50,
+      "safe": 50,
+      "source_inputs": "benchmark/splits/test_inputs.jsonl",
+      "labels": "benchmark/splits/test_labels.json"
+    }
+  },
+  "ground_truth_separate_from_source_inputs": true
+}

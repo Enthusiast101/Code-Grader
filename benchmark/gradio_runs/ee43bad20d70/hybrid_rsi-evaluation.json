@@ -1,0 +1,51 @@
+{
+  "dataset": "FormAI-v2",
+  "mode": "hybrid_rsi",
+  "prediction_file": "/home/nasa/Projects/Code-Checking-Assistant/benchmark/gradio_runs/ee43bad20d70/hybrid_rsi.jsonl",
+  "evaluation": {
+    "prediction_file": "/home/nasa/Projects/Code-Checking-Assistant/benchmark/gradio_runs/ee43bad20d70/hybrid_rsi.jsonl",
+    "evaluated_records": 100,
+    "missing_predictions": 84,
+    "extra_predictions_not_in_ground_truth": 0,
+    "extra_prediction_examples": [],
+    "inconclusive_predictions": 0,
+    "skipped_records": 0,
+    "prediction_coverage": 1.0,
+    "confusion_matrix": {
+      "tp": 5,
+      "fp": 1,
+      "fn": 45,
+      "tn": 49
+    },
+    "precision": 0.833333,
+    "recall": 0.1,
+    "f1_score": 0.178571,
+    "accuracy": 0.54,
+    "specificity": 0.98,
+    "false_positive_rate": 0.02,
+    "false_negative_rate": 0.9,
+    "balanced_accuracy": 0.54,
+    "localization": {
+      "line_predictions_evaluated": 5,
+      "exact_line_accuracy": 0.6,
+      "within_tolerance_accuracy": 0.6,
+      "line_tolerance": 2,
+      "note": "A predicted line is correct when it matches any confirmed vulnerable line for that source file."
+    },
+    "error_type_accuracy": 0.0,
+    "error_type_predictions_evaluated": 5,
+    "note": "One record per source program. Missing predictions count as negative predictions; inconclusive predictions are counted separately. Localization/type metrics use all aggregated ground-truth locations/types for each vulnerable program."
+  },
+  "stage_counts": {
+    "samples": 16,
+    "llm_completed": 16,
+    "llm_failed": 0,
+    "cppcheck_completed": 16,
+    "cppcheck_unavailable": 0,
+    "rsi_completed": 16,
+    "rsi_unavailable": 0,
+    "partial_predictions": 0,
+    "inconclusive_predictions": 0
+  },
+  "fusion_policy": "OR of all completed primary stages (cppcheck and LLM); RSI may add evidence-backed positives but cannot veto primary outputs."
+}

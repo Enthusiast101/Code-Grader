@@ -1,16 +1,21 @@
+from __future__ import annotations
 
-from typing import Any
 
-from grading_agent.sandbox.docker_sandbox import DockerSandbox
+from typing import TYPE_CHECKING, Any
+
+from grading_agent.config import settings
+
+if TYPE_CHECKING:
+    from grading_agent.sandbox.docker_sandbox import DockerSandbox
 
 
 def run_io_tests(
     sandbox: DockerSandbox,
     source_code: str,
-    test_cases: list[dict[str, str]],
-    filename: str = "main.c",
-    compile_timeout_s: int = 10,
-    run_timeout_s: int = 2,
+    test_cases: list[dict[str, Any]],
+    filename: str = settings.DEFAULT_SOURCE_FILENAME,
+    compile_timeout_s: int = settings.ANALYZER_COMPILE_TIMEOUT_S,
+    run_timeout_s: int = settings.ANALYZER_IO_RUN_TIMEOUT_S,
 ) -> dict[str, Any]:
     """
     Compile a student's C program and run it against test cases.
@@ -39,10 +44,13 @@ def run_io_tests(
 
     if compilation["exit_code"] != 0 or compilation["timed_out"]:
         return {
+            "status": "inconclusive" if compilation["timed_out"] else "completed",
             "compiled": False,
             "compiler_output": compilation["output"],
             "tests_passed": 0,
             "tests_total": len(test_cases),
+            "score": None if compilation["timed_out"] else 0.0,
+            "score_scale": "0-100",
             "results": [],
         }
 
@@ -67,7 +75,9 @@ def run_io_tests(
         )
 
         results.append({
-            "test_id": index,
+            "test_id": case.get("id", index),
+            "description": case.get("description", ""),
+            "tags": case.get("tags", []),
             "passed": passed,
             "input": case["input"],
             "expected": expected,
@@ -82,13 +92,15 @@ def run_io_tests(
     passed_count = sum(result["passed"] for result in results)
 
     return {
+        "status": "completed",
         "compiled": True,
         "compiler_output": compilation["output"],
         "tests_passed": passed_count,
         "tests_total": len(test_cases),
         "score": (
-            passed_count / len(test_cases)
+            100.0 * passed_count / len(test_cases)
             if test_cases else 0.0
         ),
+        "score_scale": "0-100",
         "results": results,
     }

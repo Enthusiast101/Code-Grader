@@ -24,6 +24,7 @@ ENV/
 .coverage
 .coverage.*
 htmlcov/
+data/
 
 # Local environment variables and secrets
 .env
@@ -37,7 +38,7 @@ htmlcov/
 *~
 
 # Generated grader outputs and local workspaces
-reports/
+# reports/
 .grader-workspace/
 grader-workspace-*/
 student_program

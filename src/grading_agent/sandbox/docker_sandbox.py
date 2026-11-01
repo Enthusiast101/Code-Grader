@@ -89,10 +89,14 @@ class DockerSandbox:
                 read_only=settings.DOCKER_READ_ONLY_ROOTFS,
                 tmpfs={
                     "/workspace": (
-                        "rw,exec,nosuid,nodev,size=256m,uid=10001,gid=10001"
+                        "rw,exec,nosuid,nodev,"
+                        f"size={settings.DOCKER_WORKSPACE_TMPFS_SIZE},"
+                        f"uid={settings.DOCKER_CONTAINER_UID},"
+                        f"gid={settings.DOCKER_CONTAINER_GID}"
                     ),
                     "/tmp": (
-                        "rw,nosuid,nodev,size=64m,mode=1777"
+                        "rw,nosuid,nodev,"
+                        f"size={settings.DOCKER_TMPFS_SIZE},mode=1777"
                     ),
                 },
                 cap_drop=["ALL"],
@@ -274,7 +278,7 @@ class DockerSandbox:
             return {
                 "exit_code": result.exit_code,
                 "output": output_bytes.decode("utf-8", errors="replace"),
-                "timed_out": result.exit_code == 124,
+                "timed_out": result.exit_code in {124, 137},
                 "output_may_be_truncated": (
                     len(output_bytes) >= self.max_output_bytes
                     or result.exit_code == 141

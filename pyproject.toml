@@ -5,13 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "code-grader"
 version = "0.1.0"
-description = "A local personal research assistant powered by a local SLM and MCP"
+description = "Rule-driven C code grading with Docker isolation and local LLM feedback"
 requires-python = ">=3.11"
 
 dependencies = [
     "requests",
     "docker>=7.0.0",
+    "lizard==1.17.10",
 ]
+
+[project.optional-dependencies]
+benchmark = ["ijson>=3.2.3"]
+ui = ["gradio>=5.0"]
+all = ["ijson>=3.2.3", "gradio>=5.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
