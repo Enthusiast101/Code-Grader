@@ -1,0 +1,27 @@
+[
+  {
+    "id": "canonical-11",
+    "input": "3 11\n1 2 5\n",
+    "expected": "3\n"
+  },
+  {
+    "id": "greedy-counterexample",
+    "input": "3 6\n1 3 4\n",
+    "expected": "2\n"
+  },
+  {
+    "id": "unreachable-amount",
+    "input": "2 5\n4 6\n",
+    "expected": "-1\n"
+  },
+  {
+    "id": "zero-amount",
+    "input": "1 0\n7\n",
+    "expected": "0\n"
+  },
+  {
+    "id": "two-sevens-optimal",
+    "input": "2 14\n7 10\n",
+    "expected": "2\n"
+  }
+]

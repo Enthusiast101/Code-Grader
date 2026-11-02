@@ -1,0 +1,72 @@
+{
+  "problem": "06_dp_coin_change",
+  "time_limit_s": 5,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/06-dp-coin-change/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.3,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/06-dp-coin-change/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/06-dp-coin-change/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/06-dp-coin-change/memory_cases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Find the minimum number of unlimited-use coins that sum exactly to A; return -1 when impossible. Greedy largest-first is not guaranteed to be optimal.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= n <= 100; 0 <= A <= 100000; distinct denominations are in [1, 10000].",
+    "output_rule": "One integer: minimum coin count, or -1; newline terminated."
+  }
+}

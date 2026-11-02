@@ -1,0 +1,8 @@
+[
+  {
+    "id": "small-cycle-and-bridge",
+    "description": "Exercise adjacency arrays, DFS stack, and bridge storage under memory instrumentation.",
+    "input": "4 4\n0 1\n1 2\n2 0\n1 3\n",
+    "expected": "1\n1 3\n"
+  }
+]

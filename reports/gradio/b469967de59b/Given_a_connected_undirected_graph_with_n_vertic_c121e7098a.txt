@@ -1,0 +1,229 @@
+Code Checking Assistant — Given a connected undirected graph with n vertices numbered 0 to n-1 and m edges, find every critical connection (bridge): an edge whose removal disconnects the graph. Output the number of bridges, then each edge once with smaller endpoint first, sorted lexicographically. Expected time O(V+E), space O(V+E).
+Submission: submission.c
+Rules SHA-256: 968887aafdbd70c6d339725c95285a156f41d808a29d69629d331ac6541997f3
+Source SHA-256: ea5d44a57a37b9036d167f386422328dc616dd48f6dd855b9b022102229046fe
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Source code is syntactically valid and memory-safe per sanitizer reports, but lacks critical logic for detecting bridges in a connected graph.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: passed
+Compiled: True
+Smoke tested: True
+
+correctness            weight=0.200  score=0.00/100     status=completed
+  Assessment: Source lacks bridge detection algorithm entirely, failing core task requirement.
+  Tests: 1/5 passed
+syntax                 weight=0.100  score=100.00/100   status=completed
+  Assessment: Valid C code with no compilation errors or warnings.
+structure              weight=0.100  score=90.00/100    status=completed
+  Assessment: Clear function organization with helper functions and main entry.
+modularity             weight=0.100  score=100.00/100   status=completed
+  Assessment: Well-defined functions with appropriate interfaces.
+logical                weight=0.100  score=0.00/100     status=completed
+  Assessment: No algorithm to detect bridges in the provided source.
+complexity             weight=0.100  score=0.00/100     status=completed
+  Assessment: No algorithmic complexity analysis or estimation provided.
+memory_safety          weight=0.100  score=100.00/100   status=completed
+  Assessment: Memory management handled safely by sanitizer.
+  Valgrind score: 100.0
+  ASan/UBSan score (supplementary): 100.0
+readability            weight=0.100  score=0.00/100     status=completed
+  Assessment: Code lacks comments and is difficult to read.
+originality            weight=0.100  score=100.00/100   status=completed
+  Assessment: No similarity detected to known submissions.
+  Similarity flagged for review: False
+
+FAILING INPUTS / COUNTEREXAMPLES
+------------------------------------------------------------------------
+  correctness test leetcode-sample failed:
+    Case:     Triangle plus one leaf edge; only the leaf connection is critical.
+    Input:    '4 4\n0 1\n1 2\n2 0\n1 3\n'
+    Expected: '1\n1 3\n'
+    Actual:   '2\n0 2\n1 3\n'
+    Cause:    actual output differs from expected output.
+  correctness test cycle-no-bridges failed:
+    Case:     A cycle remains connected after removing any one edge.
+    Input:    '4 4\n0 1\n1 2\n2 3\n3 0\n'
+    Expected: '0\n'
+    Actual:   '1\n0 3\n'
+    Cause:    actual output differs from expected output.
+  correctness test two-cycles-one-bridge failed:
+    Case:     Two cycles joined by one connection.
+    Input:    '6 7\n0 1\n1 2\n2 0\n2 3\n3 4\n4 5\n5 3\n'
+    Expected: '1\n2 3\n'
+    Actual:   '3\n0 2\n2 3\n3 5\n'
+    Cause:    actual output differs from expected output.
+  correctness test two-cycles-sharing-articulation failed:
+    Case:     Two cycles share one articulation vertex; every edge is still on a cycle and none is a bridge.
+    Input:    '5 6\n0 1\n1 2\n2 0\n2 3\n3 4\n4 2\n'
+    Expected: '0\n'
+    Actual:   '2\n0 2\n2 4\n'
+    Cause:    actual output differs from expected output.
+  logical test cycle-with-tail failed:
+    Case:     A cycle attached to a two-edge tail; cycle edges are not bridges.
+    Input:    '6 6\n0 1\n1 2\n2 0\n2 3\n3 4\n4 5\n'
+    Expected: '3\n2 3\n3 4\n4 5\n'
+    Actual:   '4\n0 2\n2 3\n3 4\n4 5\n'
+    Cause:    actual output differs from expected output.
+  logical test two-cycles-sharing-vertex failed:
+    Case:     Connected figure-eight graph; the shared vertex is an articulation point but no edge is a bridge.
+    Input:    '5 6\n0 1\n1 2\n2 0\n2 3\n3 4\n4 2\n'
+    Expected: '0\n'
+    Actual:   '2\n0 2\n2 4\n'
+    Cause:    actual output differs from expected output.
+  logical test articulation-is-not-a-bridge failed:
+    Case:     An articulation vertex can exist even though all edges in its cycle are non-bridges.
+    Input:    '5 5\n0 1\n1 2\n2 0\n2 3\n3 4\n'
+    Expected: '2\n2 3\n3 4\n'
+    Actual:   '3\n0 2\n2 3\n3 4\n'
+    Cause:    actual output differs from expected output.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 49.00/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+Program understanding: program_understanding: valid JSON did not satisfy the stage-specific response contract
+  RSI pass 1: completed; 2 retained finding(s); Source code is syntactically valid and memory-safe per sanitizer reports, but lacks critical logic for detecting bridges in a connected graph.
+    - correctness: Missing Bridge Detection Logic (line 1)
+    - logical: No Algorithmic Implementation (line 1)
+  RSI pass 2: completed; 2 retained finding(s); Source code is syntactically valid and memory-safe per sanitizer reports, but lacks critical logic for detecting bridges in a connected graph.
+    - correctness: Missing Bridge Detection Logic (line 1)
+    - logical: No Algorithmic Implementation (line 1)
+  RSI pass 3: completed; 2 retained finding(s); Source code is syntactically valid and memory-safe per sanitizer reports, but lacks critical logic for detecting bridges in a connected graph.
+    - correctness: Missing Bridge Detection Logic (line 1)
+    - logical: No Algorithmic Implementation (line 1)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The source contains 3 function definition(s). Included headers: stdio.h, stdlib.h. Input APIs observed: scanf. Output APIs observed: printf. Dynamic-memory APIs observed: malloc, calloc, free.
+Expected assignment behavior: Find every bridge in a connected undirected simple graph. Output each bridge once with smaller endpoint first, sorted lexicographically.
+Contract comparison: Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.
+Actual algorithm: Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.
+Functions:
+  - min_int (lines 12-12): Function declared/defined in the submitted source; behavior requires code inspection.
+  - compare_bridges (lines 27-27): Function declared/defined in the submitted source; behavior requires code inspection.
+  - main (lines 98-98): Function declared/defined in the submitted source; behavior requires code inspection.
+Execution flow:
+  - Function definitions and API usage were inventoried from source text.
+Assumptions:
+  - This fallback is a lexical inventory, not a proof of program behavior.
+Ambiguities:
+  - LLM program understanding was unavailable; verify complex control/data flow manually.
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[CRITICAL] correctness — Missing Bridge Detection Logic (lines 1-155)
+  The source contains no implementation of the Tarjan bridge-finding algorithm, resulting in zero bridges being reported for any valid input.
+  Evidence: E-RULE-CONTRACT-001
+  Source:
+1: #include <stdio.h>
+2: #include <stdlib.h>
+3: 
+4: #define MAX_N 100000
+5: #define MAX_M 100000
+6: 
+7: typedef struct {
+8:     int u;
+9:     int v;
+10: } Bridge;
+11: 
+12: static int min_int(int a, int b) {
+13:     return (a < b) ? a : b;
+14: }
+15: 
+16: static void add_directed_edge(int from, int to, int edge_id,
+17:                               int *head, int *to_array,
+18:                               int *next_array, int *id_array,
+19:                               int *cursor) {
+20:     to_array[*cursor] = to;
+21:     id_array[*cursor] = edge_id;
+22:     next_array[*cursor] = head[from];
+23:     head[from] = *cursor;
+24:     ++(*cursor);
+25: }
+26: 
+27: static int compare_bridges(const void *lhs, const void *rhs) {
+28:     const Bridge *a = (const Bridge *)lhs;
+29:     const Bridge *b = (const Bridge *)rhs;
+30:     if (a->u != b->u) return (a->u > b->u) - (a->u < b->u);
+31:     retu
+[CRITICAL] logical — No Algorithmic Implementation (lines 1-155)
+  The program fails to execute the required algorithm to identify bridges, violating the core task requirement.
+  Source:
+1: #include <stdio.h>
+2: #include <stdlib.h>
+3: 
+4: #define MAX_N 100000
+5: #define MAX_M 100000
+6: 
+7: typedef struct {
+8:     int u;
+9:     int v;
+10: } Bridge;
+11: 
+12: static int min_int(int a, int b) {
+13:     return (a < b) ? a : b;
+14: }
+15: 
+16: static void add_directed_edge(int from, int to, int edge_id,
+17:                               int *head, int *to_array,
+18:                               int *next_array, int *id_array,
+19:                               int *cursor) {
+20:     to_array[*cursor] = to;
+21:     id_array[*cursor] = edge_id;
+22:     next_array[*cursor] = head[from];
+23:     head[from] = *cursor;
+24:     ++(*cursor);
+25: }
+26: 
+27: static int compare_bridges(const void *lhs, const void *rhs) {
+28:     const Bridge *a = (const Bridge *)lhs;
+29:     const Bridge *b = (const Bridge *)rhs;
+30:     if (a->u != b->u) return (a->u > b->u) - (a->u < b->u);
+31:     retu
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 4.973 s
+LLM server readiness/startup: 8.149 s
+LLM requests: 53.129 s
+Total through scoring: 66.587 s
+  correctness: 0.856 s
+  syntax: 0.123 s
+  structure: 0.399 s
+  modularity: 0.059 s
+  logical: 0.847 s
+  complexity: 0.010 s
+  memory_safety: 1.594 s
+  readability: 0.014 s
+  originality: 0.011 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 5 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 25.730 s
+RSI pass 1: 6.044 s
+RSI pass 2: 6.057 s
+RSI pass 3: 6.057 s
+Metric-scoring request 1: 9.237 s
+Total LLM time: 53.129 s
+LLM error: Program understanding: program_understanding: valid JSON did not satisfy the stage-specific response contract
+LLM diagnostic: Program understanding: program_understanding: valid JSON did not satisfy the stage-specific response contract
+Context compression: deterministic fallback used (4 event(s)); model=gguf/Qwen3.5-2B-GGUF:Q4_K_M.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

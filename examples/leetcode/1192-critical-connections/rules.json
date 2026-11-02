@@ -1,0 +1,116 @@
+{
+  "problem": "Given a connected undirected graph with n vertices numbered 0 to n-1 and m edges, find every critical connection (bridge): an edge whose removal disconnects the graph. Output the number of bridges, then each edge once with smaller endpoint first, sorted lexicographically. Expected time O(V+E), space O(V+E).",
+  "problem_contract": {
+    "description": "Find every bridge in a connected undirected simple graph. Output each bridge once with smaller endpoint first, sorted lexicographically.",
+    "algorithm": "Tarjan DFS low-link bridge detection",
+    "required_time_complexity": "O(V + E)",
+    "required_space_complexity": "O(V + E)",
+    "input_range": "2 <= V <= 100000; V-1 <= E <= 100000; connected simple undirected graph; vertex IDs 0..V-1",
+    "output_rule": "First print the number of bridges, then each sorted edge u v on its own line. Print 0 when there are no bridges."
+  },
+  "time_limit_s": 5,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/leetcode/1192-critical-connections/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/1192-critical-connections/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "expect_helpers": true,
+        "min_functions": 3
+      }
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/1192-critical-connections/edge_cases.json"
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 12,
+        "max_function_length": 80,
+        "required": "O(V + E)"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/1192-critical-connections/memory_cases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "corpus_dir": "examples/leetcode/1192-critical-connections/originality_corpus",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  }
+}

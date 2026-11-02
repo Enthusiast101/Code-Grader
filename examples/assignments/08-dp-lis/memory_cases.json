@@ -1,0 +1,7 @@
+[
+  {
+    "id": "classic-example",
+    "input": "8\n10 9 2 5 3 7 101 18\n",
+    "expected": "4\n"
+  }
+]

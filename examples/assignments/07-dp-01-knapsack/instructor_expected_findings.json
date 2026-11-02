@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "logical-error",
+      "severity": "high",
+      "anchor": "for (int current = weights[i]; current <= capacity; ++current)",
+      "description": "The capacity loop is ascending, so dp[current - weight] may already include the current item. This allows one item to be reused and solves unbounded knapsack instead of 0/1 knapsack.",
+      "line": 31,
+      "source_excerpt": "for (int current = weights[i]; current <= capacity; ++current) {"
+    }
+  ],
+  "note": "Regression oracle for the 0/1 transition direction defect. Keep this instructor-side oracle separate from model input."
+}

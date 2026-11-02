@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "logical-error",
+      "severity": "high",
+      "anchor": "if (low[u] >= discovery[p]) {",
+      "description": "The bridge test must be strict: low[child] > discovery[parent]. Equality means the child subtree has a back edge to its parent, so the tree edge is part of a cycle and is not a bridge. Using >= falsely reports cycle edges as critical.",
+      "line": 76,
+      "source_excerpt": "if (low[u] >= discovery[p]) {"
+    }
+  ],
+  "note": "Instructor-side regression oracle. Do not upload this file or expose it to the grading LLM during blind evaluation."
+}

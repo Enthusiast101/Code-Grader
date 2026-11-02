@@ -1,0 +1,22 @@
+[
+  {
+    "id": "duplicate-inside-lis",
+    "input": "4\n1 2 2 3\n",
+    "expected": "3\n"
+  },
+  {
+    "id": "single-element",
+    "input": "1\n42\n",
+    "expected": "1\n"
+  },
+  {
+    "id": "integer-extremes",
+    "input": "5\n-2147483648 0 2147483647 -1 1\n",
+    "expected": "3\n"
+  },
+  {
+    "id": "repeated-negative",
+    "input": "6\n-5 -5 -4 -4 -3 -3\n",
+    "expected": "3\n"
+  }
+]

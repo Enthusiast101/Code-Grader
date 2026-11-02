@@ -1,0 +1,72 @@
+{
+  "problem": "09_dp_grid_paths",
+  "time_limit_s": 5,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/09-dp-grid-paths/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.3,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/09-dp-grid-paths/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/09-dp-grid-paths/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/09-dp-grid-paths/memory_cases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Count right/down paths from the top-left to bottom-right cell without entering cells marked 1. A blocked start or destination yields zero.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= rows, cols <= 30; each cell is 0 (open) or 1 (blocked); path count fits signed 64-bit.",
+    "output_rule": "One signed 64-bit integer: number of valid paths; newline terminated."
+  }
+}
