@@ -1,0 +1,144 @@
+Code Checking Assistant — grading
+Submission: main.c
+Rules SHA-256: 5ec34a307328d86ae7a9ee25f26b9994fc4f45718a850c68c6a37d05eead95ec
+Source SHA-256: 61e481c31a63ee22adffd599c935dfcf77db9e4c12f22d463a5abc42790cce95
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Missing input validation for scanf return value
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: rules.json
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: unavailable
+Compiled: None
+Smoke tested: False
+
+correctness            weight=0.220  score=85.00/100    status=completed
+  Assessment: Program logic is sound but lacks explicit scanf validation. Minor gap in robustness.
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=95.00/100    status=completed
+  Assessment: Valid C syntax with proper includes and type casts.
+structure              weight=0.120  score=80.00/100    status=completed
+  Assessment: Simple main function structure is clear but lacks input validation.
+modularity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Single function with no helper functions meets requirements.
+complexity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Minimal cyclomatic complexity appropriate for the task.
+logical                weight=0.100  score=70.00/100    status=completed
+  Assessment: Logic is correct but lacks explicit scanf return check.
+runtime_efficiency     weight=0.050  score=90.00/100    status=completed
+  Assessment: Minimal overhead, efficient addition and cast operations.
+memory_safety          weight=0.170  score=85.00/100    status=completed
+  Assessment: No dynamic allocation; safe from memory errors.
+  Valgrind score: N/A
+  ASan/UBSan score (supplementary): N/A
+readability            weight=0.100  score=88.00/100    status=completed
+  Assessment: Clear intent, though comments could improve clarity.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 86.65/100
+  correctness: 85.00 × 0.220 = 18.70
+  syntax: 95.00 × 0.080 = 7.60
+  structure: 80.00 × 0.120 = 9.60
+  modularity: 100.00 × 0.080 = 8.00
+  complexity: 100.00 × 0.080 = 8.00
+  logical: 70.00 × 0.100 = 7.00
+  runtime_efficiency: 90.00 × 0.050 = 4.50
+  memory_safety: 85.00 × 0.170 = 14.45
+  readability: 88.00 × 0.100 = 8.80
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed
+  RSI pass 1: completed; 2 retained finding(s); Source code is syntactically valid and modular; however, correctness is unverified due to lack of test coverage and reliance on printf for output.
+    - correctness: Missing input validation for scanf return value (line 9)
+    - readability: Unnecessary cast to int64_t (line 13)
+  RSI pass 2: completed; 2 retained finding(s); Code lacks explicit input validation for scanf return value, relying on implicit behavior.
+    - correctness: Missing input validation for scanf return value (line 9)
+    - readability: Unnecessary cast to int64_t (line 13)
+  RSI pass 3: completed; 2 retained finding(s); Missing input validation for scanf return value
+    - correctness: Missing input validation for scanf return value (line 9)
+    - readability: Unnecessary cast to int64_t (line 13)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The program initializes two integer variables left and right, attempts to read two integers from standard input into them using scanf, and returns 1 if the read fails or returns fewer than 2 values. If successful, it casts the sum of left and right to int64_t, prints the sum as a 64-bit integer, and returns 0.
+Expected assignment behavior: The assignment intends for the program to read two integers from input, compute their sum, cast the result to int64_t, print the sum, and return 0 on success.
+Contract comparison: The program's actual behavior matches the intended behavior exactly.
+Actual algorithm: The program uses a simple conditional check with scanf to validate input, performs addition, casts to int64_t, and prints the result.
+Functions:
+  - main (lines 5-16): Entry point
+Execution flow:
+  - main is called
+  - left and right are declared as int32_t
+  - scanf is called to read two integers into left and right
+  - scanf returns the number of items successfully read
+  - if scanf return != 2, return 1
+  - if scanf return == 2, cast left and right to int64_t
+  - add the two int64_t values
+  - print the sum using printf
+Assumptions:
+  - scanf returns the number of items successfully read
+  - scanf returns 2 if both integers are successfully read
+  - scanf returns 0 if no input is provided or invalid format
+  - int32_t and int64_t are standard types available in the environment
+Ambiguities:
+  - The exact behavior of scanf when the format string "%" SCNd32 is used without a space after the format specifier (though the code shows a space, the format string itself is ambiguous without context)
+  - The specific behavior of the format string "%" SCNd32 if SCNd32 is not a recognized macro or if the space is interpreted differently
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] correctness — Missing input validation for scanf return value (lines 9-10)
+  The program returns 1 on failure, but does not explicitly check if scanf actually read the expected number of integers, relying on the implicit return value of the addition expression.
+  Evidence: E-METRIC-CORRECTNESS-001, E-CORRECTNESS-SUMMARY-001
+  Source:
+8: 
+9:     if (scanf("%" SCNd32 " %" SCNd32, &left, &right) != 2) {
+10:         return 1;
+11:     }
+[LOW] readability — Unnecessary cast to int64_t (lines 13-13)
+  The sum is computed as int32_t but cast to int64_t before printing, which is redundant given the input types.
+  Evidence: E-METRIC-STRUCTURE-001, E-STRUCTURE-SUMMARY-001
+  Source:
+12: 
+13:     int64_t sum = (int64_t)left + (int64_t)right;
+14:     printf("%" PRId64 "\n", sum);
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 0.135 s
+LLM server readiness/startup: 72.092 s
+LLM requests: 401.967 s
+Total through scoring: 407.902 s
+  correctness: 0.000 s
+  syntax: 0.000 s
+  structure: 0.000 s
+  modularity: 0.037 s
+  complexity: 0.017 s
+  logical: 0.000 s
+  runtime_efficiency: 0.000 s
+  memory_safety: 0.000 s
+  readability: 0.015 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed
+LLM calls: 11 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 38.111 s
+RSI pass 1: 76.247 s
+RSI pass 2: 68.335 s
+RSI pass 3: 70.256 s
+Metric-scoring request 1: 82.538 s
+Total LLM time: 401.967 s
+Context compression: same-model used (2 request(s)); deterministic fallback used 4 time(s).
+  Compression detail (program_understanding): ValueError: the grading model output did not reduce the complete prompt payload.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

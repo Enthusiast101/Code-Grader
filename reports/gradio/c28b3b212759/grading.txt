@@ -1,0 +1,132 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: da8270f3890e80c8fdbc5397ed8ee3cf442c59e3fed380bd0a8a80298e204917
+Source SHA-256: 61e481c31a63ee22adffd599c935dfcf77db9e4c12f22d463a5abc42790cce95
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Source code is syntactically valid and modular; however, the program lacks a return code for failure, which violates the assignment contract.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: unavailable
+Compiled: None
+Smoke tested: False
+
+correctness            weight=0.220  score=80.00/100    status=completed
+  Assessment: Program logic is sound but uses non-standard exit code (1) instead of 0, slightly deviating from typical conventions.
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=95.00/100    status=completed
+  Assessment: Source is valid C with proper includes and formatting.
+structure              weight=0.120  score=85.00/100    status=completed
+  Assessment: Simple main function with minimal control flow.
+modularity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Single function with no helper functions.
+complexity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Minimal cyclomatic complexity for the task.
+logical                weight=0.100  score=90.00/100    status=completed
+  Assessment: Arithmetic and I/O logic are correct.
+runtime_efficiency     weight=0.050  score=100.00/100   status=completed
+  Assessment: O(1) execution with no unnecessary overhead.
+memory_safety          weight=0.170  score=95.00/100    status=completed
+  Assessment: No dynamic allocation or dangling pointers.
+  Valgrind score: N/A
+  ASan/UBSan score (supplementary): N/A
+readability            weight=0.100  score=90.00/100    status=completed
+  Assessment: Clear variable names and standard formatting.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 90.55/100
+  correctness: 80.00 × 0.220 = 17.60
+  syntax: 95.00 × 0.080 = 7.60
+  structure: 85.00 × 0.120 = 10.20
+  modularity: 100.00 × 0.080 = 8.00
+  complexity: 100.00 × 0.080 = 8.00
+  logical: 90.00 × 0.100 = 9.00
+  runtime_efficiency: 100.00 × 0.050 = 5.00
+  memory_safety: 95.00 × 0.170 = 16.15
+  readability: 90.00 × 0.100 = 9.00
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed
+  RSI pass 1: completed; 1 retained finding(s); Source code is syntactically valid and modular; however, the program lacks a return code for failure, which violates the assignment contract.
+    - correctness: Missing failure return code (line 10)
+  RSI pass 2: completed; 1 retained finding(s); Source code is syntactically valid and modular; however, the program lacks a return code for failure, which violates the assignment contract.
+    - correctness: Missing failure return code (line 10)
+  RSI pass 3: completed; 1 retained finding(s); Source code is syntactically valid and modular; however, the program lacks a return code for failure, which violates the assignment contract.
+    - correctness: Missing failure return code (line 10)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The program reads two integers from standard input, converts them to int64_t, computes their sum, and prints the result. If the scanf call fails to read two values, it returns 1; otherwise it returns 0.
+Expected assignment behavior: The assignment likely expects the program to read two integers, compute their sum, and print the result. However, the provided source uses a conditional return value (1 or 0) instead of a standard exit code, which may deviate from the expected behavior.
+Contract comparison: Partially matches: The program performs the core task of reading two integers, summing them, and printing the result. However, it returns 1 on failure instead of 0, which differs from the typical exit code convention.
+Actual algorithm: main() reads two integers via scanf, casts them to int64_t, adds them, prints the sum, and returns 1 if reading failed, otherwise 0.
+Functions:
+  - main (lines 5-16): Entry point
+Execution flow:
+  - main() is called
+  - scanf reads two values into left and right
+  - scanf returns 2 on success, 0 on failure
+  - if scanf != 2, return 1
+  - else cast left and right to int64_t
+  - compute sum = left + right
+  - print sum
+  - return 0
+Assumptions:
+  - scanf returns the number of items successfully read
+  - int32_t and int64_t are available types
+  - scanf format string is correctly interpreted as %d
+Ambiguities:
+  - The exact behavior of scanf when the format string is misinterpreted (e.g., reading non-numeric data as integers)
+  - The specific values read into left and right are not specified
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] correctness — Missing failure return code (lines 10-10)
+  The program returns 1 on scanf failure instead of 0, violating the assignment contract which implies a standard exit code convention.
+  Evidence: E-METRIC-CORRECTNESS-001
+  Source:
+9:     if (scanf("%" SCNd32 " %" SCNd32, &left, &right) != 2) {
+10:         return 1;
+11:     }
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 0.197 s
+LLM server readiness/startup: 6.092 s
+LLM requests: 360.416 s
+Total through scoring: 309.319 s
+  correctness: 0.000 s
+  syntax: 0.000 s
+  structure: 0.000 s
+  modularity: 0.057 s
+  complexity: 0.028 s
+  logical: 0.000 s
+  runtime_efficiency: 0.000 s
+  memory_safety: 0.000 s
+  readability: 0.026 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed
+LLM calls: 9 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 33.103 s
+RSI pass 1: 62.512 s
+RSI pass 2: 61.782 s
+RSI pass 3: 59.965 s
+Metric-scoring request 1: 85.400 s
+Total LLM time: 360.416 s
+Context compression: deterministic fallback used (4 event(s)); model=gguf/Qwen3.5-2B-GGUF:Q4_K_M.
+  Compression detail (program_understanding): ValueError: the grading model output did not reduce the complete prompt payload.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

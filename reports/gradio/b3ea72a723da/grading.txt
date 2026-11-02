@@ -1,0 +1,102 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: 1e0a2a002af82dcab7f1b3b23b84571f40e06b7c7c11591a0891b9b16db3d1ee
+Source SHA-256: 61e481c31a63ee22adffd599c935dfcf77db9e4c12f22d463a5abc42790cce95
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Deterministic evidence fallback retained 1 supported finding(s). This fallback is not a substitute for a completed LLM review.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: unavailable
+Compiled: None
+Smoke tested: False
+
+correctness            weight=0.220  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=70.00/100    status=completed_with_fallback
+  Assessment: The review retained 1 finding(s), but the LLM metric-scoring response was unavailable. A neutral provisional score is…
+structure              weight=0.120  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+modularity             weight=0.080  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed modularity analyzer supplied the fallback score.
+complexity             weight=0.080  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed complexity analyzer supplied the fallback score.
+logical                weight=0.100  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+runtime_efficiency     weight=0.050  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+memory_safety          weight=0.170  score=70.00/100    status=completed_with_fallback
+  Assessment: No measured analyzer score or valid LLM metric score was available. A neutral provisional score is used; the…
+  Valgrind score: N/A
+  ASan/UBSan score (supplementary): N/A
+readability            weight=0.100  score=92.00/100    status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed readability analyzer supplied the fallback score.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 77.00/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+FileNotFoundError: Cannot find llama-server. Install llama.cpp and add llama-server to PATH, or set LLAMA_SERVER in src/grading_agent/config/settings.py (or its environment override).
+LLM scores missing: correctness, syntax, structure, modularity, complexity, logical, runtime_efficiency, memory_safety, readability
+Separate metric-scoring stage: completed_with_fallback
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The source contains 1 function definition(s). Included headers: inttypes.h, stdint.h, stdio.h. Input APIs observed: scanf. Output APIs observed: printf. Dynamic-memory APIs observed: none detected.
+Expected assignment behavior: grading
+Contract comparison: Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.
+Actual algorithm: Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.
+Functions:
+  - main (lines 5-5): Function declared/defined in the submitted source; behavior requires code inspection.
+Execution flow:
+  - Function definitions and API usage were inventoried from source text.
+Assumptions:
+  - This fallback is a lexical inventory, not a proof of program behavior.
+Ambiguities:
+  - LLM program understanding was unavailable; verify complex control/data flow manually.
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] syntax — Compiler diagnostics: compiled=False; warnings=0; errors=0. (source/evidence location not resolved)
+  Compiler diagnostics: compiled=False; warnings=0; errors=0.
+  Evidence: E-SYNTAX-001
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 0.197 s
+LLM requests: 0.000 s
+Total through scoring: 0.513 s
+  correctness: 0.000 s
+  syntax: 0.000 s
+  structure: 0.000 s
+  modularity: 0.048 s
+  complexity: 0.029 s
+  logical: 0.000 s
+  runtime_efficiency: 0.000 s
+  memory_safety: 0.000 s
+  readability: 0.020 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 0 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 0.000 s
+Total LLM time: 0.000 s
+LLM error: FileNotFoundError: Cannot find llama-server. Install llama.cpp and add llama-server to PATH, or set LLAMA_SERVER in src/grading_agent/config/settings.py (or its environment override).
+LLM diagnostic: FileNotFoundError: Cannot find llama-server. Install llama.cpp and add llama-server to PATH, or set LLAMA_SERVER in src/grading_agent/config/settings.py (or its environment override).
+Context compression: enabled; no model compression was needed for this run.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.
