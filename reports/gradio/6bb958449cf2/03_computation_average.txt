@@ -1,0 +1,109 @@
+Code Checking Assistant — 03_computation_average
+Submission: submission.c
+Rules SHA-256: 51fa5622e78f702fab0073f2b60e1a70f62748ff41a8af2dbb383601c9f80922
+Source SHA-256: a115211b85a7f36993b3e071b9b90948bd59467e8c614e2bcad5d3567da6d8d6
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Deterministic evidence fallback retained 2 supported finding(s). This fallback is not a substitute for a completed LLM review.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: passed
+Compiled: True
+Smoke tested: True
+
+correctness            weight=0.350  score=0.00/100     status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed correctness analyzer supplied the fallback score.
+  Tests: 0/2 passed
+syntax                 weight=0.100  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed syntax analyzer supplied the fallback score.
+structure              weight=0.100  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed structure analyzer supplied the fallback score.
+logical                weight=0.350  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed logical analyzer supplied the fallback score.
+memory_safety          weight=0.100  score=100.00/100   status=completed_with_fallback
+  Assessment: LLM score unavailable; the completed memory safety analyzer supplied the fallback score.
+  Valgrind score: 100.0
+  ASan/UBSan score (supplementary): 100.0
+
+FAILING INPUTS / COUNTEREXAMPLES
+------------------------------------------------------------------------
+  correctness test fractional-average failed:
+    Input:    '4\n1 2 2 5\n'
+    Expected: '2.50\n'
+    Actual:   '2.00\n'
+    Cause:    actual output differs from expected output.
+  correctness test thirds failed:
+    Input:    '3\n1 2 2\n'
+    Expected: '1.67\n'
+    Actual:   '1.00\n'
+    Cause:    actual output differs from expected output.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 65.00/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+RuntimeError: Incompatible llama.cpp build 11580; Qwen3 JSON-schema grading requires build b12005 or newer (PR #31380 fixes the empty <think> prefix / grammar sampler error). Update llama.cpp and restart Gradio. Detected version: version: 0.6.0-dev (build 11580, commit 4413a1924)
+built with Clang 20.1.8 for Windows x86_64
+LLM scores missing: correctness, syntax, structure, logical, memory_safety
+Separate metric-scoring stage: completed_with_fallback
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The source contains 1 function definition(s). Included headers: stdio.h. Input APIs observed: scanf. Output APIs observed: printf. Dynamic-memory APIs observed: none detected.
+Expected assignment behavior: Compute the arithmetic mean without truncating fractional results. Use a floating-point division after accumulating safely.
+Contract comparison: Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.
+Actual algorithm: Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.
+Functions:
+  - main (lines 3-3): Function declared/defined in the submitted source; behavior requires code inspection.
+Execution flow:
+  - Function definitions and API usage were inventoried from source text.
+Assumptions:
+  - This fallback is a lexical inventory, not a proof of program behavior.
+Ambiguities:
+  - LLM program understanding was unavailable; verify complex control/data flow manually.
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] correctness — Functional test fractional-average failed (source/evidence location not resolved)
+  Input '4\n1 2 2 5\n' produced '2.00\n'; expected '2.50\n'.
+  Evidence: E-CORRECTNESS-TEST-001
+[HIGH] correctness — Functional test thirds failed (source/evidence location not resolved)
+  Input '3\n1 2 2\n' produced '1.00\n'; expected '1.67\n'.
+  Evidence: E-CORRECTNESS-TEST-002
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 3.437 s
+LLM requests: 0.000 s
+Total through scoring: 5.492 s
+  correctness: 0.435 s
+  syntax: 0.123 s
+  structure: 0.125 s
+  logical: 0.482 s
+  memory_safety: 1.205 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 0 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 0.000 s
+Total LLM time: 0.000 s
+LLM error: RuntimeError: Incompatible llama.cpp build 11580; Qwen3 JSON-schema grading requires build b12005 or newer (PR #31380 fixes the empty <think> prefix / grammar sampler error). Update llama.cpp and restart Gradio. Detected version: version: 0.6.0-dev (build 11580, commit 4413a1924)
+built with Clang 20.1.8 for Windows x86_64
+LLM diagnostic: RuntimeError: Incompatible llama.cpp build 11580; Qwen3 JSON-schema grading requires build b12005 or newer (PR #31380 fixes the empty <think> prefix / grammar sampler error). Update llama.cpp and restart Gradio. Detected version: version: 0.6.0-dev (build 11580, commit 4413a1924)
+built with Clang 20.1.8 for Windows x86_64
+Context compression: enabled; no model compression was needed for this run.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

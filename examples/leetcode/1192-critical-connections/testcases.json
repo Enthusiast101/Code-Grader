@@ -1,0 +1,32 @@
+[
+  {
+    "id": "leetcode-sample",
+    "description": "Triangle plus one leaf edge; only the leaf connection is critical.",
+    "input": "4 4\n0 1\n1 2\n2 0\n1 3\n",
+    "expected": "1\n1 3\n"
+  },
+  {
+    "id": "simple-chain",
+    "description": "Every edge in a path is a bridge.",
+    "input": "4 3\n0 1\n1 2\n2 3\n",
+    "expected": "3\n0 1\n1 2\n2 3\n"
+  },
+  {
+    "id": "cycle-no-bridges",
+    "description": "A cycle remains connected after removing any one edge.",
+    "input": "4 4\n0 1\n1 2\n2 3\n3 0\n",
+    "expected": "0\n"
+  },
+  {
+    "id": "two-cycles-one-bridge",
+    "description": "Two cycles joined by one connection.",
+    "input": "6 7\n0 1\n1 2\n2 0\n2 3\n3 4\n4 5\n5 3\n",
+    "expected": "1\n2 3\n"
+  },
+  {
+    "id": "two-cycles-sharing-articulation",
+    "description": "Two cycles share one articulation vertex; every edge is still on a cycle and none is a bridge.",
+    "input": "5 6\n0 1\n1 2\n2 0\n2 3\n3 4\n4 2\n",
+    "expected": "0\n"
+  }
+]

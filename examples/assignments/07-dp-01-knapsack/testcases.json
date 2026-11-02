@@ -1,0 +1,27 @@
+[
+  {
+    "id": "standard-example",
+    "input": "4 7\n1 3 4 5\n1 4 5 7\n",
+    "expected": "9\n"
+  },
+  {
+    "id": "one-item-cannot-repeat",
+    "input": "1 4\n2\n4\n",
+    "expected": "4\n"
+  },
+  {
+    "id": "capacity-zero",
+    "input": "2 0\n1 2\n10 20\n",
+    "expected": "0\n"
+  },
+  {
+    "id": "all-items-too-heavy",
+    "input": "2 3\n4 5\n8 9\n",
+    "expected": "0\n"
+  },
+  {
+    "id": "choose-best-combination",
+    "input": "3 4\n2 2 3\n6 10 12\n",
+    "expected": "16\n"
+  }
+]

@@ -1,0 +1,129 @@
+Code Checking Assistant — 03_computation_average
+Submission: submission.c
+Rules SHA-256: 26745fccb1d2decf28fa69c1caae199e0b1d96e1acae3dd26965229f9e57e3a0
+Source SHA-256: a115211b85a7f36993b3e071b9b90948bd59467e8c614e2bcad5d3567da6d8d6
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Source code implements the assignment intent but fails to produce correct output for fractional averages due to integer truncation during summation.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: passed
+Compiled: True
+Smoke tested: True
+
+correctness            weight=0.350  score=0.00/100     status=completed
+  Assessment: Program fails to compute fractional averages due to integer truncation during summation.
+  Tests: 0/2 passed
+syntax                 weight=0.100  score=100.00/100   status=completed
+  Assessment: Valid C code with no errors or warnings.
+structure              weight=0.100  score=100.00/100   status=completed
+  Assessment: Program is organized into a coherent control and data-flow structure.
+logical                weight=0.350  score=100.00/100   status=completed
+  Assessment: Conditions, loops, and arithmetic logic are internally correct.
+memory_safety          weight=0.100  score=100.00/100   status=completed
+  Assessment: Memory ownership and resource cleanup are handled safely.
+  Valgrind score: 100.0
+  ASan/UBSan score (supplementary): 100.0
+
+FAILING INPUTS / COUNTEREXAMPLES
+------------------------------------------------------------------------
+  correctness test fractional-average failed:
+    Input:    '4\n1 2 2 5\n'
+    Expected: '2.50\n'
+    Actual:   '2.00\n'
+    Cause:    actual output differs from expected output.
+  correctness test thirds failed:
+    Input:    '3\n1 2 2\n'
+    Expected: '1.67\n'
+    Actual:   '1.00\n'
+    Cause:    actual output differs from expected output.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 65.00/100
+  correctness: 0.00 × 0.350 = 0.00
+  syntax: 100.00 × 0.100 = 10.00
+  structure: 100.00 × 0.100 = 10.00
+  logical: 100.00 × 0.350 = 35.00
+  memory_safety: 100.00 × 0.100 = 10.00
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed
+  RSI pass 1: completed; 1 retained finding(s); Source code implements the assignment intent but fails to produce correct output for fractional averages due to integer truncation during summation.
+    - correctness: Integer truncation in summation (line 10)
+  RSI pass 2: completed; 1 retained finding(s); Source code implements the assignment intent but fails to produce correct output for fractional averages due to integer truncation during summation.
+    - correctness: Integer truncation in summation (line 10)
+  RSI pass 3: completed; 1 retained finding(s); Source code implements the assignment intent but fails to produce correct output for fractional averages due to integer truncation during summation.
+    - correctness: Integer truncation in summation (line 10)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The program reads an integer count from standard input, validates that it is a positive integer, then reads count integers from standard input and accumulates them into a 64-bit integer variable. It computes the arithmetic mean by performing a floating-point division of the sum by the count. Finally, it prints the mean formatted to two decimal places.
+Expected assignment behavior: The assignment requires computing the arithmetic mean of a set of signed integers without truncating fractional results. The program should read the number of elements, ensure the count is positive, read the values, sum them using a 64-bit accumulator, divide the sum by the count using floating-point arithmetic, and print the result with exactly two digits after the decimal point.
+Contract comparison: The submitted source fully aligns with the assignment intent. It correctly reads input, accumulates values in a 64-bit integer, performs floating-point division, and outputs the result formatted to two decimal places.
+Actual algorithm: The program uses a simple loop to accumulate input values into a long long variable, then performs a single division operation to compute the mean, followed by a formatted print statement.
+Functions:
+  - main (lines 3-21): Entry point
+Execution flow:
+  - Read count from input
+  - Validate count is a positive integer
+  - Loop count times to read values and add to sum
+  - Compute average as sum / count
+  - Print average formatted to 2 decimal places
+Assumptions:
+  - Input values fit within a signed 32-bit integer
+  - Input count is a positive integer
+  - Input values are integers
+  - The sum of values fits within a 64-bit signed integer
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[CRITICAL] correctness — Integer truncation in summation (lines 10-15)
+  The program accumulates values into a 64-bit integer, but the assignment requires a 32-bit signed integer for the operand type, causing overflow and incorrect results for large inputs.
+  Evidence: E-RULE-CONTRACT-001
+  Source:
+9:     long long sum = 0;
+10:     for (int i = 0; i < count; ++i) {
+11:         int value;
+12:         if (scanf("%d", &value) != 1) {
+13:             return 1;
+14:         }
+15:         sum += value;
+16:     }
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 2.955 s
+LLM server readiness/startup: 44.436 s
+LLM requests: 275.373 s
+Total through scoring: 292.047 s
+  correctness: 0.429 s
+  syntax: 0.120 s
+  structure: 0.120 s
+  logical: 0.440 s
+  memory_safety: 1.015 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed
+LLM calls: 7 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 33.527 s
+RSI pass 1: 45.075 s
+RSI pass 2: 60.064 s
+RSI pass 3: 54.741 s
+Metric-scoring request 1: 50.893 s
+Total LLM time: 275.373 s
+Context compression: deterministic fallback used (2 event(s)); model=gguf/Qwen3.5-2B-GGUF:Q4_K_M.
+  Compression detail (program_understanding): ValueError: the grading model exceeded the actual_behavior length budget (353 > 180).
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

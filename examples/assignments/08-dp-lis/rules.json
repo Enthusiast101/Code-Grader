@@ -1,0 +1,83 @@
+{
+  "problem": "08_dp_lis",
+  "time_limit_s": 5,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/08-dp-lis/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.25,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/08-dp-lis/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/08-dp-lis/edge_cases.json"
+      }
+    },
+    {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/08-dp-lis/runtime_cases.json",
+        "target_runtime_ms": 40.0,
+        "repetitions": 3
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/08-dp-lis/memory_cases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Return the length of the longest strictly increasing subsequence. Equal adjacent or earlier values cannot extend a strictly increasing subsequence. n is as large as 20,000, so O(n log n) time is required.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= n <= 20000; each array value is a signed 32-bit integer.",
+    "output_rule": "One integer: length of the longest strictly increasing subsequence; newline terminated."
+  }
+}

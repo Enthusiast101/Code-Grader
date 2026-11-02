@@ -1,0 +1,72 @@
+{
+  "problem": "07_dp_01_knapsack",
+  "time_limit_s": 5,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/assignments/07-dp-01-knapsack/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.3,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/07-dp-01-knapsack/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {}
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/07-dp-01-knapsack/edge_cases.json"
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/07-dp-01-knapsack/memory_cases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.15,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  },
+  "problem_contract": {
+    "description": "Maximize the total value of a subset of items whose total weight is at most W. Every item is selectable at most once; this is 0/1 knapsack, not unbounded knapsack.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= n <= 100; 0 <= W <= 100000; positive weights <= 100000; values are in [0, 10^9].",
+    "output_rule": "One signed 64-bit integer: maximum total value; newline terminated."
+  }
+}

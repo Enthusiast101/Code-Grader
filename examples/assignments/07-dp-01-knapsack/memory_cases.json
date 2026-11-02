@@ -1,0 +1,7 @@
+[
+  {
+    "id": "standard-example",
+    "input": "4 7\n1 3 4 5\n1 4 5 7\n",
+    "expected": "9\n"
+  }
+]

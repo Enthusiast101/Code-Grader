@@ -1,0 +1,112 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: d00030ed4fe9c46c047e6c1ed4e053bea178655b563cb06821dcf88f51d35c39
+Source SHA-256: fe3800522e84ac14d7865b26d54ee6193775d7178731443a906d70bd1f8dd545
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Source contains a logical bug in the dynamic programming recurrence relation that causes incorrect path counting for grid inputs.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: compiled_smoke_skipped
+Compiled: True
+Smoke tested: False
+
+correctness            weight=0.220  score=70.00/100    status=completed
+  Assessment: Bug in recurrence relation causes incorrect path counting.
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=100.00/100   status=completed
+  Assessment: Valid C code with no syntax errors.
+structure              weight=0.120  score=90.00/100    status=completed
+  Assessment: Clear control flow and data structures.
+modularity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Single function with no helper functions.
+complexity             weight=0.080  score=28.00/100    status=completed
+  Assessment: Algorithm complexity too high for simple path counting.
+logical                weight=0.100  score=70.00/100    status=completed
+  Assessment: Bug in recurrence relation affects correctness.
+runtime_efficiency     weight=0.050  score=80.00/100    status=completed
+  Assessment: O(n*m) complexity is acceptable for small grids.
+memory_safety          weight=0.170  score=90.00/100    status=completed
+  Assessment: No dynamic memory allocation or deallocation.
+  Valgrind score: None
+  ASan/UBSan score (supplementary): None
+readability            weight=0.100  score=70.00/100    status=completed
+  Assessment: Code is readable but contains a critical bug.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 77.74/100
+  Note: One or more LLM stages used a validated deterministic fallback. Every enabled metric has a finite score; fallback-derived scores are explicitly labelled and are not presented as successful LLM scores.
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+Program understanding: program_understanding: valid JSON did not satisfy the stage-specific response contract
+  RSI pass 1: completed; 1 retained finding(s); Source code contains a logical bug in the dynamic programming recurrence relation that causes incorrect path counting for grid inputs.
+    - logical: Incorrect recurrence relation for path counting (line n/a)
+  RSI pass 2: completed; 1 retained finding(s); Source contains a logical bug in the dynamic programming recurrence relation that causes incorrect path counting for grid inputs.
+    - logical: Incorrect recurrence relation for path counting (line n/a)
+  RSI pass 3: completed; 1 retained finding(s); Source contains a logical bug in the dynamic programming recurrence relation that causes incorrect path counting for grid inputs.
+    - logical: Incorrect recurrence relation for path counting (line n/a)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The source contains 1 function definition(s). Included headers: stdio.h. Input APIs observed: scanf. Output APIs observed: printf. Dynamic-memory APIs observed: none detected.
+Expected assignment behavior: grading
+Contract comparison: Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.
+Actual algorithm: Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.
+Functions:
+  - main (lines 3-3): Function declared/defined in the submitted source; behavior requires code inspection.
+Execution flow:
+  - Function definitions and API usage were inventoried from source text.
+Assumptions:
+  - This fallback is a lexical inventory, not a proof of program behavior.
+Ambiguities:
+  - LLM program understanding was unavailable; verify complex control/data flow manually.
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] logical — Incorrect recurrence relation for path counting (source/evidence location not resolved)
+  The recurrence relation at line 00021 adds paths through blocked cells, violating the problem's implicit constraint that blocked cells are obstacles.
+  Evidence: E-STRUCTURE-FINDING-001
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 1.320 s
+LLM server readiness/startup: 7.662 s
+LLM requests: 53.523 s
+Total through scoring: 62.814 s
+  correctness: 0.000 s
+  syntax: 0.167 s
+  structure: 0.189 s
+  modularity: 0.003 s
+  complexity: 0.003 s
+  logical: 0.000 s
+  runtime_efficiency: 0.000 s
+  memory_safety: 0.323 s
+  readability: 0.003 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed_with_warnings
+LLM calls: 5 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 32.001 s
+RSI pass 1: 4.081 s
+RSI pass 2: 4.064 s
+RSI pass 3: 3.977 s
+Metric-scoring request 1: 9.398 s
+Total LLM time: 53.523 s
+LLM error: Program understanding: program_understanding: valid JSON did not satisfy the stage-specific response contract
+LLM diagnostic: Program understanding: program_understanding: valid JSON did not satisfy the stage-specific response contract
+Context compression: deterministic fallback used (4 event(s)); model=gguf/Qwen3.5-2B-GGUF:Q4_K_M.
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

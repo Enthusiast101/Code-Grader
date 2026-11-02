@@ -1,0 +1,14 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "logical-error",
+      "severity": "high",
+      "anchor": "dp[i][j] = (i > 0 ? dp[i - 1][j] : 0) + (j > 0 ? dp[i][j - 1] : 0);",
+      "description": "The transition does not check blocked[i][j]. It counts paths that enter blocked cells, and it also fails when the start cell is blocked.",
+      "line": 21,
+      "source_excerpt": "dp[i][j] = (i > 0 ? dp[i - 1][j] : 0) + (j > 0 ? dp[i][j - 1] : 0);"
+    }
+  ],
+  "note": "Regression oracle for obstacle-aware DP boundary handling. Keep this instructor-side oracle separate from model input."
+}

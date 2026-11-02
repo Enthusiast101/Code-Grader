@@ -1,0 +1,153 @@
+Code Checking Assistant — grading
+Submission: submission.c
+Rules SHA-256: 8634d849b0aa6e89d8ab9d1a7344c8bb95e3ba0096d98630610f9520211b0591
+Source SHA-256: a115211b85a7f36993b3e071b9b90948bd59467e8c614e2bcad5d3567da6d8d6
+
+EXECUTIVE ASSESSMENT
+------------------------------------------------------------------------
+Source code is syntactically valid and compiles cleanly, but lacks explicit validation for the core task requirements (reading exactly 'count' integers, handling edge cases like count=0 or negative count). The implementation logic is flawed because it does not verify that the input stream actually contains 'count' valid integers, nor does it handle the edge case where count is 0.
+
+METRIC RESULTS
+------------------------------------------------------------------------
+Rules source: edited Gradio rules editor
+Rules file: rules.json
+
+PREFLIGHT
+------------------------------------------------------------------------
+Status: compiled_smoke_skipped
+Compiled: True
+Smoke tested: False
+
+correctness            weight=0.220  score=75.00/100    status=completed
+  Assessment: Program handles valid inputs correctly but lacks explicit validation for count=0 or negative count, risking undefined…
+  Tests: not configured; execution correctness was not measured by test cases
+syntax                 weight=0.080  score=100.00/100   status=completed
+  Assessment: Source code is syntactically valid C with no errors or warnings.
+structure              weight=0.120  score=100.00/100   status=completed
+  Assessment: Program is organized into a clear main function with logical control flow.
+modularity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Program uses a single function with no unnecessary fragmentation.
+complexity             weight=0.080  score=100.00/100   status=completed
+  Assessment: Algorithm complexity is proportional to input size with no avoidable overhead.
+logical                weight=0.100  score=80.00/100    status=completed
+  Assessment: Loop logic is correct but lacks edge case handling for count=0 or negative values.
+runtime_efficiency     weight=0.050  score=100.00/100   status=completed
+  Assessment: Algorithm runs in O(n) time with minimal unnecessary operations.
+memory_safety          weight=0.170  score=100.00/100   status=completed
+  Assessment: No memory leaks or dangling pointers detected in the provided code.
+  Valgrind score: None
+  ASan/UBSan score (supplementary): None
+readability            weight=0.100  score=90.00/100    status=completed
+  Assessment: Code is well-formatted with clear variable names and readable structure.
+
+OVERALL SCORE
+------------------------------------------------------------------------
+Final grade: 91.50/100
+  correctness: 75.00 × 0.220 = 16.50
+  syntax: 100.00 × 0.080 = 8.00
+  structure: 100.00 × 0.120 = 12.00
+  modularity: 100.00 × 0.080 = 8.00
+  complexity: 100.00 × 0.080 = 8.00
+  logical: 80.00 × 0.100 = 8.00
+  runtime_efficiency: 100.00 × 0.050 = 5.00
+  memory_safety: 100.00 × 0.170 = 17.00
+  readability: 90.00 × 0.100 = 9.00
+
+PROGRAM UNDERSTANDING + WHOLE-PROGRAM RSI
+------------------------------------------------------------------------
+Status: completed
+  RSI pass 1: completed; 3 retained finding(s); Source code is syntactically valid and compiles cleanly, but lacks explicit validation for the core task requirements (reading exactly 'count' integers, handling edge cases like count=0 or negative count). The implementation relies on implicit assumptions about input stream behavior that are not explicitly tested or documented.
+    - correctness: Missing explicit validation for count=0 (line 18)
+    - correctness: Undefined behavior for negative 'count' (line 10)
+    - correctness: No explicit validation for negative 'count' (line 5)
+  RSI pass 2: completed; 3 retained finding(s); Source code is syntactically valid and compiles cleanly, but lacks explicit validation for the core task requirements (reading exactly 'count' integers, handling edge cases like count=0 or negative count). The implementation relies on implicit assumptions about input stream behavior and loop termination that are not explicitly enforced by the contract.
+    - correctness: Division by zero risk (line 18)
+    - correctness: Undefined behavior for negative count (line 10)
+    - correctness: No explicit validation for negative count (line 5)
+  RSI pass 3: completed; 3 retained finding(s); Source code is syntactically valid and compiles cleanly, but lacks explicit validation for the core task requirements (reading exactly 'count' integers, handling edge cases like count=0 or negative count). The implementation logic is flawed because it does not verify that the input stream actually contains 'count' valid integers, nor does it handle the edge case where count is 0.
+    - correctness: Division by zero risk (line 18)
+    - correctness: Undefined behavior for negative count (line 10)
+    - correctness: No explicit validation for negative count (line 5)
+Separate metric-scoring stage: completed
+
+PROGRAM UNDERSTANDING
+------------------------------------------------------------------------
+Actual source behavior: The program reads an integer from standard input into a variable named 'count'. If the input is not a valid integer or the count is not positive, it returns 1. Otherwise, it reads 'count' integers from standard input into a variable named 'value', accumulating them into a variable named 'sum'. It then calculates the average as sum divided by count and prints the average formatted to two decimal places. The program returns 0 on success.
+Expected assignment behavior: The assignment likely requires a function that reads a count, reads that many integers, computes their sum, calculates the average, and prints the average. The current implementation performs all these steps directly inside main, which may be considered a deviation from a modular design expected in the assignment.
+Contract comparison: Partially matches. The core logic of reading input, summing values, computing the average, and printing the result is present, but the implementation is consolidated into main rather than being encapsulated in a separate function as implied by the assignment intent.
+Actual algorithm: Reads count, validates input, loops to read 'count' values, sums them, computes average, prints average.
+Functions:
+  - main (lines 3-21): Entry point
+Execution flow:
+  - main is called
+  - scanf reads integer into 'count'
+  - if condition checks validity of 'count'
+  - if valid, loop begins
+  - loop iterates 'count' times
+  - each iteration reads 'value' and adds to 'sum'
+  - after loop, 'average' is computed
+  - printf outputs 'average'
+Assumptions:
+  - The input stream is well-formed and contains valid integers
+  - The input stream is not truncated or malformed in a way that causes undefined behavior
+  - The division by count is safe (count > 0)
+Ambiguities:
+  - The exact behavior if 'count' is 0 is undefined in the source (division by zero)
+  - The exact behavior if 'count' is negative is undefined in the source (negative count in loop condition)
+  - The exact behavior if 'scanf' fails mid-loop is undefined in the source (return 1 without stopping loop)
+
+WHOLE-PROGRAM RSI FINDINGS
+------------------------------------------------------------------------
+[HIGH] correctness — Division by zero risk (lines 18-18)
+  The program computes average as sum/count without checking if count is zero, which would cause undefined behavior if count is 0. While the loop condition prevents iteration, the division on line 18 is
+  Evidence: E-METRIC-CORRECTNESS-001
+  Source:
+17: 
+18:     double average = sum / count;
+19:     printf("%.2f\n", average);
+[HIGH] correctness — Undefined behavior for negative count (lines 10-10)
+  If 'count' is negative, the loop condition 'i < count' on line 10 evaluates to false immediately, preventing the loop from executing. However, the program does not explicitly validate that 'count' is
+  Evidence: E-METRIC-CORRECTNESS-001
+  Source:
+9:     long long sum = 0;
+10:     for (int i = 0; i < count; ++i) {
+11:         int value;
+[MEDIUM] correctness — No explicit validation for negative count (lines 5-5)
+  The program does not explicitly check if 'count' is negative before the loop. While the loop condition prevents execution for negative 'count', the lack of explicit validation makes the logic less robust
+  Evidence: E-METRIC-CORRECTNESS-001
+  Source:
+4:     int count;
+5:     if (scanf("%d", &count) != 1 || count <= 0) {
+6:         return 1;
+
+EXECUTION TIMINGS
+------------------------------------------------------------------------
+Deterministic analyzer pipeline: 1.380 s
+LLM server readiness/startup: 8.038 s
+LLM requests: 91.565 s
+Total through scoring: 79.554 s
+  correctness: 0.001 s
+  syntax: 0.168 s
+  structure: 0.172 s
+  modularity: 0.037 s
+  complexity: 0.001 s
+  logical: 0.000 s
+  runtime_efficiency: 0.006 s
+  memory_safety: 0.256 s
+  readability: 0.002 s
+
+LLM PROGRAM UNDERSTANDING + RSI
+------------------------------------------------------------------------
+Status: completed
+LLM calls: 11 (program understanding + sequential RSI passes + separate metric scoring; one request per stage, no repair retries)
+Program understanding: 8.060 s
+RSI pass 1: 14.810 s
+RSI pass 2: 17.304 s
+RSI pass 3: 15.589 s
+Metric-scoring request 1: 14.047 s
+Total LLM time: 91.565 s
+Context compression: deterministic fallback used (6 event(s)); model=gguf/Qwen3.5-2B-GGUF:Q4_K_M.
+  Compression detail (program_understanding): ValueError: the grading model exceeded the actual_behavior length budget (439 > 180).
+
+Evaluation method: the selected model first maps the program, then performs sequential whole-program rechecks, and finally assigns rubric scores. The weighted overall grade is calculated from those metric scores.
+Interpretation note: automated findings are evidence for review, not proof of intent or universal correctness.

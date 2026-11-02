@@ -378,7 +378,12 @@ def _grade_with_rules_file_impl(
     }
     destination = report_dir or settings.REPORTS_DIR
     destination.mkdir(parents=True, exist_ok=True)
-    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", rules["problem"]).strip("._") or "submission"
+    # stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", rules["problem"]).strip("._") or "submission"
+    problem_name = str(rules.get("problem") or "submission")
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", problem_name)
+    slug = slug.strip("_-")[:48].rstrip("_-") or "submission"
+    short_hash = hashlib.sha256(problem_name.encode("utf-8")).hexdigest()[:10]
+    stem = f"{slug}_{short_hash}"
     report_path = destination / f"{stem}.json"
     text_report_path = destination / f"{stem}.txt"
     # Strict JSON serialization is a final presentation boundary. Non-finite

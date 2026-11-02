@@ -1,0 +1,27 @@
+[
+  {
+    "id": "center-obstacle",
+    "input": "3 3\n0 0 0\n0 1 0\n0 0 0\n",
+    "expected": "2\n"
+  },
+  {
+    "id": "empty-2x2",
+    "input": "2 2\n0 0\n0 0\n",
+    "expected": "2\n"
+  },
+  {
+    "id": "top-right-blocked",
+    "input": "2 2\n0 1\n0 0\n",
+    "expected": "1\n"
+  },
+  {
+    "id": "single-open-cell",
+    "input": "1 1\n0\n",
+    "expected": "1\n"
+  },
+  {
+    "id": "single-blocked-cell",
+    "input": "1 1\n1\n",
+    "expected": "0\n"
+  }
+]

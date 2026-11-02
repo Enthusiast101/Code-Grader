@@ -1,0 +1,22 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "logical-error",
+      "severity": "high",
+      "anchor": "if (values[j] <= values[i] && dp[j] + 1 > dp[i])",
+      "description": "The <= comparison computes a longest non-decreasing subsequence; strict LIS requires values[j] < values[i]. Equal values are incorrectly chained.",
+      "line": 25,
+      "source_excerpt": "if (values[j] <= values[i] && dp[j] + 1 > dp[i]) {"
+    },
+    {
+      "category": "algorithmic-complexity",
+      "severity": "medium",
+      "anchor": "for (int j = 0; j < i; ++j)",
+      "description": "The nested predecessor scan is O(n^2), which is not suitable for n up to 20,000; the task requires O(n log n).",
+      "line": 24,
+      "source_excerpt": "for (int j = 0; j < i; ++j) {"
+    }
+  ],
+  "note": "Regression oracle for strictness and asymptotic runtime defects. Keep this instructor-side oracle separate from model input."
+}
