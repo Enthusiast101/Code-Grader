@@ -58,12 +58,27 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                       f"Status: {generation.get('status', 'unknown')}"])
         if generation.get("source"):
             lines.append(f"Suite source: {generation['source']}")
+        if generation.get("reference_solution_source"):
+            lines.append(f"Expected-output oracle: {generation['reference_solution_source']}")
         total = generation.get("total_test_count")
         if isinstance(total, int):
             instructor = generation.get("instructor_test_count", 0)
             edge = generation.get("edge_test_count", 0)
-            generated_count = max(0, total - instructor) if isinstance(instructor, int) else total
-            lines.append(f"Cases: {total} total ({generated_count} generated, {instructor} instructor); {edge} edge cases")
+            generated_count = generation.get("generated_test_count")
+            if not isinstance(generated_count, int):
+                generated_count = max(0, total - instructor) if isinstance(instructor, int) else total
+            requested = generation.get("requested_generated_test_count")
+            target = f"/{requested} requested" if isinstance(requested, int) else ""
+            lines.append(f"Cases: {total} total ({generated_count}{target} generated, {instructor} instructor); {edge} edge cases")
+        rejected_candidates = generation.get("rejected_generated_test_count", 0)
+        if isinstance(rejected_candidates, int) and rejected_candidates:
+            lines.append(f"Rejected invalid LLM candidates and replaced them: {rejected_candidates}")
+        error = generation.get("error") or generation.get("reason")
+        if error:
+            lines.append("Generation note: " + str(error)[:1_000])
+        ambiguities = generation.get("unresolved_ambiguities", [])
+        if isinstance(ambiguities, list) and ambiguities:
+            lines.append("Oracle note: " + "; ".join(str(item) for item in ambiguities[:5]))
         generation_events = generation.get("request_events", [])
         if isinstance(generation_events, list) and generation_events:
             lines.append(f"Generation requests: {len(generation_events)}")

@@ -238,10 +238,29 @@ def run_configured_analyzers(
                     if not _is_llm_server_ready():
                         generation_process = initiate_server()
 
+                    requested_test_cases = testing_cfg.get("max_cases", 12)
+                    try:
+                        requested_test_cases = max(1, int(requested_test_cases))
+                    except (TypeError, ValueError):
+                        requested_test_cases = 12
+                    replacement_reserve = min(
+                        max(0, 80 - requested_test_cases),
+                        max(3, (requested_test_cases + 3) // 4),
+                    )
+                    candidate_test_cases = requested_test_cases + replacement_reserve
+                    # Test generation returns structured cases (and sometimes
+                    # the reference C oracle), so its output budget must scale
+                    # with the selected suite size instead of borrowing the
+                    # usually smaller metric-scoring budget.
+                    generation_token_budget = max(
+                        int(settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS") or 0),
+                        min(settings.LLAMA_CONTEXT_SIZE, 2048 + candidate_test_cases * 192),
+                    )
+
                     def _test_generation_request(messages, schema, stage_name):
                         parsed, _raw = _request_json(
                             messages,
-                            max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
+                            max_tokens=generation_token_budget,
                             enable_thinking=None,
                             response_schema=schema,
                             schema_name=stage_name,

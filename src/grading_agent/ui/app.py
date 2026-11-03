@@ -479,9 +479,23 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
             f"**Generated cases:** {generated_count}/{requested_count} requested · "
             f"{instructor_count} instructor cases"
         )
+        oracle_source = generation.get("reference_solution_source")
+        if oracle_source and oracle_source != "llm_generated":
+            summary.append("**Expected-output oracle:** trusted instructor reference")
         shortfall = int(generation.get("generated_test_count_shortfall", 0) or 0)
         if shortfall:
             summary.append(f"**Generation note:** {shortfall} requested cases were not produced.")
+        rejected_candidates = int(generation.get("rejected_generated_test_count", 0) or 0)
+        if rejected_candidates:
+            summary.append(
+                f"**Generation note:** {rejected_candidates} invalid LLM candidate(s) were rejected and replaced."
+            )
+        ambiguities = generation.get("unresolved_ambiguities", [])
+        if isinstance(ambiguities, list) and ambiguities:
+            summary.append(
+                "**Oracle note:** expected outputs use the trusted instructor reference. "
+                + "; ".join(str(item) for item in ambiguities[:2])[:300]
+            )
     else:
         generation_error = generation.get("error") or generation.get("reason")
         if generation_error:
