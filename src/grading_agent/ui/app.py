@@ -21,6 +21,12 @@ from grading_agent.config import settings
 from grading_agent.reporting.rationale import compact_rationale, evidence_summary, score_source_label
 
 logger = logging.getLogger("grading_agent.ui")
+OCEAN_UI_CSS = """
+.gradio-container {max-width: 1480px !important; margin: 0 auto !important;}
+#app-header {padding: 0.5rem 0 0.2rem 0;}
+#grade-button {min-height: 3.1rem; font-size: 1.05rem;}
+.compact-note {opacity: 0.78;}
+"""
 
 
 def _upload_path(upload: Any, label: str) -> Path:
@@ -166,7 +172,7 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
     if summary:
         lines.append("\n### Executive assessment")
         lines.append(summary)
-    lines.append("\n### Metric scores")
+    lines.append("\n### Metric points")
     configuration = report.get("configuration", {})
     configuration = configuration if isinstance(configuration, dict) else {}
     enabled_metrics = configuration.get("enabled_metrics", [])
@@ -190,10 +196,6 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
         source_label = score_source_label(result.get("score_origin"))
         lines.append(f"- **{name}: {metric_score_label}** _(source: {source_label})_")
         lines.append(f"  - Evidence class: {result.get('score_evidence_class', 'unavailable')}; analyzer status: {result.get('status', 'unknown')}")
-        llm_rating = result.get("llm_score_10")
-        if isinstance(llm_rating, (int, float)) and not isinstance(llm_rating, bool):
-            rating_label = "LLM rating" if result.get("score_origin") == "llm" else "LLM proposal (not used for score)"
-            lines.append(f"  - {rating_label}: {number(llm_rating):.2f}/10")
         rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  - Assessment: {rationale}")
@@ -281,10 +283,6 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
         lines.append(f"LLM note: {str(rsi.get('error')).replace(chr(10), ' ')[:1200]}")
     for diagnostic in rsi.get("diagnostics", [])[:4] if isinstance(rsi.get("diagnostics"), list) else []:
         lines.append(f"LLM diagnostic: {str(diagnostic).replace(chr(10), ' ')[:600]}")
-    missing = rsi.get("metrics_without_llm_score", rsi.get("missing_metrics", []))
-    if isinstance(missing, list) and missing:
-        lines.append("Metrics using an explicit fallback score: " + ", ".join(str(item) for item in missing))
-
     compression = rsi.get("context_compression", {})
     if isinstance(compression, dict) and compression:
         status = str(compression.get("status", "not_needed"))
@@ -349,6 +347,121 @@ def _metric_summary(report: dict[str, Any]) -> str:
         return "\n".join(lines)
 
 
+def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
+    """Turn a grading report into concise, spreadsheet-like UI cells."""
+    scoring = report.get("scoring", {}) if isinstance(report, dict) else {}
+    scoring = scoring if isinstance(scoring, dict) else {}
+    grade = scoring.get("score")
+    grade_text = f"{float(grade):.2f}/100" if isinstance(grade, (int, float)) else "Not finalized"
+    status = str(scoring.get("status", "unknown")).replace("_", " ").title()
+    summary = ["## Grading result", f"**Overall grade:** {grade_text}  \n**Status:** {status}"]
+    problem = report.get("problem") if isinstance(report, dict) else None
+    if isinstance(problem, str) and problem.strip():
+        summary.append("**Assignment:** " + " ".join(problem.split())[:220])
+
+    config = report.get("configuration", {}) if isinstance(report, dict) else {}
+    config = config if isinstance(config, dict) else {}
+    metric_rows = []
+    for metric in config.get("enabled_metrics", []):
+        if not isinstance(metric, dict):
+            continue
+        name = str(metric.get("name", "unknown"))
+        result = report.get(name, {})
+        result = result if isinstance(result, dict) else {}
+        maximum = float(metric.get("max_points", result.get("max_points", float(metric.get("weight", 0)) * 100)))
+        if not metric.get("grade_contribution", True):
+            grade_cell = "Diagnostic"
+        elif isinstance(result.get("score_points"), (int, float)):
+            grade_cell = f"{float(result['score_points']):.2f}/{maximum:g}"
+        elif isinstance(result.get("score"), (int, float)):
+            grade_cell = f"{float(result['score']) * maximum / 100:.2f}/{maximum:g}"
+        else:
+            grade_cell = f"N/A / {maximum:g}"
+        metric_rows.append([
+            name, grade_cell,
+            str(result.get("status", "unknown")).replace("_", " ").title(),
+            compact_rationale(result.get("score_rationale", ""), max_words=40, max_chars=260),
+        ])
+
+    observed: dict[str, dict[str, Any]] = {}
+    for metric_name in ("correctness", "logical", "runtime_efficiency", "memory_safety"):
+        result = report.get(metric_name, {})
+        rows = result.get("results", []) if isinstance(result, dict) else []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and row.get("test_id") is not None:
+                observed[str(row["test_id"])] = row
+
+    test_cases = []
+    generation = report.get("test_generation", {}) if isinstance(report, dict) else {}
+    generation = generation if isinstance(generation, dict) else {}
+    suite_path = generation.get("suite_path")
+    if isinstance(suite_path, str):
+        try:
+            suite = json.loads(Path(suite_path).read_text(encoding="utf-8"))
+            test_cases = suite.get("test_cases", []) if isinstance(suite, dict) else []
+        except (OSError, json.JSONDecodeError):
+            test_cases = []
+    if not test_cases:
+        for metric_name in ("correctness", "logical"):
+            result = report.get(metric_name, {})
+            rows = result.get("results", []) if isinstance(result, dict) else []
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict):
+                        test_cases.append(row)
+
+    case_rows = []
+    for index, case in enumerate(test_cases, start=1):
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("id", index))
+        observed_row = observed.get(case_id, {})
+        passed = observed_row.get("passed")
+        result_label = "PASS" if passed is True else "FAIL" if passed is False else "Not run"
+        tags = case.get("tags", [])
+        case_rows.append([
+            case_id,
+            ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else "",
+            str(case.get("input", "")),
+            str(case.get("expected", "")),
+            str(observed_row.get("actual", "")),
+            result_label,
+        ])
+
+    total = len(case_rows)
+    executed = sum(row[-1] in {"PASS", "FAIL"} for row in case_rows)
+    if generation.get("status") == "completed":
+        summary.append(
+            f"**Test suite:** {total} cases · {generation.get('edge_test_count', 0)} edge cases · {executed} executed"
+        )
+    elif total:
+        summary.append(f"**Test cases:** {total} configured · {executed} executed")
+    else:
+        summary.append("**Test suite:** No validated test suite was available for this run.")
+
+    finding_rows = []
+    findings = report.get("llm_rsi_findings", []) if isinstance(report, dict) else []
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            start = finding.get("line_start")
+            end = finding.get("line_end")
+            location = f"{start}" if start is not None else "—"
+            if end is not None and end != start:
+                location += f"–{end}"
+            finding_rows.append([
+                str(finding.get("severity", "unknown")).upper(),
+                str(finding.get("metric", "unmapped")),
+                location,
+                str(finding.get("title", "Issue")),
+                compact_rationale(finding.get("description", ""), max_words=45, max_chars=300),
+            ])
+    return "\n\n".join(summary), metric_rows, case_rows, finding_rows, source_code
+
+
 def load_rules_editor_from_upload(rules_upload: Any):
     """Populate the editor and remember which uploaded file it was based on.
 
@@ -379,8 +492,26 @@ def load_rules_editor_from_upload(rules_upload: Any):
         return "", default_time, default_memory, f"Could not load rules: {type(exc).__name__}: {exc}", ""
 
 
+def load_source_editor_from_upload(source_upload: Any):
+    """Load an uploaded C file into the syntax-highlighted editor."""
+    if source_upload is None:
+        return "", "", "Paste C source below or upload a `.c` file."
+    try:
+        path = _upload_path(source_upload, "C source")
+        if path.suffix.lower() != ".c":
+            raise ValueError("The submission must be a .c file.")
+        if path.stat().st_size > settings.UI_MAX_UPLOAD_BYTES:
+            raise ValueError(f"The source file exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
+        content = path.read_text(encoding="utf-8")
+        return content, _sha256_text(content), f"Loaded `{path.name}` into the C editor. You can edit it before grading."
+    except Exception as exc:
+        return "", "", f"Could not load source: {type(exc).__name__}: {exc}"
+
+
 def grade_uploaded_submission(
     source_upload: Any,
+    source_code_editor: str,
+    source_editor_hash: str,
     rules_upload: Any,
     rules_json_text: str,
     time_limit_s: float,
@@ -401,15 +532,31 @@ def grade_uploaded_submission(
     context_compression_enabled: bool = True,
     compression_threshold_chars: float = 1800,
     rules_editor_source_hash: str = "",
+    max_generated_cases: float = 60,
+    additional_test_focus: str = "",
 ):
     """Stage files, apply per-run controls, and execute grading in isolation."""
     stage_dir: Path | None = None
+    source_code = ""
     try:
-        source_path = _upload_path(source_upload, "C source")
-        if source_path.suffix.lower() != ".c":
+        uploaded_source_path = _upload_path(source_upload, "C source") if source_upload is not None else None
+        if uploaded_source_path is not None and uploaded_source_path.suffix.lower() != ".c":
             raise ValueError("The submission must be a .c file.")
-        if source_path.stat().st_size > settings.UI_MAX_UPLOAD_BYTES:
+        if uploaded_source_path is not None and uploaded_source_path.stat().st_size > settings.UI_MAX_UPLOAD_BYTES:
             raise ValueError(f"The source file exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
+        editor_source = str(source_code_editor or "")
+        if uploaded_source_path is not None:
+            uploaded_source = uploaded_source_path.read_text(encoding="utf-8")
+            if source_editor_hash and source_editor_hash == _sha256_text(uploaded_source) and editor_source:
+                source_code = editor_source
+            else:
+                source_code = uploaded_source
+        elif editor_source.strip():
+            source_code = editor_source
+        else:
+            raise ValueError("Upload a C source file or paste C code into the editor.")
+        if len(source_code.encode("utf-8")) > settings.UI_MAX_UPLOAD_BYTES:
+            raise ValueError(f"The source code exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
 
         editor_text = str(rules_json_text or "").strip()
         uploaded_path: Path | None = None
@@ -473,6 +620,17 @@ def grade_uploaded_submission(
         if int(memory_limit_mb) != memory_limit_mb:
             raise ValueError("Docker memory limit must be a whole number of MB.")
 
+        if isinstance(max_generated_cases, bool) or not 1 <= int(max_generated_cases) <= 80:
+            raise ValueError("Generated test-case limit must be between 1 and 80.")
+        if not isinstance(additional_test_focus, str) or len(additional_test_focus) > 500:
+            raise ValueError("Test variation focus must be at most 500 characters.")
+        test_generation = rules.setdefault("test_generation", {})
+        if not isinstance(test_generation, dict):
+            raise ValueError("test_generation in rules must be a JSON object.")
+        test_generation["enabled"] = True
+        test_generation["max_cases"] = int(max_generated_cases)
+        test_generation["additional_focus"] = additional_test_focus.strip()
+
         # Sanitizer control is reflected into the metric's validated params.
         for metric in rules.get("metrics", []):
             if isinstance(metric, dict) and metric.get("analyzer") in {"memory_safety", "valgrind_memcheck"}:
@@ -504,7 +662,7 @@ def grade_uploaded_submission(
         stage_dir = settings.GRADIO_STAGING_DIR / run_id
         stage_dir.mkdir(parents=True, exist_ok=False)
         staged_source = stage_dir / "submission.c"
-        shutil.copyfile(source_path, staged_source)
+        staged_source.write_text(source_code, encoding="utf-8")
         rules["submission"]["source_file"] = str(staged_source.relative_to(PROJECT_ROOT))
         staged_rules = stage_dir / "rules.json"
         staged_rules.write_text(json.dumps(rules, indent=2), encoding="utf-8")
@@ -536,10 +694,14 @@ def grade_uploaded_submission(
             report_dir=report_dir,
             runtime_options=runtime_options,
         )
-        return _metric_summary(report), str(json_path), str(text_path)
+        summary, metric_rows, case_rows, finding_rows, graded_source = _grading_dashboard_cells(report, source_code)
+        return summary, metric_rows, case_rows, finding_rows, graded_source, str(json_path), str(text_path)
     except Exception as exc:
         logger.exception("Gradio grading request failed")
-        return f"## Could not complete grading\n`{type(exc).__name__}: {exc}`", None, None
+        return (
+            f"## Could not complete grading\n\n{type(exc).__name__}: {exc}",
+            [], [], [], source_code, None, None,
+        )
     finally:
         if stage_dir is not None:
             shutil.rmtree(stage_dir, ignore_errors=True)
@@ -722,92 +884,131 @@ def run_formai_combined(
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(title="Code Checking Assistant") as demo:
+    with gr.Blocks(title="Code Grader") as demo:
         gr.Markdown(
-            "# Code Checking Assistant\n"
-            "Rule-driven C grading with deterministic analyzer evidence and an independent local LLM review. "
-            "Infrastructure failures are reported per stage; one unavailable analyzer does not stop the remaining pipeline."
+            "# Code Grader\n"
+            "Edit or upload C code, choose test variations, then review the grade, executed cases, and findings in separate panels.",
+            elem_id="app-header",
         )
         with gr.Tab("Grade a C submission"):
-            gr.Markdown("Upload the C source and the instructor's `rules.json`. Test files and similarity corpora remain resolved relative to the project root.")
             with gr.Row():
                 source_file = gr.File(label="C source file", file_types=[".c"], type="filepath")
                 rules_file = gr.File(label="Instructor rules JSON", file_types=[".json"], type="filepath")
-            rules_status = gr.Markdown("Upload rules JSON to load an editable copy below.")
-            gr.Markdown(
-                "The editor is tied to the uploaded file it was loaded from. Edits are used for that same file; "
-                "if you upload a different file while an old editor value is still present, the newer upload wins. "
-                "The result displays the exact assignment statement and rules fingerprint used for grading."
+            source_status = gr.Markdown("Paste C code or upload a `.c` file.", elem_classes=["compact-note"])
+            source_editor_hash = gr.State("")
+            source_editor = gr.Code(
+                label="Submission source", language="c", interactive=True,
+                lines=24, max_lines=42, value="", elem_id="submission-source",
             )
+            with gr.Row():
+                max_generated_cases = gr.Slider(
+                    1, 80, value=60, step=1, label="Maximum generated test cases",
+                    info="Generated cases and edge cases are run before grading.",
+                )
+                additional_test_focus = gr.Textbox(
+                    label="Test variation focus (optional)",
+                    placeholder="For example: duplicate values, zero values, and boundary sizes",
+                    lines=2, max_lines=3, max_length=500,
+                )
             rules_editor_source_hash = gr.State("")
-            rules_editor = gr.Code(
-                label="Editable grading rules (JSON)",
-                language="json",
-                interactive=True,
-                lines=18,
-                value="",
-            )
-            with gr.Accordion("Grading and analyzer parameters", open=True):
+            with gr.Accordion("Assignment rules and grading settings", open=False):
+                rules_status = gr.Markdown("Upload rules JSON to load an editable copy.", elem_classes=["compact-note"])
+                rules_editor = gr.Code(
+                    label="Rules JSON", language="json", interactive=True,
+                    lines=18, max_lines=36, value="",
+                )
                 gr.Markdown(
-                    "These controls apply to this run only. For metric selection, rubric weights, "
-                    "test-set paths, and analyzer-specific thresholds, edit the JSON above: "
-                    "`metrics[].enabled`, `metrics[].weight`, and `metrics[].params`."
+                    "Rules and testcase paths resolve from the repository root. Controls here apply only to this run.",
+                    elem_classes=["compact-note"],
                 )
                 with gr.Row():
-                    time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1, label="Per-test execution timeout (seconds)")
-                    memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory limit (MB)")
-                    docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU limit (cores)")
-                    run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan sanitizers")
-                with gr.Row():
-                    rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS, step=1, label="Whole-program RSI iterations")
-                    understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64, label="Program-understanding token budget")
-                    rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="Each RSI pass token budget")
-                    scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Metric-scoring token budget")
-                with gr.Row():
-                    max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum retained findings")
-                    gr.Markdown("Each LLM stage makes one schema-constrained request; repair retries are disabled.")
-                    source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024, label="Maximum source characters per LLM stage")
-                    evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512, label="Maximum evidence characters in prompts")
-                with gr.Row():
-                    llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature")
-                    llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10, label="LLM request timeout (seconds)")
-                with gr.Row():
-                    model_name_ui = gr.Textbox(
-                        value=settings.MODEL,
-                        label="LLM model identifier",
-                        info="Used when this app starts llama-server. If reusing an already-running server, enter the model loaded by that server.",
-                    )
-                    thinking_ui = gr.Checkbox(value=True, label="Enable model thinking", info="Enabled by default; thinking is bounded so the final JSON response has room.")
-                with gr.Accordion("Same-model context compression", open=True):
-                    gr.Markdown(
-                        "Large RSI history is compressed by the same model currently selected above. "
-                        "Source code, original line numbers, finding identities, analyzer values, and evidence IDs are protected. "
-                        "If compression fails validation, loss-aware deterministic compaction is used."
-                    )
+                    time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1, label="Per-test timeout (seconds)")
+                    memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
+                    docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
+                    run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
+                with gr.Accordion("LLM and context options", open=False):
+                    with gr.Row():
+                        rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS, step=1, label="RSI iterations")
+                        llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature")
+                        llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10, label="LLM timeout (seconds)")
+                    with gr.Row():
+                        model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
+                        thinking_ui = gr.Checkbox(value=True, label="Enable model thinking")
+                    with gr.Row():
+                        max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
+                        source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024, label="Maximum source characters")
+                        evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512, label="Maximum evidence characters")
+                    with gr.Row():
+                        understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64, label="Understanding token budget")
+                        rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
+                        scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
                     with gr.Row():
                         context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED, label="Enable same-model compression")
-                        compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS, step=256, label="Compress history above (characters)")
+                        compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS, step=256, label="Compression threshold")
+            source_file.change(
+                load_source_editor_from_upload,
+                inputs=[source_file],
+                outputs=[source_editor, source_editor_hash, source_status],
+                show_progress="hidden",
+            )
             rules_file.change(
                 load_rules_editor_from_upload,
                 inputs=[rules_file],
                 outputs=[rules_editor, time_limit, memory_limit, rules_status, rules_editor_source_hash],
+                show_progress="hidden",
             )
-            grade_button = gr.Button("Run grading pipeline", variant="primary")
-            grade_summary = gr.Markdown()
-            with gr.Row():
-                report_json = gr.File(label="Full JSON report")
-                report_text = gr.File(label="Readable text report")
+            grade_button = gr.Button("Generate test variations & grade", variant="primary", elem_id="grade-button")
+            with gr.Tabs():
+                with gr.Tab("Overview"):
+                    grade_summary = gr.Markdown()
+                    metrics_table = gr.Dataframe(
+                        headers=["Metric", "Points awarded", "Status", "Assessment"],
+                        datatype=["str", "str", "str", "str"],
+                        value=[], interactive=False, wrap=True, show_search="filter",
+                        label="Metric results", max_chars=360,
+                    )
+                with gr.Tab("Test cases"):
+                    with gr.Accordion("Generated and executed test cases", open=False):
+                        gr.Markdown(
+                            "Expected outputs come from the compiled reference running in the restricted sandbox.",
+                            elem_classes=["compact-note"],
+                        )
+                        test_cases_table = gr.Dataframe(
+                            headers=["Case", "Tags", "Input", "Expected", "Actual", "Result"],
+                            datatype=["str", "str", "str", "str", "str", "str"],
+                            value=[], interactive=False, wrap=True, show_search="filter",
+                            label="Case details", max_chars=1200,
+                        )
+                with gr.Tab("Findings"):
+                    findings_table = gr.Dataframe(
+                        headers=["Severity", "Metric", "Lines", "Finding", "Evidence"],
+                        datatype=["str", "str", "str", "str", "str"],
+                        value=[], interactive=False, wrap=True, show_search="filter",
+                        label="Validated source findings", max_chars=420,
+                    )
+                with gr.Tab("Submitted source"):
+                    graded_source = gr.Code(
+                        label="Exact C source graded", language="c", interactive=False,
+                        lines=24, max_lines=48,
+                    )
+                with gr.Tab("Report files"):
+                    with gr.Row():
+                        report_json = gr.File(label="JSON report")
+                        report_text = gr.File(label="Readable report")
             grade_button.click(
                 grade_uploaded_submission,
                 inputs=[
-                    source_file, rules_file, rules_editor, time_limit, memory_limit,
+                    source_file, source_editor, source_editor_hash,
+                    rules_file, rules_editor, time_limit, memory_limit,
                     rsi_iterations_ui, understanding_tokens_ui, rsi_tokens_ui,
-                    scoring_tokens_ui, max_findings_ui,
-                    source_chars_ui, evidence_chars_ui, llm_temperature_ui, model_name_ui, llm_timeout_ui, docker_cpu,
+                    scoring_tokens_ui, max_findings_ui, source_chars_ui, evidence_chars_ui,
+                    llm_temperature_ui, model_name_ui, llm_timeout_ui, docker_cpu,
                     thinking_ui, run_sanitizers, context_compression_ui,
                     compression_threshold_ui, rules_editor_source_hash,
+                    max_generated_cases, additional_test_focus,
                 ],
-                outputs=[grade_summary, report_json, report_text],
+                outputs=[grade_summary, metrics_table, test_cases_table, findings_table, graded_source, report_json, report_text],
+                show_progress="minimal", scroll_to_output=True,
             )
 
         with gr.Tab("FormAI-v2 combined benchmark"):
@@ -847,18 +1048,20 @@ def build_app() -> gr.Blocks:
                 inputs=[source_inputs, ground_truth, benchmark_mode, tool_timeout, max_findings, rsi_iterations, memory_limit, cpu_limit, sample_count],
                 outputs=[benchmark_summary, predictions_file, evaluation_file],
             )
-        gr.Markdown(
-            "**Scoring policy:** the LLM evaluates every enabled metric using the assignment, rubric, source, "
-            "and analyzer evidence. Completed deterministic analyzer scores are fallbacks only; Python "
-            "calculates the configured weighted total from the selected metric scores."
-        )
+
     return demo
 
 
 def main() -> None:
     logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT_APP)
     app = build_app()
-    app.queue().launch(server_name=settings.UI_HOST, server_port=settings.UI_PORT, show_error=settings.UI_SHOW_ERROR)
+    app.queue().launch(
+        server_name=settings.UI_HOST,
+        server_port=settings.UI_PORT,
+        show_error=settings.UI_SHOW_ERROR,
+        theme=gr.themes.Ocean(),
+        css=OCEAN_UI_CSS,
+    )
 
 
 if __name__ == "__main__":

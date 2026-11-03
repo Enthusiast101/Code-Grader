@@ -17,16 +17,18 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.22,
+      "weight": 0.2,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/06-dp-coin-change/testcases.json"
-      }
+      },
+      "max_points": 20,
+      "grade_contribution": true
     },
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.08,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "flags": [
@@ -36,36 +38,44 @@
           "-Wpedantic"
         ],
         "warning_penalty": 5
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.12,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "timeout_s": 15
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "modularity",
       "analyzer": "modularity",
-      "weight": 0.08,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "expect_helpers": false,
         "min_functions": 1
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "complexity",
       "analyzer": "complexity_estimator",
-      "weight": 0.08,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "max_cyclomatic": 8,
         "max_function_length": 40
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "logical",
@@ -74,28 +84,34 @@
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/06-dp-coin-change/edge_cases.json"
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "runtime_efficiency",
       "analyzer": "runtime_profile",
-      "weight": 0.05,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": null,
         "target_runtime_ms": 1000,
         "repetitions": 3
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.17,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/06-dp-coin-change/memory_cases.json",
         "run_sanitizers": true
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "readability",
@@ -104,19 +120,23 @@
       "enabled": true,
       "params": {
         "max_line_length": 100
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "originality",
       "analyzer": "similarity_flag",
-      "weight": 0.05,
+      "weight": 0.0,
       "enabled": false,
       "params": {
         "corpus_dir": "submissions",
         "flag_threshold": 0.85,
         "max_files": 5000,
         "shingle_size": 5
-      }
+      },
+      "max_points": 0,
+      "grade_contribution": false
     }
   ]
 }

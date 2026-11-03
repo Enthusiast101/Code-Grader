@@ -1,4 +1,4 @@
-"""Calibrated score bands for 0..10 LLM ratings and 0..100 final scores."""
+"""Quality anchors for mapping metric evidence to configured point caps."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,16 +43,6 @@ SCORE_BANDS = tuple(
 BAND_BY_LABEL = {band.label: band for band in SCORE_BANDS}
 BAND_LABELS = tuple(BAND_BY_LABEL)
 
-LLM_SCORE_BANDS = tuple(
-    ScoreBand(
-        f"{lower:g}-{lower + 0.5:g}", lower, lower + 0.5,
-        lower + 0.25, _DESCRIPTORS[index],
-    )
-    for index, lower in enumerate(i * 0.5 for i in range(20))
-)
-LLM_BAND_BY_LABEL = {band.label: band for band in LLM_SCORE_BANDS}
-
-
 def score_from_band(value: Any) -> float | None:
     """Return the fixed midpoint for a recognized five-point band."""
     if not isinstance(value, str):
@@ -72,42 +62,24 @@ def band_for_score(score: float) -> str:
     return f"{lower}-{lower + 5}"
 
 
-def llm_score_from_band(value: Any) -> float | None:
-    """Return a fixed midpoint for a recognized 0..10 LLM rating band."""
-    if not isinstance(value, str):
-        return None
-    band = LLM_BAND_BY_LABEL.get(value.strip())
-    return band.midpoint if band else None
-
-
-def llm_band_for_score(score: float) -> str:
-    """Map a finite 0..10 LLM score to a half-point descriptor band."""
-    if isinstance(score, bool) or not isinstance(score, (int, float)):
-        raise TypeError("score must be numeric")
-    numeric = float(score)
-    if not 0.0 <= numeric <= 10.0:
-        raise ValueError("LLM score must be between 0 and 10")
-    lower = min(9.5, int(numeric * 2) / 2)
-    return f"{lower:g}-{lower + 0.5:g}"
-
-
-def rubric_prompt_block(metric_rubrics: dict[str, Any] | None = None) -> str:
-    """Build the calibrated scale and metric criteria for scoring prompts."""
+def rubric_prompt_block(
+    metric_rubrics: dict[str, Any] | None = None,
+    metric_caps: dict[str, float] | None = None,
+) -> str:
+    """Build a rubric prompt for consolidated, metric-specific point scores."""
     lines = [
-        "CALIBRATED LLM METRIC RATING: rate each metric from 0 to 10, allowing decimals.",
-        "Return a numeric rating from 0 to 10; do not return a band label.",
-        "Convert the normalized rating to the metric's point cap as rating / 10 * maximum_points.",
-        "The overall grade is the sum of earned metric points and is out of 100. A metric marked diagnostic-only is excluded from that sum.",
-        "Executed correctness/logical test results and completed deterministic analyzer results override conflicting LLM ratings; retain LLM ratings separately for audit.",
+        "CONSOLIDATED METRIC POINTS: return the earned points directly for each metric, using that metric's maximum below.",
+        "Do not return a normalized rating or a separate LLM rating. A returned metric score is already points earned out of its configured maximum.",
+        "The overall grade is the sum of earned points and is out of 100. Diagnostic-only metrics are excluded.",
+        "Executed correctness/logical test results and completed deterministic analyzer results remain authoritative when available; model points are used for other metrics when evidence supports them.",
         "Missing measurements are not zeros. Never invent evidence or task requirements.",
-        "GENERAL 0-10 ANCHORS (each band is a half point):",
+        "GENERAL QUALITY ANCHORS (bands are percentages of each metric's point maximum):",
     ]
-    lines.extend(f"{band.label}/10: {band.descriptor}" for band in LLM_SCORE_BANDS)
+    lines.extend(f"{band.label}%: {band.descriptor}" for band in SCORE_BANDS)
+    if metric_caps:
+        lines.append("MAXIMUM POINTS BY METRIC:")
+        lines.extend(f"{name}: 0 to {points:g} points" for name, points in metric_caps.items())
     if metric_rubrics:
-        max_points = metric_rubrics.get("max_points", {})
-        if isinstance(max_points, dict) and max_points:
-            lines.append("METRIC POINT CAPS:")
-            lines.extend(f"{name}: {points} points maximum" for name, points in max_points.items())
         criteria = metric_rubrics.get("metrics", metric_rubrics)
         if isinstance(criteria, dict) and criteria:
             lines.append("METRIC-SPECIFIC CRITERIA:")

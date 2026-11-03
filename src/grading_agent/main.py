@@ -434,8 +434,8 @@ def _grade_with_rules_file_impl(
             report, rules, f"{type(exc).__name__}: {exc}"
         )
 
-    # Use the RSI metric score, fall back to the deterministic analyzer score,
-    # then calculate the final weighted grade in Python.
+    # Use authoritative deterministic results where available, rubric points
+    # otherwise, then calculate the consolidated point total in Python.
     apply_metric_scores(rules["metrics"], report, report["llm_rsi_evaluation"])
     report["scoring"] = calculate_overall_score(rules["metrics"], report)
     llm_result = report.get("llm_rsi_evaluation", {})

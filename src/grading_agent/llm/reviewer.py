@@ -22,8 +22,8 @@ from grading_agent.llm.context_compressor import (
 )
 from grading_agent.reporting.rationale import compact_rationale
 from grading_agent.scoring.score_bands import (
-    llm_band_for_score,
-    llm_score_from_band,
+    band_for_score,
+    score_from_band,
     rubric_prompt_block,
 )
 
@@ -2914,13 +2914,17 @@ def _global_rsi_response_schema(enabled_metrics: list[dict[str, Any]]) -> dict[s
 
 
 def _metric_score_response_schema(enabled_metrics: list[dict[str, Any]]) -> dict[str, Any]:
-    """Require a numeric score and a concise model-authored reason per metric."""
+    """Require earned points within each enabled metric's configured maximum."""
     names = [str(item.get("name")) for item in enabled_metrics if item.get("name")]
+    caps = {
+        str(item.get("name")): float(item.get("max_points", 100.0))
+        for item in enabled_metrics if item.get("name")
+    }
     score_properties = {
         name: {
             "type": "object",
             "properties": {
-                "score": {"type": "number", "minimum": 0, "maximum": 10},
+                "score": {"type": "number", "minimum": 0, "maximum": caps[name]},
                 "rationale": {"type": "string", "maxLength": 420},
                 "zero_score_reason": {"type": "string", "maxLength": 160},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -3640,7 +3644,11 @@ def _normalise_metric_scores(
         if isinstance(wrapped, dict) and any(key in wrapped for key in ("metrics", "scores", "metric_scores")):
             parsed = wrapped
             break
-    metric_names = {str(item.get("name")) for item in enabled_metrics}
+    metric_caps = {
+        str(item.get("name")): float(item.get("max_points", 100.0))
+        for item in enabled_metrics if item.get("name")
+    }
+    metric_names = set(metric_caps)
     known_evidence = {str(item.get("id")) for item in ledger if item.get("id")}
     raw = parsed.get("metrics", parsed.get("scores", parsed.get("metric_scores", {})))
     items: list[dict[str, Any]] = []
@@ -3664,9 +3672,11 @@ def _normalise_metric_scores(
         name = str(item.get("name", item.get("metric", item.get("metric_name", item.get("criterion", ""))))).strip()
         if name not in metric_names or name in result:
             continue
+        maximum = metric_caps[name]
         score = item.get("score", item.get("value", item.get("rating")))
         if score is None and isinstance(item.get("score_band"), str):
-            score = llm_score_from_band(item["score_band"])
+            percentage_midpoint = score_from_band(item["score_band"])
+            score = (percentage_midpoint * maximum / 100.0) if percentage_midpoint is not None else None
         if isinstance(score, str):
             try:
                 score = float(score.strip())
@@ -3675,7 +3685,7 @@ def _normalise_metric_scores(
         if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
             continue
         score = float(score)
-        if not 0.0 <= score <= 10.0:
+        if not 0.0 <= score <= maximum:
             continue
         basis = str(item.get("basis", "limited_evidence"))
         if basis not in _RSI_BASIS_VALUES:
@@ -3708,14 +3718,16 @@ def _normalise_metric_scores(
                 "",
             )
             rationale = evidence_rationale or (
-                f"The model assigned {score:.1f}/10; its response did not provide a metric-specific explanation."
+                f"The model assigned {score:.2f}/{maximum:g} points; its response did not provide a metric-specific explanation."
             )
         zero_reason = str(item.get("zero_score_reason", "")).strip()
         confidence = item.get("confidence")
         result[name] = {
             "name": name,
             "score": round(score, 2),
-            "score_scale": "0-10",
+            "score_points": round(score, 2),
+            "max_points": maximum,
+            "score_scale": "configured_metric_points",
             "rationale": rationale,
             "zero_score_reason": zero_reason[:160],
             "confidence": round(float(confidence), 2) if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and 0 <= float(confidence) <= 1 else None,
@@ -3832,12 +3844,17 @@ def _score_metrics_after_rsi(
         "rubric_and_analyzer_summaries": [_compact_metric_context(metric, report) for metric in enabled],
         "evidence_ledger": _compact_ledger(ledger),
         "enabled_metric_names": enabled_names,
+        "metric_max_points": {
+            str(metric.get("name")): float(metric.get("max_points", 100.0))
+            for metric in enabled
+        },
     }
     system = (
         "You are the final expert evaluator for this C assignment. Read the submitted numbered "
-        "source itself and score each enabled metric independently from 0 to 10 using the "
-        "assignment, instructor rubric, validated findings, and analyzer evidence. The LLM is "
-        "the scoring authority; analyzers are supporting evidence, not scores to copy. Do not "
+        "source itself and assign earned points directly to every enabled metric. Each score "
+        "must be between zero and that metric's configured maximum point cap. Return consolidated "
+        "metric points only; do not return a separate normalized rating. Use the assignment, "
+        "instructor rubric, validated findings, and analyzer evidence. Do not "
         "invent requirements. Missing test data or runtime measurements are not failed tests. "
         "Never infer expected assignment behavior from the submitted source. If assignment_contract_is_actionable is false and no configured tests exist, Python will mark correctness/logical unmeasured. Do not penalize missing scanf return checks or malformed-input handling unless the assignment requires it. "
         "Assess logical correctness and runtime complexity from source when measurements are "
@@ -3848,7 +3865,11 @@ def _score_metrics_after_rsi(
         "in 2–3 concise, metric-specific sentences (roughly 30–60 words). Include zero_score_reason as an empty string "
         "when not applicable and confidence as a number from 0 to 1. Return exactly one JSON "
         "object with scores containing every enabled metric exactly once. No Markdown.\n\n"
-        + rubric_prompt_block(rules.get("rubric", rules.get("rubrics", {})) if isinstance(rules.get("rubric", rules.get("rubrics", {})), dict) else None)
+        + rubric_prompt_block(
+            rules.get("rubric", rules.get("rubrics", {}))
+            if isinstance(rules.get("rubric", rules.get("rubrics", {})), dict) else None,
+            payload["metric_max_points"],
+        )
     )
     messages = [
         {"role": "system", "content": system},
@@ -3873,7 +3894,8 @@ def _score_metrics_after_rsi(
                 ref for item in relevant for ref in item.get("evidence_ids", [])
             ))[:6]
         score_item["basis"] = "llm_rubric_assessment"
-        score_item["score_band"] = llm_band_for_score(score_item["score"])
+        maximum = float(score_item.get("max_points", 100.0))
+        score_item["score_band"] = band_for_score(100.0 * score_item["score"] / maximum)
         scores[metric_name] = score_item
 
     # A title such as "grading" is not a task specification. Without an
@@ -4270,13 +4292,21 @@ def evaluate_metrics_with_llm(
         score_item = final_metrics.get(name)
         if not score_item:
             continue
+        metric_rule = next((item for item in enabled if str(item.get("name")) == name), {})
+        maximum = float(metric_rule.get("max_points", score_item.get("max_points", 100.0)))
+        raw_score = score_item.get("score")
+        if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
+            points = (
+                float(score_item.get("score_points", raw_score))
+                if score_item.get("origin") == "llm"
+                else float(raw_score) * maximum / 100.0
+            )
+        else:
+            points = None
         metrics_output.append({
             "name": name,
-            "score": score_item["score"],
-            "score_scale": score_item.get(
-                "score_scale",
-                "0-10" if score_item.get("origin") == "llm" else "0-100",
-            ),
+            "score_points": round(points, 2) if points is not None else None,
+            "max_points": maximum,
             "rationale": score_item["rationale"],
             "origin": score_item.get("origin", "llm"),
             "score_origin": score_item.get("origin", "llm"),
@@ -4286,11 +4316,8 @@ def evaluate_metrics_with_llm(
             "iteration_status": "completed" if completed_global_iterations == max_iterations else "partial",
             "iteration_history": [{
                 "stage": "post_rsi_metric_scoring",
-                "score": score_item["score"],
-                "score_scale": score_item.get(
-                    "score_scale",
-                    "0-10" if score_item.get("origin") == "llm" else "0-100",
-                ),
+                "score_points": round(points, 2) if points is not None else None,
+                "max_points": maximum,
                 "rationale": score_item["rationale"],
                 "evidence_ids": score_item.get("evidence_ids", []),
             }],
@@ -4328,7 +4355,7 @@ def evaluate_metrics_with_llm(
     report["llm_rsi_context_compression"] = context_compression_events
     report["llm_rsi_metric_scoring"] = {
         "status": "completed" if not metrics_without_llm and latest_valid is not None else "completed_with_fallback",
-        "llm_score_scale": "0-10",
+        "score_unit": "consolidated metric points",
         "metrics": metrics_output,
         "missing_metrics": metrics_without_llm,
         "calls": score_calls,
@@ -4381,7 +4408,7 @@ def evaluate_metrics_with_llm(
         ),
         "llm_iterations_completed": sum(item.get("status") == "completed" for item in iteration_history),
         "metric_scoring_status": "completed" if not metrics_without_llm and latest_valid is not None else "completed_with_fallback",
-        "llm_metric_score_scale": "0-10",
+        "metric_score_unit": "consolidated metric points",
         "metrics_without_llm_score": metrics_without_llm,
         "metric_scoring": report["llm_rsi_metric_scoring"],
         "iterations_requested": max_iterations,

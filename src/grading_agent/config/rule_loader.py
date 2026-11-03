@@ -547,7 +547,7 @@ def load_rules(
 
     normalized_rules["metrics"] = normalized_metrics
     # Ignore the old experimental analyzer/LLM blend setting. Metric scores
-    # now come from RSI, with analyzer scores used only as fallback.
+    # are resolved from authoritative evidence before final point aggregation.
     normalized_rules.pop("scoring", None)
     normalized_rules["rules_path"] = str(rules_path)
     normalized_rules["project_root"] = str(project_root)
