@@ -45,13 +45,24 @@ def apply_metric_scores(
         if str(result.get("status", "")).casefold() != "completed":
             analyzer_score = None
         llm_item = llm_by_name.get(name, {})
-        llm_score = _valid_score(llm_item.get("score")) if isinstance(llm_item, dict) and llm_item.get("origin", "llm") == "llm" else None
+        llm_score_10 = None
+        if isinstance(llm_item, dict) and llm_item.get("origin", "llm") == "llm":
+            candidate = llm_item.get("score")
+            if (
+                not isinstance(candidate, bool)
+                and isinstance(candidate, (int, float))
+                and math.isfinite(float(candidate))
+                and 0.0 <= float(candidate) <= 10.0
+            ):
+                llm_score_10 = float(candidate)
+        llm_score = llm_score_10 * 10.0 if llm_score_10 is not None else None
         if result.get("requires_executed_testset") is True:
             # An LLM proposal cannot replace missing execution evidence for a
             # metric whose configured analyzer requires assignment testcases.
-            if llm_score is not None:
-                result["unvalidated_llm_proposal"] = llm_score
+            if llm_score_10 is not None:
+                result["unvalidated_llm_proposal"] = llm_score_10
             llm_score = None
+            llm_score_10 = None
 
         selected = llm_score if llm_score is not None else analyzer_score
         origin = "llm" if llm_score is not None else "deterministic_analyzer" if analyzer_score is not None else "unmeasured"
@@ -89,8 +100,9 @@ def apply_metric_scores(
             test_cap_applied = llm_score is not None and observed_test_score < llm_score
         result.update({
             "analyzer_score": analyzer_score,
-            "llm_review_score": llm_score,
-            "llm_rsi_score": llm_score,
+            "llm_review_score": llm_score_10,
+            "llm_rsi_score": llm_score_10,
+            "llm_score_10": llm_score_10,
             "score": round(selected, 2) if selected is not None else None,
             "score_scale": "0-100",
             "score_origin": origin,
@@ -109,13 +121,14 @@ def apply_metric_scores(
             explanation = (
                 f"Configured {name} tests passed {test_passed}/{test_total}; the score is the observed pass rate "
                 f"({observed_test_score:.2f}/100). "
-                + (f"The LLM proposed {llm_score:.2f}/100 and its proposal is retained for audit. " if llm_score is not None else "")
+                + (f"The LLM proposed {llm_score_10:.2f}/10 and its proposal is retained for audit. " if llm_score_10 is not None else "")
                 + str(explanation)
             )
         result["score_rationale"] = compact_rationale(explanation, max_words=60, max_chars=420)
         if isinstance(llm_item, dict) and llm_item:
             result["llm_review"] = {
-                "proposed_score": llm_score, "effective_score": selected,
+                "proposed_score": llm_score_10, "score_scale": "0-10",
+                "effective_score_100": selected,
                 "test_score_cap_applied": test_cap_applied, "rationale": llm_item.get("rationale", ""),
                 "evidence_ids": llm_item.get("evidence_ids", []),
                 "confidence": llm_item.get("confidence"),

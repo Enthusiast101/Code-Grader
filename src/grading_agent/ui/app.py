@@ -124,6 +124,9 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
         metric_score_label = f"{number(metric_score):.2f}/100" if isinstance(metric_score, (int, float)) else "N/A"
         source_label = score_source_label(result.get("score_origin"))
         lines.append(f"- **{name}: {metric_score_label}** _(source: {source_label})_")
+        llm_rating = result.get("llm_score_10")
+        if isinstance(llm_rating, (int, float)) and not isinstance(llm_rating, bool):
+            lines.append(f"  - LLM rating: {number(llm_rating):.2f}/10")
         rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  - Assessment: {rationale}")

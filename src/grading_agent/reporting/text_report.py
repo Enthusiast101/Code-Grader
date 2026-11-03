@@ -86,6 +86,9 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         status = result.get("status", "completed" if score is not None else "inconclusive")
         score_text = f"{float(score):.2f}/100" if isinstance(score, (int, float)) else "N/A"
         lines.append(f"{name:22s} weight={metric['weight']:.3f}  score={score_text:12s} status={status}")
+        llm_rating = result.get("llm_score_10")
+        if isinstance(llm_rating, (int, float)) and not isinstance(llm_rating, bool):
+            lines.append(f"  LLM metric rating: {float(llm_rating):.2f}/10")
         rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  Assessment: {rationale}")

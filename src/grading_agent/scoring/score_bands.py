@@ -1,4 +1,4 @@
-"""Five-point anchored score bands for consistent rubric calibration."""
+"""Calibrated score bands for 0..10 LLM ratings and 0..100 final scores."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,8 +8,8 @@ from typing import Any
 @dataclass(frozen=True)
 class ScoreBand:
     label: str
-    lower: int
-    upper: int
+    lower: float
+    upper: float
     midpoint: float
     descriptor: str
 
@@ -43,6 +43,15 @@ SCORE_BANDS = tuple(
 BAND_BY_LABEL = {band.label: band for band in SCORE_BANDS}
 BAND_LABELS = tuple(BAND_BY_LABEL)
 
+LLM_SCORE_BANDS = tuple(
+    ScoreBand(
+        f"{lower:g}-{lower + 0.5:g}", lower, lower + 0.5,
+        lower + 0.25, _DESCRIPTORS[index],
+    )
+    for index, lower in enumerate(i * 0.5 for i in range(20))
+)
+LLM_BAND_BY_LABEL = {band.label: band for band in LLM_SCORE_BANDS}
+
 
 def score_from_band(value: Any) -> float | None:
     """Return the fixed midpoint for a recognized five-point band."""
@@ -63,17 +72,36 @@ def band_for_score(score: float) -> str:
     return f"{lower}-{lower + 5}"
 
 
+def llm_score_from_band(value: Any) -> float | None:
+    """Return a fixed midpoint for a recognized 0..10 LLM rating band."""
+    if not isinstance(value, str):
+        return None
+    band = LLM_BAND_BY_LABEL.get(value.strip())
+    return band.midpoint if band else None
+
+
+def llm_band_for_score(score: float) -> str:
+    """Map a finite 0..10 LLM score to a half-point descriptor band."""
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise TypeError("score must be numeric")
+    numeric = float(score)
+    if not 0.0 <= numeric <= 10.0:
+        raise ValueError("LLM score must be between 0 and 10")
+    lower = min(9.5, int(numeric * 2) / 2)
+    return f"{lower:g}-{lower + 0.5:g}"
+
+
 def rubric_prompt_block(metric_rubrics: dict[str, Any] | None = None) -> str:
     """Build the calibrated scale and metric criteria for scoring prompts."""
     lines = [
-        "CALIBRATED 0-100 SCORE SCALE: use the five-point bands below as anchors.",
-        "Return a numeric score from 0 to 100; do not return a band label.",
+        "CALIBRATED LLM METRIC RATING: score every metric from 0 to 10, allowing decimals.",
+        "Return a numeric score from 0 to 10; do not return a band label.",
         "Choose scores consistently with the nearest band descriptor and metric-specific rubric.",
-        "Executed correctness/logical test pass rates determine those metrics; validated LLM scores assess other metrics, with completed analyzer fallback.",
+        "Provide a 0-10 assessment for every enabled metric. Executed correctness/logical test pass rates remain authoritative for the final score when available; retain the LLM rating as a separate assessment.",
         "Missing measurements are not zeros. Never invent evidence or task requirements.",
-        "GENERAL BAND DESCRIPTORS:",
+        "GENERAL 0-10 ANCHORS (each band is a half point):",
     ]
-    lines.extend(f"{band.label}: {band.descriptor}" for band in SCORE_BANDS)
+    lines.extend(f"{band.label}/10: {band.descriptor}" for band in LLM_SCORE_BANDS)
     if metric_rubrics:
         criteria = metric_rubrics.get("metrics", metric_rubrics)
         if isinstance(criteria, dict) and criteria:
