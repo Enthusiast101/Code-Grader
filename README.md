@@ -9,8 +9,8 @@ Rule-driven grading for C assignments using deterministic analyzers, a local LLM
 3. RSI pass 1 identifies whole-program issues supported by the source or evidence ledger.
 4. RSI pass 2 receives pass 1's complete response and rechecks it for omissions, false positives, unsupported claims, and incorrect locations.
 5. RSI pass 3 rechecks pass 2 in the same way. RSI passes are findings-only; they do not assign scores.
-6. One separate LLM scoring request evaluates metrics that are not defined by executed tests, using the task, rubric, numbered source, validated findings, and analyzer evidence.
-7. Executed correctness and logical test results determine those metrics by pass rate. Python validates other LLM scores and applies the configured weights; completed analyzers are fallbacks when an LLM score is unavailable. Score sources are shown in the report.
+6. One separate LLM scoring request rates every enabled metric from 0 to 10 using the task, rubric, numbered source, validated findings, and analyzer evidence.
+7. Executed correctness and logical test results determine those final metric scores by pass rate; the LLM's 0–10 ratings remain visible separately. Other validated LLM ratings are converted to the common 0–100 metric scale for weighted aggregation. Completed analyzers are fallbacks when an LLM rating is unavailable, and the final grade is out of 100.
 
 Each structured grading stage allows up to three bounded attempts: the initial request plus up to two corrective re-prompts when JSON or stage-specific evidence validation fails. The normal successful path remains five grading stages: one program-understanding stage, three sequential RSI passes, and one separate metric-scoring stage; only failed stages incur additional repair calls. Same-model compression requests are added only when an oversized semantic section or RSI history actually needs compression, and each compression payload gets one corrective retry. If the local model/server fails or returns an unusable response, the report remains renderable and uses a clearly identified evidence-based fallback; a fallback is never presented as a successful LLM evaluation.
 
@@ -42,7 +42,7 @@ If model compression does not reduce the payload, changes protected information,
 
 ## Metric scoring and reports
 
-Executed correctness and logical tests set their metrics to the observed pass rate; the LLM is not asked to rescore those outcomes. For other metrics, Python validates each LLM score is finite and within 0-100, then applies the configured weights. A completed deterministic analyzer score is used when a valid LLM score is unavailable. Inconclusive evidence remains unscored, and the overall grade is withheld when a required metric cannot be measured. Reports identify the source used for each score.
+The LLM returns a 0–10 rating for every enabled metric. Executed correctness and logical test pass rates remain authoritative for those final metric scores, while their LLM ratings are retained for comparison. For other metrics, Python validates the 0–10 rating, converts it to the common 0–100 metric scale, and applies the configured weights. A completed deterministic analyzer score is used when a valid LLM rating is unavailable. Inconclusive evidence remains unscored, and the overall grade is withheld when a required metric cannot be measured. Reports show both the final metric score and the LLM rating where available; the overall grade remains out of 100.
 
 Every metric explanation in the Gradio and text reports preserves up to three concise, metric-specific sentences (up to 60 words/420 characters) so the rationale can explain evidence, impact, and rubric alignment. Generic RSI filler and separate “Score basis” boilerplate are omitted. Successful compiler diagnostics such as `compiled=True; warnings=0; errors=0` are not emitted as syntax defects.
 
@@ -54,10 +54,10 @@ The root `rules.json` is not tied to addition or any other specific task. Before
 - Set `submission.source_file` to the submitted `.c` file.
 - Fill `problem_contract` only with requirements that genuinely apply to the task.
 - Optionally add instructor test files and set the relevant `metrics[].params.testset_path` fields.
-- Assignment test generation can infer the I/O contract from the natural-language problem, produce normal/boundary/adversarial inputs and a C reference oracle, then recheck the complete specification, oracle, and cases in sequential RSI passes. The reference is compiled and executed in the restricted Docker sandbox; generated suites are fingerprinted and frozen. If the assignment is ambiguous or the oracle fails validation, generation is marked unavailable rather than silently trusting expected outputs.
+- If a testcase file is omitted or its path is `null`, grading automatically attempts to generate normal and edge cases from the assignment contract. It creates a C reference oracle, rechecks the specification and cases in sequential RSI passes, then compiles and runs the reference in the restricted Docker sandbox to establish expected outputs. The generated suite is fingerprinted and frozen. If the assignment is ambiguous or generation/oracle validation fails, affected execution metrics remain unscored rather than receiving invented results.
 - Ensure enabled metric weights sum to `1.0`.
 
-The test-based analyzers (`io_tests`, `edge_case_runner`, `runtime_profile`, and runtime memory checks) use optional test paths. With a path set to `null` or omitted, the corresponding execution analyzer reports `inconclusive`/N/A rather than an artificial zero. Source-based analyzers and the LLM evaluation continue. GCC `-fanalyzer` can still inspect memory behavior without dynamic test inputs; Valgrind and ASan/UBSan require executable test cases.
+The test-based analyzers (`io_tests`, `edge_case_runner`, `runtime_profile`, and runtime memory checks) use instructor test paths when supplied and generated testsets otherwise. If automatic generation cannot produce a validated suite, affected execution metrics are inconclusive/N/A rather than an artificial zero. Source-based analyzers and the LLM evaluation can still run. GCC `-fanalyzer` can inspect memory behavior without dynamic test inputs; Valgrind and ASan/UBSan require executable test cases.
 
 Example test-case file:
 
@@ -72,42 +72,48 @@ Example test-case file:
 ]
 ```
 
-## Setup and launch
+## Installation, updates, and launch
 
-Use Python 3.11 or newer:
+Use Python 3.11 or newer. Run these commands from the repository root. Create and activate a virtual environment once per checkout (activate it again in each new terminal):
 
 ```bash
 python -m venv .venv
 # Linux/macOS: source .venv/bin/activate
 # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -e .
 ```
 
-Build the sandbox image with the project’s existing Dockerfile (the image tag
-matches `DOCKER_SANDBOX_IMAGE`):
+Build the sandbox image (the tag matches `DOCKER_SANDBOX_IMAGE`):
 
 ```bash
 docker build --no-cache -f Dockerfile.sandbox -t agent-sandbox:latest .
 ```
 
-Launch the existing Gradio application:
+### Updating an existing checkout
+
+After pulling new source changes, refresh the editable install and rebuild the sandbox image so Python dependencies and sandbox tools stay in sync:
+
+```bash
+git pull
+pip install -e .
+docker build --no-cache -f Dockerfile.sandbox -t agent-sandbox:latest .
+```
+
+The editable install points at the current checkout, so source changes take effect on the next application start. Re-run `pip install -e .` when project dependencies or packaging metadata change. Rebuild the Docker image when the sandbox Dockerfile or installed sandbox tools change.
+
+### Launch Gradio
 
 ```bash
 python -m grading_agent.ui.app
 ```
 
-Install/build the configured Docker sandbox image if Docker-backed analyzers are enabled. The Gradio app can start and supervise `llama-server` when the executable is available on `PATH`; otherwise start a compatible llama.cpp server separately using the same model and configured host/port.
+Keep Docker running when using Docker-backed analyzers. The Gradio app can start and supervise `llama-server` when the executable is available on `PATH`; otherwise start a compatible llama.cpp server separately using the same model and configured host/port.
 
 Run CLI grading:
 
 ```bash
-PYTHONPATH=src python -m grading_agent.main
-```
-
-Run Gradio:
-
-```bash
-PYTHONPATH=src python -m grading_agent.ui.app
+python -m grading_agent.main
 ```
 
 The default UI is `http://127.0.0.1:7860`. Set `GRADIO_HOST` and `GRADIO_PORT` to change the bind address.
