@@ -69,6 +69,14 @@ class RuleLoaderTests(unittest.TestCase):
             sum(metric["weight"] for metric in loaded["metrics"]), 1.0
         )
 
+    def test_metric_point_caps_define_normalized_grade_weights(self):
+        self.rules["metrics"][0].update({"max_points": 20, "weight": 0.6})
+        self.rules["metrics"][1].update({"max_points": 80, "weight": 0.4})
+        self._write_rules()
+        loaded = load_rules(self.rules_path, self.root)
+        self.assertEqual([metric["max_points"] for metric in loaded["metrics"]], [20.0, 80.0])
+        self.assertEqual([metric["weight"] for metric in loaded["metrics"]], [0.2, 0.8])
+
     def test_rejects_weights_that_do_not_sum_to_one(self):
         self.rules["metrics"][0]["weight"] = 0.7
         self._write_rules()

@@ -192,6 +192,7 @@ class DockerSandbox:
         stdin: str | None = None,
         *,
         timeout: float | None = None,
+        separate_stderr: bool = False,
     ) -> dict[str, Any]:
         """Run a command with a deadline and a captured-output limit.
 
@@ -200,6 +201,8 @@ class DockerSandbox:
         not treated as a shell script.
         """
         container = self._require_container()
+        if not isinstance(separate_stderr, bool):
+            raise TypeError("separate_stderr must be a boolean.")
 
         # ``timeout`` is retained as a backwards-compatible alias for older
         # callers; new code should use ``timeout_s``.
@@ -241,6 +244,7 @@ class DockerSandbox:
             raise TypeError("stdin must be a string or None.")
 
         input_filename = None
+        stderr_filename = None
         try:
             input_redirect = ""
             if stdin is not None:
@@ -257,14 +261,28 @@ class DockerSandbox:
                     *command,
                 ]
             )
-            # PIPESTATUS is a Bash feature. head stops output capture at the
-            # configured limit; the tested command's exit status is returned.
-            script = (
-                "set +e; "
-                f"{safe_command}{input_redirect} 2>&1 "
-                f"| head -c {self.max_output_bytes}; "
-                'status=${PIPESTATUS[0]}; exit "$status"'
-            )
+            if separate_stderr:
+                stderr_filename = f".grader-stderr-{uuid.uuid4().hex}.txt"
+                marker = f"\n__GRADER_STDERR_{uuid.uuid4().hex}__\n"
+                stderr_path = shlex.quote("/workspace/" + stderr_filename)
+                script = (
+                    "set +e; "
+                    f"{safe_command}{input_redirect} 2> {stderr_path} "
+                    f"| head -c {self.max_output_bytes}; "
+                    'status=${PIPESTATUS[0]}; '
+                    f"printf '%s' {shlex.quote(marker)}; "
+                    f"head -c {self.max_output_bytes} {stderr_path}; "
+                    f"rm -f -- {shlex.quote(stderr_filename)}; exit \"$status\""
+                )
+            else:
+                # PIPESTATUS is a Bash feature. head stops output capture at
+                # the configured limit; the tested command's exit status is returned.
+                script = (
+                    "set +e; "
+                    f"{safe_command}{input_redirect} 2>&1 "
+                    f"| head -c {self.max_output_bytes}; "
+                    'status=${PIPESTATUS[0]}; exit "$status"'
+                )
             result = container.exec_run(
                 ["/bin/bash", "-c", script],
                 workdir="/workspace",
@@ -275,22 +293,41 @@ class DockerSandbox:
                 demux=False,
             )
             output_bytes = result.output or b""
+            output = output_bytes.decode("utf-8", errors="replace")
+            stdout = stderr = None
+            if separate_stderr and marker in output:
+                stdout, stderr = output.split(marker, 1)
+            truncated = (
+                len(stdout.encode("utf-8")) >= self.max_output_bytes
+                or len((stderr or "").encode("utf-8")) >= self.max_output_bytes
+                if separate_stderr and stdout is not None else
+                len(output_bytes) >= self.max_output_bytes
+            ) or result.exit_code == 141
             return {
                 "exit_code": result.exit_code,
-                "output": output_bytes.decode("utf-8", errors="replace"),
+                "output": (stdout or "") + (stderr or "") if separate_stderr and stdout is not None else output,
+                **({"stdout": stdout, "stderr": stderr} if stdout is not None else {}),
                 "timed_out": result.exit_code in {124, 137},
-                "output_may_be_truncated": (
-                    len(output_bytes) >= self.max_output_bytes
-                    or result.exit_code == 141
-                ),
+                "output_may_be_truncated": truncated,
             }
         finally:
-            if input_filename is not None:
+            for temp_filename in (input_filename, stderr_filename):
+                if temp_filename is None:
+                    continue
                 try:
-                    self._exec_as_sandbox(["rm", "-f", "--", input_filename])
+                    self._exec_as_sandbox(["rm", "-f", "--", temp_filename])
                 except DockerException:
-                    # Container cleanup will remove this temporary input too.
+                    # Container cleanup will remove any remaining temporary file.
                     pass
+
+    def run_with_streams(
+        self,
+        command: str | Sequence[str],
+        timeout_s: float | None = None,
+        stdin: str | None = None,
+    ) -> dict[str, Any]:
+        """Run a command while preserving stdout and stderr as separate fields."""
+        return self.run(command, timeout_s=timeout_s, stdin=stdin, separate_stderr=True)
 
     def read_file(self, filename: str) -> str:
         """Read a regular file from the container workspace."""

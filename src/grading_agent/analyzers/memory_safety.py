@@ -178,6 +178,8 @@ def run_memory_safety(
                 "score_scale": "0-100",
                 "valgrind_score": None,
                 "asan_ubsan_score": None,
+                "valgrind_status": "not_run",
+                "asan_ubsan_status": "not_run",
                 "valgrind_results": [],
                 "asan_ubsan_results": [],
                 "scoring_note": "Runtime memory checks require instructor-provided test inputs; GCC -fanalyzer was still run.",
@@ -249,6 +251,7 @@ def run_memory_safety(
 
     sanitizer_results: list[dict[str, Any]] = []
     sanitizer_complete = True
+    sanitizer_status = "disabled" if not run_sanitizers else "completed"
     if run_sanitizers:
         asan_compile = sandbox.run(
             ["gcc", "-std=c11", "-g", "-O1", "-fno-omit-frame-pointer", "-fsanitize=address,undefined", "-no-pie", filename, "-o", "student_program_sanitized"],
@@ -256,7 +259,12 @@ def run_memory_safety(
         )
         if asan_compile["timed_out"] or asan_compile["exit_code"] != 0:
             sanitizer_complete = False
-            sanitizer_results.append({"status": "unavailable", "compiler_output": asan_compile["output"]})
+            sanitizer_status = "unavailable"
+            sanitizer_results.append({
+                "status": "unavailable", "compiler_output": asan_compile["output"],
+                "compile_exit_code": asan_compile["exit_code"],
+                "compile_timed_out": bool(asan_compile["timed_out"]),
+            })
         else:
             for index, case in enumerate(test_cases, 1):
                 run = sandbox.run(
@@ -281,6 +289,8 @@ def run_memory_safety(
                     "analysis_error": inconclusive,
                     "clean": not inconclusive and not sanitizer_error,
                 })
+            if not sanitizer_complete:
+                sanitizer_status = "inconclusive"
 
     sanitizer_score = None
     if run_sanitizers and sanitizer_complete and len(sanitizer_results) == len(test_cases):
@@ -290,12 +300,16 @@ def run_memory_safety(
     # Valgrind, preserving the rules.json contract. ASan/UBSan runs as
     # supplementary corroborating evidence and is exposed to the LLM/report,
     # but is not silently folded into the Valgrind subweight.
-    runtime_tools_score = vg_score
+    runtime_tools_score = (
+        min(vg_score, sanitizer_score)
+        if vg_score is not None and sanitizer_score is not None
+        else vg_score
+    )
     runtime_tools_complete = vg_score is not None
 
     return {
         "analyzer": "memory_safety", "status": "completed" if runtime_tools_complete else "inconclusive",
-        "score": round(vg_score, 2) if vg_score is not None else None,
+        "score": round(runtime_tools_score, 2) if runtime_tools_score is not None else None,
         "score_scale": "0-100",
         "compiled": True, "tests_total": len(test_cases), "tests_checked": len(vg_results),
         "gcc_analyzer": gcc_analyzer,
@@ -308,9 +322,14 @@ def run_memory_safety(
             "score_scale": "0-100",
             "valgrind_score": round(vg_score, 2) if vg_score is not None else None,
             "asan_ubsan_score": round(sanitizer_score, 2) if sanitizer_score is not None else None,
+            "valgrind_status": "completed" if vg_score is not None else "inconclusive",
+            "asan_ubsan_status": sanitizer_status,
             "valgrind_results": vg_results,
             "asan_ubsan_results": sanitizer_results,
-            "scoring_note": "The configured runtime-tools component score is the Valgrind score; ASan/UBSan is supplementary evidence and is not additionally weighted.",
+            "scoring_note": (
+                "The runtime-tools component is capped at the lower completed Valgrind or ASan/UBSan score; "
+                "ASan/UBSan findings therefore reduce the score, while unavailable sanitizer runs are reported separately."
+            ),
         },
         # Backward-compatible field for existing memory scoring helper.
         "results": vg_results,

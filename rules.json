@@ -11,7 +11,8 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.22,
+      "weight": 0.2,
+      "max_points": 20,
       "enabled": true,
       "params": {
         "testset_path": null
@@ -20,7 +21,8 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.08,
+      "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "flags": [
@@ -35,7 +37,8 @@
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.12,
+      "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "timeout_s": 15
@@ -44,7 +47,8 @@
     {
       "name": "modularity",
       "analyzer": "modularity",
-      "weight": 0.08,
+      "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "expect_helpers": false,
@@ -54,7 +58,8 @@
     {
       "name": "complexity",
       "analyzer": "complexity_estimator",
-      "weight": 0.08,
+      "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "max_cyclomatic": 8,
@@ -65,26 +70,17 @@
       "name": "logical",
       "analyzer": "edge_case_runner",
       "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "testset_path": null
       }
     },
     {
-      "name": "runtime_efficiency",
-      "analyzer": "runtime_profile",
-      "weight": 0.05,
-      "enabled": true,
-      "params": {
-        "testset_path": null,
-        "target_runtime_ms": 1000,
-        "repetitions": 3
-      }
-    },
-    {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.17,
+      "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "testset_path": null,
@@ -95,6 +91,7 @@
       "name": "readability",
       "analyzer": "readability",
       "weight": 0.1,
+      "max_points": 10,
       "enabled": true,
       "params": {
         "max_line_length": 100
@@ -103,8 +100,9 @@
     {
       "name": "originality",
       "analyzer": "similarity_flag",
-      "weight": 0.05,
-      "enabled": false,
+      "weight": 0.1,
+      "max_points": 10,
+      "enabled": true,
       "params": {
         "corpus_dir": "submissions",
         "flag_threshold": 0.85,

@@ -94,15 +94,20 @@ def llm_band_for_score(score: float) -> str:
 def rubric_prompt_block(metric_rubrics: dict[str, Any] | None = None) -> str:
     """Build the calibrated scale and metric criteria for scoring prompts."""
     lines = [
-        "CALIBRATED LLM METRIC RATING: score every metric from 0 to 10, allowing decimals.",
-        "Return a numeric score from 0 to 10; do not return a band label.",
-        "Choose scores consistently with the nearest band descriptor and metric-specific rubric.",
-        "Provide a 0-10 assessment for every enabled metric. Executed correctness/logical test pass rates remain authoritative for the final score when available; retain the LLM rating as a separate assessment.",
+        "CALIBRATED LLM METRIC RATING: rate each metric from 0 to 10, allowing decimals.",
+        "Return a numeric rating from 0 to 10; do not return a band label.",
+        "Convert the normalized rating to the metric's point cap as rating / 10 * maximum_points.",
+        "The overall grade is the sum of earned metric points and is out of 100. A metric marked diagnostic-only is excluded from that sum.",
+        "Executed correctness/logical test results and completed deterministic analyzer results override conflicting LLM ratings; retain LLM ratings separately for audit.",
         "Missing measurements are not zeros. Never invent evidence or task requirements.",
         "GENERAL 0-10 ANCHORS (each band is a half point):",
     ]
     lines.extend(f"{band.label}/10: {band.descriptor}" for band in LLM_SCORE_BANDS)
     if metric_rubrics:
+        max_points = metric_rubrics.get("max_points", {})
+        if isinstance(max_points, dict) and max_points:
+            lines.append("METRIC POINT CAPS:")
+            lines.extend(f"{name}: {points} points maximum" for name, points in max_points.items())
         criteria = metric_rubrics.get("metrics", metric_rubrics)
         if isinstance(criteria, dict) and criteria:
             lines.append("METRIC-SPECIFIC CRITERIA:")

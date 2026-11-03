@@ -1,0 +1,132 @@
+{
+  "problem": "Read n and target amount A, then n distinct positive integer coin denominations (1 <= n <= 100, 0 <= A <= 100000, each denomination <= 10000). Each denomination may be used an unlimited number of times. Print the minimum number of coins needed to make exactly A, or -1 if it is impossible, followed by a newline. A greedy strategy is not guaranteed to be optimal.",
+  "problem_contract": {
+    "description": "Find the minimum number of unlimited-use coins that sum exactly to A; return -1 when impossible. Greedy largest-first is not guaranteed to be optimal.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= n <= 100; 0 <= A <= 100000; distinct denominations are in [1, 10000].",
+    "output_rule": "One integer: minimum coin count, or -1; newline terminated."
+  },
+  "time_limit_s": 5.0,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": ".gradio_runs/a823775a6f10/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.22,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/06-dp-coin-change/testcases.json"
+      }
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.12,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/06-dp-coin-change/edge_cases.json"
+      }
+    },
+    {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.05,
+      "enabled": true,
+      "params": {
+        "testset_path": null,
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      }
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.17,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/06-dp-coin-change/memory_cases.json",
+        "run_sanitizers": true
+      }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
+    }
+  ],
+  "_run_metadata": {
+    "selection": {
+      "selected_from": "edited Gradio rules editor",
+      "uploaded_file_name": "rules.json",
+      "uploaded_file_sha256": "987055cf8b99e5773cf7e5254863cc21b0e3d425baaa13e2c5f199cf57a4ccd7",
+      "editor_base_sha256": "987055cf8b99e5773cf7e5254863cc21b0e3d425baaa13e2c5f199cf57a4ccd7",
+      "selected_rules_sha256": "8e6045fb86c3ede5b12a72ca4935f5cf1e349901a423abd8f9c07a732d37fa41",
+      "editor_was_stale": false
+    }
+  }
+}

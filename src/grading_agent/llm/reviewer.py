@@ -17,6 +17,7 @@ from grading_agent.config import settings
 from grading_agent.llm.evidence import build_evidence_ledger, validate_review_payload
 from grading_agent.llm.context_compressor import (
     COMPRESSION_EVENTS as _CONTEXT_COMPRESSION_EVENTS,
+    LLM_REQUEST_EVENTS as _LLM_REQUEST_EVENTS,
     compress_review_history, compress_semantic_sections,
 )
 from grading_agent.reporting.rationale import compact_rationale
@@ -25,6 +26,11 @@ from grading_agent.scoring.score_bands import (
     llm_score_from_band,
     rubric_prompt_block,
 )
+
+# Backwards-compatible alias used by callers that inspect the default evidence
+# budget. Runtime code reads settings dynamically below.
+MAX_EVIDENCE_CHARS = settings.LLM_MAX_EVIDENCE_CHARS
+REVIEW_MAX_TOKENS = settings.LLM_REVIEW_MAX_TOKENS
 
 _LAST_FITTED_SOURCE_LINES: ContextVar[set[int] | None] = ContextVar(
     "grading_last_fitted_source_lines", default=None
@@ -809,11 +815,38 @@ def _request_json(
         request_body["reasoning_effort"] = "none"
         request_body["reasoning_format"] = "none"
 
-    response = requests.post(
-        f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}",
-        json=request_body,
-        timeout=settings.runtime_value("LLAMA_REQUEST_TIMEOUT"),
-    )
+    request_started = time.perf_counter()
+    try:
+        response = requests.post(
+            f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}",
+            json=request_body,
+            timeout=settings.runtime_value("LLAMA_REQUEST_TIMEOUT"),
+        )
+    except Exception as exc:
+        request_ended = time.perf_counter()
+        request_events = _LLM_REQUEST_EVENTS.get()
+        if isinstance(request_events, list):
+            request_events.append({
+                "stage": schema_name,
+                "started_monotonic_seconds": request_started,
+                "ended_monotonic_seconds": request_ended,
+                "duration_seconds": round(request_ended - request_started, 6),
+                "clock": "monotonic",
+                "status": "request_failed", "error": f"{type(exc).__name__}: {exc}"[:300],
+            })
+        raise
+    request_ended = time.perf_counter()
+    request_events = _LLM_REQUEST_EVENTS.get()
+    if isinstance(request_events, list):
+        request_events.append({
+            "stage": schema_name,
+            "started_monotonic_seconds": request_started,
+            "ended_monotonic_seconds": request_ended,
+            "duration_seconds": round(request_ended - request_started, 6),
+            "clock": "monotonic",
+            "status": "response_received" if getattr(response, "ok", True) else "http_error",
+            "http_status": getattr(response, "status_code", None),
+        })
     if not response.ok:
         detail = (response.text or "").strip().replace("\n", " ")[:1_200]
         raise RuntimeError(
@@ -2049,6 +2082,7 @@ def _normalise_program_understanding(
                 continue
             start = item.get("line_start", item.get("start_line"))
             end = item.get("line_end", item.get("end_line"))
+            raw_start, raw_end = start, end
             start = (
                 start if isinstance(start, int) and not isinstance(start, bool)
                 and 1 <= start <= source_line_count and start in visible_source_lines
@@ -2059,7 +2093,15 @@ def _normalise_program_understanding(
                 and 1 <= end <= source_line_count and end in visible_source_lines
                 else start
             )
-            functions.append({"name": name, "role": role, "line_start": start, "line_end": end})
+            functions.append({
+                "name": name, "role": role, "line_start": start, "line_end": end,
+                "source_line_status": (
+                    "valid" if start is not None
+                    else "unresolved_invalid_reference" if raw_start not in (None, 0)
+                    else "unresolved_missing_reference"
+                ),
+                **({"rejected_line_end": raw_end} if raw_end not in (None, 0) and end is None else {}),
+            })
 
     intended_behavior = str(
         parsed.get("intended_behavior") or parsed.get("expected_behavior") or embedded.get("intended_behavior", "")
@@ -2735,7 +2777,8 @@ def _normalise_global_review(
             if severity not in {"critical", "high", "medium", "low", "info"}:
                 severity = "medium"
 
-            line_start = raw.get("line_start", raw.get("line", raw.get("line_number", raw.get("source_line"))))
+            raw_line_start = raw.get("line_start", raw.get("line", raw.get("line_number", raw.get("source_line"))))
+            line_start = raw_line_start
             line_end = raw.get("line_end", line_start)
             if (
                 isinstance(line_start, bool)
@@ -2753,6 +2796,11 @@ def _normalise_global_review(
                 line_end = line_start
             if line_start is not None and line_end is not None and line_end < line_start:
                 line_end = line_start
+            source_line_status = (
+                "valid" if line_start is not None
+                else "unresolved_invalid_reference" if raw_line_start is not None
+                else "unresolved_missing_reference"
+            )
             evidence_ids_raw = raw.get("evidence_ids", raw.get("evidence_refs", raw.get("evidence", [])))
             if isinstance(evidence_ids_raw, str):
                 evidence_ids_raw = [evidence_ids_raw]
@@ -2789,6 +2837,7 @@ def _normalise_global_review(
                 "description": description,
                 "line_start": line_start,
                 "line_end": line_end,
+                "source_line_status": source_line_status,
                 "code_excerpt": excerpt,
                 "evidence_ids": evidence_ids,
                 "confidence": round(confidence, 2),
@@ -2932,16 +2981,28 @@ def _call_grading_json(
             if attempt > 1:
                 diagnostics.append(f"{schema_name}: valid response recovered on attempt {attempt}/{max_attempts}.")
             return parsed, diagnostics, latencies, attempt
-        reason = (str(raw)[:900] if parsed is None else
-                  "JSON object failed stage-specific validation; required fields, types, ranges, or evidence anchors are invalid.")
+        if parsed is None:
+            reason = str(raw)[:900]
+        else:
+            excerpt = json.dumps(parsed, ensure_ascii=False)[:700]
+            reason = (
+                "JSON object failed stage-specific validation; required fields, types, ranges, or evidence anchors are invalid. "
+                f"Response excerpt: {excerpt}"
+            )
         diagnostics.append(f"{schema_name} attempt {attempt}/{max_attempts}: {reason or 'invalid response'}")
         if attempt < max_attempts:
+            repair_contract = (
+                "For program_understanding, include actual_behavior, intended_behavior, contract_alignment, and algorithm_overview as strings; "
+                "functions as objects with name/role and valid 1-based line anchors (use 0 only for unknown); and the remaining list fields as string arrays. "
+                if schema_name == "program_understanding" else ""
+            )
             working = [dict(item) for item in messages]
             working.append({"role": "assistant", "content": str(raw)[:3000] if raw else json.dumps(parsed, ensure_ascii=False)[:3000]})
             working.append({"role": "user", "content": (
                 f"REPAIR REQUIRED (attempt {attempt + 1}/{max_attempts}). Your previous answer was rejected: {reason}. "
                 "Re-read the original task and evidence. Return a corrected, complete JSON object matching the exact schema. "
-                "Do not omit required keys, invent evidence IDs, add prose, or change source line anchors. If evidence is insufficient, state that explicitly in the allowed fields."
+                + repair_contract
+                + "Do not omit required keys, invent evidence IDs, add prose, or change source line anchors. If evidence is insufficient, state that explicitly in the allowed fields."
             )})
     return None, diagnostics, latencies, len(latencies)
 
@@ -3952,6 +4013,8 @@ def evaluate_metrics_with_llm(
     enabled = [item for item in rules.get("metrics", []) if item.get("enabled", True)]
     context_compression_events: list[dict[str, Any]] = []
     compression_context_token = _CONTEXT_COMPRESSION_EVENTS.set(context_compression_events)
+    llm_request_events: list[dict[str, Any]] = []
+    request_context_token = _LLM_REQUEST_EVENTS.set(llm_request_events)
     ledger = build_evidence_ledger(report, rules)
     report["evidence_ledger"] = ledger
 
@@ -4296,9 +4359,9 @@ def evaluate_metrics_with_llm(
         float(event.get("latency_seconds", 0.0) or 0.0)
         for event in context_compression_events if isinstance(event, dict)
     )
-    total_llm_seconds = (
-        understanding_seconds + sum(request_latencies) + sum(finding_validation_latencies)
-        + sum(metric_score_latencies) + compression_seconds
+    total_llm_seconds = sum(
+        float(event.get("duration_seconds", 0.0) or 0.0)
+        for event in llm_request_events if isinstance(event, dict)
     )
     result = {
         "status": status,
@@ -4339,7 +4402,9 @@ def evaluate_metrics_with_llm(
             "metric_scoring_requests": metric_score_latencies,
             "context_compression": round(compression_seconds, 3),
             "total_llm": round(total_llm_seconds, 3),
+            "total_llm_requests": round(total_llm_seconds, 6),
         },
+        "llm_request_events": llm_request_events,
         "context_compression": {
             "enabled": bool(settings.runtime_value("LLM_CONTEXT_COMPRESSION_ENABLED")),
             "status": compression_status,
@@ -4372,6 +4437,7 @@ def evaluate_metrics_with_llm(
             "described as proof that no defects exist."
         ),
     }
+    _LLM_REQUEST_EVENTS.reset(request_context_token)
     _CONTEXT_COMPRESSION_EVENTS.reset(compression_context_token)
     return result
 

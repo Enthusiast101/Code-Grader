@@ -52,6 +52,30 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
     rsi_summary = report.get("llm_rsi_evaluation", {})
     if isinstance(rsi_summary, dict) and rsi_summary:
         lines.extend(["", "EVIDENCE SUMMARY", "-" * 72, evidence_summary(report)])
+    generation = report.get("test_generation", {})
+    if isinstance(generation, dict) and generation.get("status") not in (None, "not_required"):
+        lines.extend(["", "ASSIGNMENT TEST GENERATION", "-" * 72,
+                      f"Status: {generation.get('status', 'unknown')}"])
+        if generation.get("source"):
+            lines.append(f"Suite source: {generation['source']}")
+        total = generation.get("total_test_count")
+        if isinstance(total, int):
+            instructor = generation.get("instructor_test_count", 0)
+            edge = generation.get("edge_test_count", 0)
+            generated_count = max(0, total - instructor) if isinstance(instructor, int) else total
+            lines.append(f"Cases: {total} total ({generated_count} generated, {instructor} instructor); {edge} edge cases")
+        generation_events = generation.get("request_events", [])
+        if isinstance(generation_events, list) and generation_events:
+            lines.append(f"Generation requests: {len(generation_events)}")
+            for event in generation_events:
+                if isinstance(event, dict) and isinstance(event.get("duration_seconds"), (int, float)):
+                    lines.append(
+                        f"  {event.get('stage', 'test generation')}: {event['duration_seconds']:.3f} s "
+                        f"({event.get('status', 'unknown')}; monotonic {event.get('started_monotonic_seconds', 'n/a')} → {event.get('ended_monotonic_seconds', 'n/a')})"
+                    )
+        detail = generation.get("error") or generation.get("reason")
+        if detail:
+            lines.append(f"Reason: {detail}")
     lines.extend(["", "METRIC RESULTS", "-" * 72])
 
     provenance = report.get("rules_provenance", {})
@@ -84,25 +108,84 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         result = report.get(name, {})
         score = result.get("score")
         status = result.get("status", "completed" if score is not None else "inconclusive")
-        score_text = f"{float(score):.2f}/100" if isinstance(score, (int, float)) else "N/A"
+        max_points = float(metric.get("max_points", result.get("max_points", float(metric["weight"]) * 100.0)))
+        score_points = result.get("score_points")
+        if not metric.get("grade_contribution", True):
+            score_text = "diagnostic only"
+        elif isinstance(score_points, (int, float)):
+            score_text = f"{float(score_points):.2f}/{max_points:g}"
+        elif isinstance(score, (int, float)):
+            score_text = f"{float(score) * max_points / 100.0:.2f}/{max_points:g}"
+        else:
+            score_text = f"N/A (max {max_points:g})"
         lines.append(f"{name:22s} weight={metric['weight']:.3f}  score={score_text:12s} status={status}")
         llm_rating = result.get("llm_score_10")
         if isinstance(llm_rating, (int, float)) and not isinstance(llm_rating, bool):
-            lines.append(f"  LLM metric rating: {float(llm_rating):.2f}/10")
+            rating_label = "LLM metric rating" if result.get("score_origin") == "llm" else "LLM proposed rating (not used for score)"
+            lines.append(f"  {rating_label}: {float(llm_rating):.2f}/10")
         rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  Assessment: {rationale}")
         lines.append(f"  Score source: {score_source_label(result.get('score_origin'))}")
+        lines.append(f"  Evidence class: {result.get('score_evidence_class', 'unavailable')}")
+        lines.append(f"  Analyzer status: {result.get('status', 'unknown')}")
+        provenance = result.get("score_provenance", {})
+        if isinstance(provenance, dict):
+            available = provenance.get("available_evidence", [])
+            missing = provenance.get("missing_evidence", [])
+            if available:
+                lines.append("  Evidence used: " + "; ".join(str(item) for item in available))
+            if missing:
+                lines.append("  Evidence missing: " + "; ".join(str(item) for item in missing))
+        if result.get("unvalidated_llm_proposal") is not None:
+            lines.append(f"  Unvalidated LLM proposal: {result['unvalidated_llm_proposal']:.2f}/10 (not used for score)")
         if name == "correctness":
             tests_total = result.get("tests_total", 0)
             if tests_total:
                 lines.append(f"  Tests: {result.get('tests_passed', 0)}/{tests_total} passed")
             else:
                 lines.append("  Tests: not configured; execution correctness was not measured by test cases")
+        elif name == "logical":
+            tests_total = result.get("tests_total", 0)
+            if tests_total:
+                lines.append(f"  Edge-case tests: {result.get('tests_passed', 0)}/{tests_total} passed; this score covers the configured logical suite.")
+            else:
+                lines.append("  Edge-case tests: not configured; logical behavior was not measured by execution")
         elif name == "memory_safety":
             runtime = result.get("runtime_tools", {})
-            lines.append(f"  Valgrind score: {runtime.get('valgrind_score', 'N/A')}")
-            lines.append(f"  ASan/UBSan score (supplementary): {runtime.get('asan_ubsan_score', 'N/A')}")
+            lines.append(f"  Valgrind status/score: {runtime.get('valgrind_status', runtime.get('status', 'unknown'))} / {runtime.get('valgrind_score', 'N/A')}")
+            lines.append(f"  ASan/UBSan status/score: {runtime.get('asan_ubsan_status', 'unknown')} / {runtime.get('asan_ubsan_score', 'N/A')}")
+            lines.append(f"  Dynamic verification: {'completed' if runtime.get('valgrind_status') == 'completed' else 'not completed'}")
+            if runtime.get("scoring_note"):
+                lines.append(f"  Runtime scoring: {runtime['scoring_note']}")
+            gcc_audit = result.get("gcc_analyzer", {})
+            if isinstance(gcc_audit, dict):
+                lines.append(f"  GCC -fanalyzer status/findings: {gcc_audit.get('status', 'unknown')} / {len(gcc_audit.get('findings', []))}")
+        elif name == "runtime_efficiency":
+            if result.get("compile_elapsed_ms") is not None:
+                lines.append(f"  Compile duration: {result['compile_elapsed_ms']:.3f} ms ({result.get('compile_status', 'unknown')})")
+            for label, key in (("Average runtime", "mean_runtime_ms"), ("Median runtime", "median_runtime_ms"), ("Maximum runtime", "max_runtime_ms")):
+                if isinstance(result.get(key), (int, float)):
+                    lines.append(f"  {label}: {result[key]:.3f} ms")
+            if isinstance(result.get("median_per_test_runtime_ms"), (int, float)):
+                lines.append(f"  Median of per-test medians: {result['median_per_test_runtime_ms']:.3f} ms")
+            if result.get("target_runtime_ms") is not None:
+                compliance = "met" if result.get("target_runtime_met") is True else "not met" if result.get("target_runtime_met") is False else "not measured"
+                lines.append(f"  Target runtime: {result['target_runtime_ms']:.3f} ms ({compliance}; {result.get('target_runtime_basis', 'configured target')})")
+            if result.get("failures"):
+                lines.append(f"  Runtime failures/timeouts: {len(result['failures'])}")
+            if result.get("measurement_note"):
+                lines.append(f"  Measurement note: {result['measurement_note']}")
+        elif name == "syntax":
+            if result.get("exit_code") is not None:
+                lines.append(f"  Compiler exit code: {result['exit_code']}; warnings: {result.get('warning_count', 0)}; errors: {result.get('error_count', 0)}")
+            if result.get("compile_elapsed_ms") is not None:
+                lines.append(f"  Compiler duration: {result['compile_elapsed_ms']:.3f} ms")
+            lines.append(f"  Compiler streams separated: {result.get('compiler_streams_separated', False)}")
+            for label, key in (("stdout", "compiler_stdout"), ("stderr", "compiler_stderr")):
+                stream = result.get(key)
+                if isinstance(stream, str) and stream:
+                    lines.append(f"  Compiler {label}: {stream[:1_000]}")
         elif name == "originality":
             lines.append(f"  Similarity flagged for review: {result.get('flagged_for_human_review', 'N/A')}")
 
@@ -121,8 +204,14 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         lines.append(f"Final grade: {scoring.get('score'):.2f}/100")
         for item in scoring.get("contributions", []):
             lines.append(
-                f"  {item['metric']}: {item['score']:.2f} × {item['weight']:.3f} = {item['contribution']:.2f}"
+                f"  {item['metric']}: {item.get('points_awarded', item['score']):.2f}/{item.get('max_points', 100):g} "
+                f"(normalized {item['score']:.2f}/100 × {item['weight']:.3f}) = {item['contribution']:.2f} "
+                f"[{item.get('score_origin', 'unknown')}; {item.get('evidence_class', 'unknown')}]"
             )
+        contributions = scoring.get("contributions", [])
+        if isinstance(contributions, list) and contributions:
+            contribution_total = sum(float(item.get("contribution", 0.0)) for item in contributions)
+            lines.append(f"  Weighted points sum: {contribution_total:.2f}; enabled weights sum: {scoring.get('weights_sum', 'unknown')}")
     else:
         final_score = scoring.get("score")
         lines.append(f"Final grade: {float(final_score):.2f}/100" if isinstance(final_score, (int, float)) else "Final grade: N/A — required grading evidence is incomplete.")
@@ -165,6 +254,18 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                 + str(metric_scoring.get("status", "unknown"))
             )
 
+    understanding_meta = report.get("program_understanding_metadata", {})
+    if not understanding_meta and isinstance(rsi_summary, dict):
+        understanding_meta = rsi_summary.get("program_understanding_metadata", {})
+    if isinstance(understanding_meta, dict) and understanding_meta:
+        lines.extend(["", "PROGRAM UNDERSTANDING VALIDATION", "-" * 72])
+        lines.append(f"Status: {understanding_meta.get('status', 'unknown')}; fallback used: {understanding_meta.get('fallback_used', False)}")
+        if understanding_meta.get("error"):
+            lines.append("Validation error: " + str(understanding_meta["error"]))
+        diagnostics = understanding_meta.get("diagnostics", [])
+        if isinstance(diagnostics, list):
+            lines.extend("Diagnostic: " + str(item)[:500] for item in diagnostics[:4])
+
     understanding = report.get("program_understanding", {})
     if isinstance(understanding, dict) and understanding.get("program_purpose"):
         lines.extend(["", "PROGRAM UNDERSTANDING", "-" * 72])
@@ -183,7 +284,8 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                     location = ""
                     if function.get("line_start") is not None:
                         location = f" (lines {function.get('line_start')}-{function.get('line_end') or function.get('line_start')})"
-                    lines.append(f"  - {function.get('name')}{location}: {function.get('role', '')}")
+                    unresolved = " [source line unresolved]" if function.get("source_line_status", "valid" if location else "unresolved") != "valid" else ""
+                    lines.append(f"  - {function.get('name')}{location}{unresolved}: {function.get('role', '')}")
         for label, key in (("Execution flow", "execution_flow"), ("Assumptions", "assumptions"), ("Ambiguities", "ambiguities")):
             values = understanding.get(key, [])
             if values:
@@ -207,6 +309,8 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                 f"[{finding.get('severity', 'unknown').upper()}] "
                 f"{finding.get('metric', 'unmapped')} — {finding.get('title', 'Issue')} ({location})"
             )
+            if finding.get("source_line_status", "valid" if finding.get("line_start") is not None else "unresolved") != "valid":
+                lines.append(f"  Source-line anchor: {finding.get('source_line_status')}; review location is unresolved.")
             lines.append("  " + str(finding.get("description", "")))
             if refs:
                 lines.append("  Evidence: " + refs)
@@ -255,7 +359,11 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         if timings.get("llm_server_setup_seconds") is not None:
             lines.append(f"LLM server readiness/startup: {timings['llm_server_setup_seconds']:.3f} s")
         if timings.get("llm_request_seconds") is not None:
-            lines.append(f"LLM requests: {timings['llm_request_seconds']:.3f} s")
+            lines.append(f"Reviewer LLM API requests: {timings['llm_request_seconds']:.3f} s")
+        if timings.get("test_generation_request_seconds") is not None:
+            lines.append(f"Test-generation LLM requests: {timings['test_generation_request_seconds']:.3f} s")
+        if timings.get("total_llm_request_seconds") is not None:
+            lines.append(f"Total LLM API request time (test generation + review): {timings['total_llm_request_seconds']:.3f} s")
         if timings.get("total_through_scoring_seconds") is not None:
             lines.append(f"Total through scoring: {timings['total_through_scoring_seconds']:.3f} s")
         for metric_name, elapsed in timings.get("analyzer_metric_seconds", {}).items():
@@ -266,6 +374,18 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
     if isinstance(rsi, dict):
         lines.extend(["", "LLM PROGRAM UNDERSTANDING + RSI", "-" * 72])
         lines.append(f"Status: {rsi.get('status', 'unavailable')}")
+        llm_metric_items = rsi.get("metrics", [])
+        llm_metric_items = [item for item in llm_metric_items if isinstance(item, dict)] if isinstance(llm_metric_items, list) else []
+        if llm_metric_items:
+            lines.extend(["", "LLM EVIDENCE-BASED RSI", "-" * 72])
+            for item in llm_metric_items:
+                proposed = item.get("score")
+                scale = item.get("score_scale", "0-10" if item.get("origin", "llm") == "llm" else "0-100")
+                if isinstance(proposed, (int, float)) and not isinstance(proposed, bool):
+                    divisor = 10.0 if scale == "0-10" else 100.0
+                    lines.append(f"{item.get('name', 'unknown')}: {float(proposed):.2f}/{divisor:g} (LLM proposal)")
+                    if item.get("rationale"):
+                        lines.append("  Assessment: " + compact_rationale(item["rationale"], max_words=45, max_chars=300))
         if rsi.get("llm_calls") is not None:
             lines.append(
                 f"LLM calls: {rsi.get('llm_calls')} "
@@ -275,18 +395,29 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         latency = rsi.get("latency_seconds", {})
         if isinstance(latency, dict):
             if isinstance(latency.get("program_understanding"), (int, float)):
-                lines.append(f"Program understanding: {latency['program_understanding']:.3f} s")
-            for index, duration in enumerate(latency.get("rsi_requests", []), start=1):
-                if isinstance(duration, (int, float)):
-                    lines.append(f"RSI pass {index}: {duration:.3f} s")
-            for index, duration in enumerate(latency.get("finding_validation_requests", []), start=1):
-                if isinstance(duration, (int, float)):
-                    lines.append(f"Post-RSI finding validation {index}: {duration:.3f} s")
-            for index, duration in enumerate(latency.get("metric_scoring_requests", []), start=1):
-                if isinstance(duration, (int, float)):
-                    lines.append(f"Metric-scoring request {index}: {duration:.3f} s")
-            if isinstance(latency.get("total_llm"), (int, float)):
-                lines.append(f"Total LLM time: {latency['total_llm']:.3f} s")
+                lines.append(f"Program-understanding stage elapsed: {latency['program_understanding']:.3f} s")
+            request_events = rsi.get("llm_request_events", [])
+            if isinstance(request_events, list):
+                request_total = 0.0
+                lines.append(f"Recorded LLM API requests: {len(request_events)}")
+                for event in request_events:
+                    if not isinstance(event, dict):
+                        continue
+                    duration = event.get("duration_seconds")
+                    if not isinstance(duration, (int, float)):
+                        continue
+                    request_total += float(duration)
+                    attempt = f" attempt {event['attempt']}" if event.get("attempt") is not None else ""
+                    status = f" ({event.get('status')})" if event.get("status") else ""
+                    lines.append(
+                        f"  {event.get('stage', 'LLM stage')}{attempt}: {duration:.3f} s{status}; "
+                        f"monotonic {event.get('started_monotonic_seconds', 'n/a')} → {event.get('ended_monotonic_seconds', 'n/a')}"
+                    )
+                lines.append(f"Reviewer-stage LLM API request total: {request_total:.3f} s")
+            elif isinstance(latency.get("total_llm"), (int, float)):
+                lines.append(f"Reviewer-stage LLM API request total: {latency['total_llm']:.3f} s")
+            if isinstance(latency.get("context_compression"), (int, float)):
+                lines.append(f"Context-compression stage elapsed: {latency['context_compression']:.3f} s (included request time is listed above)")
         if rsi.get("error"):
             lines.append("LLM error: " + str(rsi.get("error"))[:1_000])
         for diagnostic in rsi.get("diagnostics", [])[:4]:

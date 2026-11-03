@@ -121,15 +121,28 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
         result = report.get(name, {})
         result = result if isinstance(result, dict) else {}
         metric_score = result.get("score")
-        metric_score_label = f"{number(metric_score):.2f}/100" if isinstance(metric_score, (int, float)) else "N/A"
+        max_points = number(metric.get("max_points", result.get("max_points", number(metric.get("weight")) * 100.0)))
+        if not metric.get("grade_contribution", True):
+            metric_score_label = "diagnostic only"
+        elif isinstance(result.get("score_points"), (int, float)):
+            metric_score_label = f"{number(result['score_points']):.2f}/{max_points:g}"
+        elif isinstance(metric_score, (int, float)):
+            metric_score_label = f"{number(metric_score) * max_points / 100.0:.2f}/{max_points:g}"
+        else:
+            metric_score_label = f"N/A (max {max_points:g})"
         source_label = score_source_label(result.get("score_origin"))
         lines.append(f"- **{name}: {metric_score_label}** _(source: {source_label})_")
+        lines.append(f"  - Evidence class: {result.get('score_evidence_class', 'unavailable')}; analyzer status: {result.get('status', 'unknown')}")
         llm_rating = result.get("llm_score_10")
         if isinstance(llm_rating, (int, float)) and not isinstance(llm_rating, bool):
-            lines.append(f"  - LLM rating: {number(llm_rating):.2f}/10")
+            rating_label = "LLM rating" if result.get("score_origin") == "llm" else "LLM proposal (not used for score)"
+            lines.append(f"  - {rating_label}: {number(llm_rating):.2f}/10")
         rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  - Assessment: {rationale}")
+        provenance_detail = result.get("score_provenance", {})
+        if isinstance(provenance_detail, dict) and provenance_detail.get("missing_evidence"):
+            lines.append("  - Missing evidence: " + "; ".join(str(item) for item in provenance_detail["missing_evidence"]))
         if name in {"correctness", "logical"}:
             rows = result.get("results", [])
             valid_rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get("passed"), bool)] if isinstance(rows, list) else []

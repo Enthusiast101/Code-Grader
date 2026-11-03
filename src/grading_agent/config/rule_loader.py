@@ -314,6 +314,27 @@ def load_rules(
                 f"Weight for metric '{name}' must be between 0 and 1."
             )
 
+        max_points = metric.get("max_points", float(weight) * 100.0)
+        if (
+            isinstance(max_points, bool)
+            or not isinstance(max_points, (int, float))
+            or not math.isfinite(max_points)
+            or not 0 <= max_points <= 100
+        ):
+            raise RuleValidationError(
+                f"Maximum points for metric '{name}' must be between 0 and 100."
+            )
+        grade_contribution = metric.get("grade_contribution", True)
+        if not isinstance(grade_contribution, bool):
+            raise RuleValidationError(
+                f"'grade_contribution' for metric '{name}' must be boolean."
+            )
+        normalized_weight = float(max_points) / 100.0 if grade_contribution else 0.0
+        if enabled and grade_contribution and max_points <= 0:
+            raise RuleValidationError(
+                f"Graded metric '{name}' must have a positive maximum point value."
+            )
+
         params = metric.get("params", {})
         if not isinstance(params, dict):
             raise RuleValidationError(
@@ -323,7 +344,9 @@ def load_rules(
         normalized = {
             "name": name,
             "analyzer": analyzer,
-            "weight": float(weight),
+            "weight": normalized_weight,
+            "max_points": float(max_points),
+            "grade_contribution": grade_contribution,
             "enabled": enabled,
             "params": dict(params),
         }
@@ -341,8 +364,8 @@ def load_rules(
                         )
                     normalized["params"][timeout_key] = timeout_value
 
-        if enabled:
-            enabled_weights.append(float(weight))
+        if enabled and grade_contribution:
+            enabled_weights.append(normalized_weight)
 
         if enabled and analyzer in {"io_tests", "memory_safety", "edge_case_runner", "runtime_profile"}:
             # Test data is assignment-specific, so a reusable rules template

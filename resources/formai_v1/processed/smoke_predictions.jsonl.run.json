@@ -1,0 +1,9 @@
+{
+  "input_records": 4,
+  "unique_programs": 4,
+  "prediction_records": 4,
+  "missing_prediction_records": 0,
+  "max_samples": 4,
+  "complete_input_processed": true,
+  "mode": "llm_only"
+}

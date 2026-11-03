@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 from grading_agent.sandbox.docker_sandbox import DockerSandbox
@@ -23,7 +24,16 @@ def run_compiler_diagnostics(
         raise ValueError("compiler flags must be a list of strings.")
 
     sandbox.write_file(filename, source_code)
-    result = sandbox.run(["gcc", *flags, "-fsyntax-only", filename], timeout_s=timeout_s)
+    compile_started = time.perf_counter()
+    command = ["gcc", *flags, "-fsyntax-only", filename]
+    stream_runner = getattr(sandbox, "run_with_streams", None)
+    if callable(stream_runner):
+        result = stream_runner(command, timeout_s=timeout_s)
+        streams_separated = isinstance(result.get("stdout"), str) and isinstance(result.get("stderr"), str)
+    else:
+        result = sandbox.run(command, timeout_s=timeout_s)
+        streams_separated = False
+    compile_elapsed_ms = round((time.perf_counter() - compile_started) * 1000.0, 3)
     output = result["output"]
     warnings = [line.strip() for line in output.splitlines() if "warning:" in line.lower()]
     errors = [line.strip() for line in output.splitlines() if "error:" in line.lower()]
@@ -35,11 +45,15 @@ def run_compiler_diagnostics(
         "compiled": compiled,
         "exit_code": result["exit_code"],
         "timed_out": timed_out,
+        "compile_elapsed_ms": compile_elapsed_ms,
         "warning_count": len(warnings),
         "warnings": warnings,
         "error_count": len(errors),
         "errors": errors,
         "compiler_output": output,
+        "compiler_stdout": result.get("stdout") if streams_separated else None,
+        "compiler_stderr": result.get("stderr") if streams_separated else None,
+        "compiler_streams_separated": streams_separated,
         "score": round(score, 2) if not timed_out else None,
         "score_scale": "0-100",
     }
