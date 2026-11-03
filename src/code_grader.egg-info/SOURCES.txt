@@ -45,6 +45,9 @@ src/grading_agent/sandbox/docker_sandbox.py
 src/grading_agent/scoring/__init__.py
 src/grading_agent/scoring/memory_safety.py
 src/grading_agent/scoring/overall.py
+src/grading_agent/scoring/score_bands.py
+src/grading_agent/testing/__init__.py
+src/grading_agent/testing/test_generation.py
 src/grading_agent/ui/__init__.py
 src/grading_agent/ui/app.py
 tests/test_analyzer_registry.py
@@ -58,6 +61,7 @@ tests/test_generic_rules.py
 tests/test_global_rsi.py
 tests/test_grading_fallback.py
 tests/test_gradio_runtime_options.py
+tests/test_incomplete_report_rendering.py
 tests/test_io_analyzer_status.py
 tests/test_llama_server_context.py
 tests/test_memory_safety_scoring.py
@@ -68,6 +72,8 @@ tests/test_pristine_llm_path.py
 tests/test_qwen35_default_model.py
 tests/test_reviewer_context.py
 tests/test_rule_loader.py
+tests/test_score_bands.py
 tests/test_source_analyzers.py
+tests/test_test_generation.py
 tests/test_text_report.py
 tests/test_valgrind_capture.py
