@@ -97,7 +97,7 @@ def review_response(iteration: int) -> dict:
     return response
 
 
-def metric_score_response(correctness: int = 95, syntax: int = 94) -> dict:
+def metric_score_response(correctness: float = 9.5, syntax: float = 9.4) -> dict:
     # The production scoring format is deliberately compact to avoid token-cap truncation.
     return {"scores": {"correctness": correctness, "syntax": syntax}}
 
@@ -109,7 +109,7 @@ class GlobalRSITests(unittest.TestCase):
             review_response(1),
             review_response(2),
             review_response(3),
-            metric_score_response(95, 94),
+            metric_score_response(9.5, 9.4),
         ]
         captured: list[list[dict[str, str]]] = []
 
@@ -132,8 +132,8 @@ class GlobalRSITests(unittest.TestCase):
         self.assertIn("Do not provide metric scores", captured[1][1]["content"])
         self.assertIn("Do not provide metric scores", captured[3][1]["content"])
         self.assertIn("final_validated_findings", captured[4][1]["content"])
-        self.assertEqual(result["metrics"][0]["score"], 95)
-        self.assertEqual(result["metrics"][1]["score"], 94)
+        self.assertEqual(result["metrics"][0]["score"], 9.5)
+        self.assertEqual(result["metrics"][1]["score"], 9.4)
         self.assertEqual(report["program_understanding"]["functions"][0]["name"], "add")
         self.assertEqual(report["program_understanding"]["actual_behavior"], "Reads two integers and prints their sum.")
         self.assertEqual(report["program_understanding"]["intended_behavior"], "Read two integers and print their sum.")
@@ -143,9 +143,11 @@ class GlobalRSITests(unittest.TestCase):
 
         apply_metric_scores(RULES["metrics"], report, result)
         overall = calculate_overall_score(RULES["metrics"], report)
-        self.assertEqual(report["correctness"]["score"], 95)
-        self.assertEqual(report["syntax"]["score"], 94)
-        self.assertEqual(overall["score"], 94.6)
+        self.assertEqual(report["correctness"]["score"], 100)
+        self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
+        self.assertEqual(report["syntax"]["score"], 100)
+        self.assertEqual(report["syntax"]["score_origin"], "deterministic_analyzer")
+        self.assertEqual(overall["score"], 100)
 
     def test_grading_request_can_explicitly_disable_reasoning(self) -> None:
         class FakeResponse:
@@ -363,7 +365,7 @@ class GlobalRSITests(unittest.TestCase):
         partial_scores = {
             "scores": {
                 "correctness": {
-                    "score": 88,
+                    "score": 8.8,
                     "rationale": "Functional behavior matches the supplied contract.",
                     "zero_score_reason": "",
                     "confidence": 0.9,
@@ -385,7 +387,7 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(result["status"], "completed_with_warnings")
         self.assertEqual(result["llm_calls"], 3)
         self.assertEqual(result["iterations_completed"], 1)
-        self.assertEqual(result["metrics"][0]["score"], 88)
+        self.assertEqual(result["metrics"][0]["score"], 8.8)
         self.assertEqual(len(captured), 3)
         self.assertTrue(any("Metric scoring response omitted" in item for item in result["diagnostics"]))
 
@@ -628,14 +630,14 @@ int main(void) {
                 {"name": "syntax", "enabled": True, "weight": 0.3},
             ],
         }
-        response = {"scores": {"correctness": 75, "logical": 80, "syntax": 100}}
+        response = {"scores": {"correctness": 7.5, "logical": 8.0, "syntax": 10.0}}
         with patch.object(reviewer, "_request_json", return_value=(response, json.dumps(response))):
             scores, diagnostics, _latency, _calls = reviewer._score_metrics_after_rsi(
                 report, rules, understanding_response(), {"findings": [], "overall_assessment": "No findings."}, [],
             )
         self.assertIsNone(scores["correctness"]["score"])
         self.assertIsNone(scores["logical"]["score"])
-        self.assertEqual(scores["syntax"]["score"], 100)
+        self.assertEqual(scores["syntax"]["score"], 10.0)
         self.assertTrue(any("marked unmeasured" in message for message in diagnostics))
 
     def test_unavailable_finding_adjudicator_fails_closed(self) -> None:
@@ -705,7 +707,7 @@ int main(void) {
             }],
             "summary": "The finding is directly supported by source line 5 and the task contract.",
         }
-        responses = [understanding_response(), finding_response, validation_response, metric_score_response(55, 100)]
+        responses = [understanding_response(), finding_response, validation_response, metric_score_response(5.5, 10.0)]
         schemas_seen = []
         def fake_request(messages, *, max_tokens=None, enable_thinking=None, response_schema=None, schema_name=None, **kwargs):
             schemas_seen.append(schema_name)
@@ -829,7 +831,7 @@ int main(void) {
         self.assertEqual(result["status"], "completed_with_warnings")
         self.assertEqual(result["iterations_completed"], 2)
         self.assertEqual(len(result["metrics"]), len(RULES["metrics"]))
-        self.assertTrue(all(0 <= item["score"] <= 100 for item in result["metrics"]))
+        self.assertTrue(all(item["score"] is None or 0 <= item["score"] <= 100 for item in result["metrics"]))
         self.assertTrue(all(item["origin"] != "llm" for item in result["metrics"]))
         self.assertEqual(result["program_understanding"]["status"], "fallback")
 

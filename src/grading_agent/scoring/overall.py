@@ -7,6 +7,7 @@ completed analyzers are the fallback when an LLM score is unavailable.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from grading_agent.reporting.rationale import compact_rationale
@@ -31,6 +32,10 @@ def apply_metric_scores(
         item.get("name"): item for item in llm_metrics
         if isinstance(item, dict) and item.get("name")
     } if isinstance(llm_metrics, list) else {}
+    deterministic_metrics = {
+        "io_tests", "edge_case_runner", "runtime_profile", "memory_safety",
+        "compiler_diagnostics",
+    }
 
     for metric in metrics:
         if not metric.get("enabled", True):
@@ -41,6 +46,10 @@ def apply_metric_scores(
             result = {}
             report[name] = result
 
+        analyzer_name = str(result.get("analyzer") or metric.get("analyzer") or "")
+        result.setdefault("weight", metric.get("weight"))
+        result.setdefault("max_points", metric.get("max_points", float(metric.get("weight", 0.0)) * 100.0))
+        result.setdefault("grade_contribution", metric.get("grade_contribution", True))
         analyzer_score = _valid_score(result.get("score"))
         if str(result.get("status", "")).casefold() != "completed":
             analyzer_score = None
@@ -55,8 +64,16 @@ def apply_metric_scores(
                 and 0.0 <= float(candidate) <= 10.0
             ):
                 llm_score_10 = float(candidate)
+        proposed_score_10 = llm_score_10
         llm_score = llm_score_10 * 10.0 if llm_score_10 is not None else None
-        if result.get("requires_executed_testset") is True:
+        analyzer_requires_execution = (
+            analyzer_name in deterministic_metrics
+            and (
+                str(result.get("status", "")).casefold() != "completed"
+                or analyzer_score is None
+            )
+        )
+        if result.get("requires_executed_testset") is True or analyzer_requires_execution:
             # An LLM proposal cannot replace missing execution evidence for a
             # metric whose configured analyzer requires assignment testcases.
             if llm_score_10 is not None:
@@ -64,8 +81,18 @@ def apply_metric_scores(
             llm_score = None
             llm_score_10 = None
 
-        selected = llm_score if llm_score is not None else analyzer_score
-        origin = "llm" if llm_score is not None else "deterministic_analyzer" if analyzer_score is not None else "unmeasured"
+        deterministic_is_authoritative = analyzer_name in deterministic_metrics
+        selected = (
+            analyzer_score if deterministic_is_authoritative and analyzer_score is not None
+            else llm_score if llm_score is not None
+            else analyzer_score
+        )
+        origin = (
+            "deterministic_analyzer" if deterministic_is_authoritative and analyzer_score is not None
+            else "llm" if llm_score is not None
+            else "deterministic_analyzer" if analyzer_score is not None
+            else "unmeasured"
+        )
         test_cap_applied = False
         test_score_override_applied = False
         test_total = result.get("tests_total")
@@ -98,15 +125,64 @@ def apply_metric_scores(
                 llm_score, observed_test_score, rel_tol=0.0, abs_tol=1e-9
             )
             test_cap_applied = llm_score is not None and observed_test_score < llm_score
+        evidence_class = (
+            "measured" if origin in {"deterministic_test_results", "deterministic_analyzer"}
+            else "estimated" if origin == "llm"
+            else "unavailable"
+        )
+        available_evidence: list[str] = []
+        missing_evidence: list[str] = []
+        if isinstance(test_total, int) and test_total > 0:
+            available_evidence.append(f"executed tests: {test_passed}/{test_total} passed")
+        if isinstance(result.get("exit_code"), int):
+            available_evidence.append(f"compiler exit code: {result['exit_code']}")
+        if isinstance(result.get("median_runtime_ms"), (int, float)):
+            available_evidence.append("runtime samples and per-test medians")
+        runtime_tools = result.get("runtime_tools")
+        if isinstance(runtime_tools, dict):
+            for tool, key in (("Valgrind", "valgrind_status"), ("ASan/UBSan", "asan_ubsan_status")):
+                tool_status = runtime_tools.get(key, "unknown")
+                if tool_status == "completed":
+                    available_evidence.append(f"{tool} execution")
+                else:
+                    missing_evidence.append(f"{tool} execution ({tool_status})")
+        if isinstance(llm_item, dict) and llm_item.get("evidence_ids"):
+            available_evidence.append("validated LLM evidence references")
+        if selected is None and result.get("reason"):
+            missing_evidence.append(str(result["reason"]))
         result.update({
             "analyzer_score": analyzer_score,
-            "llm_review_score": llm_score_10,
-            "llm_rsi_score": llm_score_10,
-            "llm_score_10": llm_score_10,
+            "llm_review_score": proposed_score_10,
+            "llm_rsi_score": proposed_score_10,
+            "llm_score_10": proposed_score_10,
             "score": round(selected, 2) if selected is not None else None,
             "score_scale": "0-100",
+            "score_points": (
+                round(float(selected) * float(metric.get("max_points", result.get("max_points", 100.0))) / 100.0, 2)
+                if selected is not None else None
+            ),
+            "max_points": float(metric.get("max_points", result.get("max_points", 100.0))),
+            "grade_contribution": bool(metric.get("grade_contribution", True)),
             "score_origin": origin,
             "scoring_status": "measured" if selected is not None else "inconclusive",
+            "score_evidence_class": evidence_class,
+            "score_provenance": {
+                "score": round(selected, 2) if selected is not None else None,
+                "points_awarded": (
+                    round(float(selected) * float(metric.get("max_points", result.get("max_points", 100.0))) / 100.0, 2)
+                    if selected is not None else None
+                ),
+                "max_points": float(metric.get("max_points", result.get("max_points", 100.0))),
+                "weight": metric.get("weight"),
+                "source": origin,
+                "evidence_class": evidence_class,
+                "analyzer": analyzer_name or None,
+                "analyzer_status": result.get("status"),
+                "unvalidated_llm_proposal_10": proposed_score_10 if llm_score is None else None,
+                "reason": result.get("reason") if selected is None else None,
+                "available_evidence": available_evidence,
+                "missing_evidence": missing_evidence,
+            },
             "score_band": band_for_score(selected) if selected is not None else None,
             "test_score_cap_applied": test_cap_applied,
             "test_score_override_applied": test_score_override_applied,
@@ -121,14 +197,24 @@ def apply_metric_scores(
             explanation = (
                 f"Configured {name} tests passed {test_passed}/{test_total}; the score is the observed pass rate "
                 f"({observed_test_score:.2f}/100). "
-                + (f"The LLM proposed {llm_score_10:.2f}/10 and its proposal is retained for audit. " if llm_score_10 is not None else "")
-                + str(explanation)
+                + (f"The LLM proposed {proposed_score_10:.2f}/10 and its proposal is retained for audit. " if proposed_score_10 is not None else "")
+                + (str(explanation) if explanation and not re.search(
+                    r"could not be measured|no .*evidence|not measured", str(explanation), re.IGNORECASE
+                ) else "The configured test suite executed and its pass rate is the score for this metric.")
+            )
+        elif origin == "deterministic_analyzer" and analyzer_name in deterministic_metrics:
+            explanation = (
+                f"The completed {analyzer_name} measurement is authoritative for this metric. "
+                + (str(explanation) if explanation else "")
             )
         result["score_rationale"] = compact_rationale(explanation, max_words=60, max_chars=420)
         if isinstance(llm_item, dict) and llm_item:
             result["llm_review"] = {
-                "proposed_score": llm_score_10, "score_scale": "0-10",
+                "proposed_score": proposed_score_10, "score_scale": "0-10",
                 "effective_score_100": selected,
+                "effective_points": result.get("score_points"),
+                "max_points": result.get("max_points"),
+                "used_for_score": origin == "llm",
                 "test_score_cap_applied": test_cap_applied, "rationale": llm_item.get("rationale", ""),
                 "evidence_ids": llm_item.get("evidence_ids", []),
                 "confidence": llm_item.get("confidence"),
@@ -143,7 +229,10 @@ def calculate_overall_score(
     metric_results: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Calculate a weighted grade only when every enabled metric is measured."""
-    enabled = [item for item in metrics if item.get("enabled", True)]
+    enabled = [
+        item for item in metrics
+        if item.get("enabled", True) and item.get("grade_contribution", True)
+    ]
     if not enabled:
         return {
             "status": "failed_configuration",
@@ -209,7 +298,7 @@ def calculate_overall_score(
         if score is None:  # Defensive: missing scores were rejected above.
             raise AssertionError(f"Validated metric '{name}' lost its score.")
         weight = float(metric["weight"])
-        contribution = weight * score
+        contribution = round(weight * score, 2)
         weighted_total += contribution
         contributions.append({
             "metric": name,
@@ -217,10 +306,13 @@ def calculate_overall_score(
             "weight": weight,
             "score": round(score, 2),
             "contribution": round(contribution, 2),
+            "points_awarded": round(float(score) * float(metric.get("max_points", weight * 100.0)) / 100.0, 2),
+            "max_points": float(metric.get("max_points", weight * 100.0)),
             "score_origin": result.get("score_origin") or "deterministic_analyzer",
             "test_score_cap_applied": result.get("test_score_cap_applied", False),
             "test_score_override_applied": result.get("test_score_override_applied", False),
             "llm_review_score": _valid_score(result.get("llm_review_score")),
+            "evidence_class": result.get("score_evidence_class", "unavailable"),
         })
 
     return {
@@ -232,6 +324,6 @@ def calculate_overall_score(
         "warnings": [],
         "formula": "sum(metric_weight * validated_metric_score)",
         "metric_fusion": (
-            "Executed correctness/logical test pass rates determine those metrics; validated LLM metric scores determine other metrics when present; deterministic analyzer scores are fallback."
+            "Executed test results determine correctness/logical metrics; completed compiler, runtime, and memory analyzers determine their metrics; validated LLM assessments are estimates for remaining rubric metrics."
         ),
     }

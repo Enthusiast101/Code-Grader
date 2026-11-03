@@ -1,0 +1,73 @@
+{
+  "dataset": "FormAI-v1",
+  "ground_truth_file": "resources/formai_v1/processed/smoke_ground_truth_labels.jsonl",
+  "modes": {
+    "llm_only": {
+      "prediction_file": "resources/formai_v1/processed/smoke_predictions.jsonl",
+      "evaluation_status": "incomplete",
+      "metrics_finalized": false,
+      "ground_truth_records": 4,
+      "evaluated_records": 3,
+      "matched_prediction_records": 4,
+      "missing_predictions": 0,
+      "extra_predictions_not_in_ground_truth": 0,
+      "extra_prediction_examples": [],
+      "inconclusive_predictions": 1,
+      "skipped_records": 0,
+      "prediction_coverage": 1.0,
+      "classification_coverage": 0.75,
+      "confusion_matrix": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "tn": 2
+      },
+      "precision": null,
+      "recall": null,
+      "f1_score": null,
+      "accuracy": null,
+      "specificity": null,
+      "false_positive_rate": null,
+      "false_negative_rate": null,
+      "balanced_accuracy": null,
+      "macro_f1": null,
+      "weighted_f1": null,
+      "mcc": null,
+      "per_class_f1": null,
+      "observed_subset_metrics": {
+        "sample_count": 3,
+        "class_support": {
+          "vulnerable": 1,
+          "bounded_negative": 2
+        },
+        "accuracy": 0.666667,
+        "precision": null,
+        "recall": 0.0,
+        "specificity": 1.0,
+        "f1_score": 0.0,
+        "macro_f1": 0.4,
+        "weighted_f1": 0.533333,
+        "per_class_f1": {
+          "vulnerable": 0.0,
+          "bounded_negative": 0.8
+        },
+        "balanced_accuracy": 0.5,
+        "mcc": null,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 1.0,
+        "zero_denominator_policy": "Undefined metrics are reported as null; they are never silently replaced with zero."
+      },
+      "localization": {
+        "line_predictions_evaluated": 0,
+        "exact_line_accuracy": null,
+        "within_tolerance_accuracy": null,
+        "line_tolerance": 2,
+        "note": "A predicted line is correct when it matches any confirmed vulnerable line for that source file."
+      },
+      "error_type_accuracy": null,
+      "error_type_predictions_evaluated": 0,
+      "note": "Complete metrics use every valid ground-truth program exactly once. Missing and inconclusive predictions are not treated as safe. For incomplete runs, observed_subset_metrics are diagnostic only; headline metrics are withheld."
+    }
+  },
+  "comparison_note": "Compare tools-only, LLM-only, hybrid, and hybrid+RSI on the same held-out program split. Keep labels out of prediction-time runs and do not tune on the final test split."
+}

@@ -26,6 +26,7 @@ class ValgrindCaptureTests(unittest.TestCase):
         sandbox.write_file.return_value = None
         sandbox.run.side_effect = [
             {"exit_code": 0, "output": "", "timed_out": False, "output_may_be_truncated": False},
+            {"exit_code": 0, "output": "", "timed_out": False, "output_may_be_truncated": False},
             {"exit_code": 0, "output": CLEAN_VALGRIND_LOG, "timed_out": False, "output_may_be_truncated": False},
         ]
 
@@ -38,6 +39,7 @@ class ValgrindCaptureTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["runtime_tools"]["valgrind_score"], 100.0)
+        self.assertEqual(result["runtime_tools"]["asan_ubsan_status"], "disabled")
         self.assertEqual(result["results"][0]["parsed_summary"]["error_count"], 0)
         self.assertIn("ERROR SUMMARY", result["results"][0]["raw_log"])
         # The analyzer no longer tries Docker's archive API to obtain a log.

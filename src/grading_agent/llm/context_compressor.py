@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 COMPRESSION_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "grading_context_compression_events", default=None
 )
+LLM_REQUEST_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "grading_llm_request_events", default=None
+)
 
 # Avoid spending a model call on short fields that cannot materially shrink.
 # Deterministic fallbacks cap semantic fields below this value, preventing the
@@ -157,11 +160,24 @@ def _same_model_chat(
     # not corrupt protected source/evidence data or abort grading.
     last_error: Exception | None = None
     for attempt in range(1, 3):
+        request_started = time.perf_counter()
         try:
             response = requests.post(
                 f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}",
                 json=body, timeout=settings.runtime_value("LLAMA_REQUEST_TIMEOUT"),
             )
+            request_ended = time.perf_counter()
+            request_events = LLM_REQUEST_EVENTS.get()
+            if isinstance(request_events, list):
+                request_events.append({
+                    "stage": "context_compression", "attempt": attempt,
+                    "started_monotonic_seconds": request_started,
+                    "ended_monotonic_seconds": request_ended,
+                    "duration_seconds": round(request_ended - request_started, 6),
+                    "clock": "monotonic",
+                    "status": "response_received" if getattr(response, "ok", True) else "http_error",
+                    "http_status": getattr(response, "status_code", None),
+                })
             response.raise_for_status()
             data = response.json()
             message = data["choices"][0]["message"]
@@ -176,6 +192,20 @@ def _same_model_chat(
                 return parsed
             raise ValueError("compression response was not a valid JSON object")
         except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
+            request_ended = time.perf_counter()
+            request_events = LLM_REQUEST_EVENTS.get()
+            if isinstance(request_events, list) and not (
+                request_events and request_events[-1].get("stage") == "context_compression"
+                and request_events[-1].get("attempt") == attempt
+            ):
+                request_events.append({
+                    "stage": "context_compression", "attempt": attempt,
+                    "started_monotonic_seconds": request_started,
+                    "ended_monotonic_seconds": request_ended,
+                    "duration_seconds": round(request_ended - request_started, 6),
+                    "clock": "monotonic",
+                    "status": "request_failed", "error": f"{type(exc).__name__}: {exc}"[:300],
+                })
             last_error = exc
             if attempt == 1:
                 messages.append({"role": "assistant", "content": str(content if 'content' in locals() else '')[:2500]})

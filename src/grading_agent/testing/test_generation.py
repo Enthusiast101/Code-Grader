@@ -603,12 +603,28 @@ def prepare_assignment_test_suite(
         frozen = json.loads(suite_path.read_text(encoding="utf-8"))
         suite_source = "generated_and_frozen"
 
-    edge_tags = {"edge", "edge_case", "corner", "boundary", "overflow", "extreme", "empty", "singleton", "duplicate", "adversarial", "minimum", "maximum", "negative", "zero", "large", "small", "max", "min", "numeric_boundary", "integer_boundary"}
+    edge_markers = {
+        "edge", "boundary", "corner", "overflow", "extreme", "empty", "singleton",
+        "duplicate", "adversarial", "minimum", "maximum", "negative", "zero", "large",
+        "small", "max", "min", "limit", "numeric", "integer",
+    }
+
+    def is_edge_case(case: dict[str, Any]) -> bool:
+        """Recognize common tag spellings and descriptions for edge coverage."""
+        tags = case.get("tags", [])
+        origins = case.get("origin_metrics", [])
+        if isinstance(origins, list) and {str(x).casefold() for x in origins}.intersection(
+            {"logical", "edge_cases", "edge_case_runner"}
+        ):
+            return True
+        text_parts = [str(tag) for tag in tags] if isinstance(tags, list) else []
+        text_parts.extend(str(case.get(key, "")) for key in ("description", "rationale"))
+        words = set(re.findall(r"[a-z0-9]+", " ".join(text_parts).casefold()))
+        return bool(words & edge_markers) or bool({"edge", "boundary", "corner"} & words)
+
     edge_cases = []
     for case in all_cases:
-        tags = {str(tag).casefold() for tag in case.get("tags", [])} if isinstance(case.get("tags", []), list) else set()
-        origins = set(case.get("origin_metrics", [])) if isinstance(case.get("origin_metrics", []), list) else set()
-        if origins.intersection({"logical", "edge_cases", "edge_case_runner"}) or tags.intersection(edge_tags):
+        if isinstance(case, dict) and is_edge_case(case):
             edge_cases.append(case)
     if not edge_cases and any(metric.get("analyzer") == "edge_case_runner" for metric in execution_metrics):
         raise TestGenerationError("edge_coverage_missing", "Generated test suite contains no identifiable edge/boundary cases; logical metric cannot be measured.")

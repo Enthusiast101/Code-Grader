@@ -155,6 +155,8 @@ def run_configured_analyzers(
                     "name": metric["name"],
                     "analyzer": metric["analyzer"],
                     "weight": metric["weight"],
+                    "max_points": metric.get("max_points", metric["weight"] * 100.0),
+                    "grade_contribution": metric.get("grade_contribution", True),
                 }
                 for metric in enabled_metrics
             ],
@@ -227,9 +229,12 @@ def run_configured_analyzers(
             )
             if execution_metrics_present:
                 generation_process = None
+                generation_request_events: list[dict[str, Any]] = []
+                request_event_token = None
                 try:
                     from grading_agent.testing.test_generation import prepare_assignment_test_suite
-                    from grading_agent.llm.reviewer import _request_json
+                    from grading_agent.llm.reviewer import _LLM_REQUEST_EVENTS, _request_json
+                    request_event_token = _LLM_REQUEST_EVENTS.set(generation_request_events)
                     if not _is_llm_server_ready():
                         generation_process = initiate_server()
 
@@ -250,13 +255,17 @@ def run_configured_analyzers(
                         generation_seed=settings.SEED,
                         temperature=float(settings.runtime_value("TEMPERATURE")),
                     )
+                    report["test_generation"]["request_events"] = generation_request_events
                 except Exception as exc:
                     report["test_generation"] = {
                         "status": "unavailable",
                         "error": f"{type(exc).__name__}: {exc}",
+                        "request_events": generation_request_events,
                     }
                     logger.warning("Assignment test generation unavailable; existing instructor testsets remain in use: %s", exc)
                 finally:
+                    if request_event_token is not None:
+                        _LLM_REQUEST_EVENTS.reset(request_event_token)
                     _stop_llm_server(generation_process)
         elif docker_needed and sandbox is None:
             report["test_generation"] = {"status": "unavailable", "reason": sandbox_error or "Docker sandbox unavailable."}
@@ -273,9 +282,15 @@ def run_configured_analyzers(
             logger.info("Running metric '%s' using analyzer '%s'.", metric_name, analyzer_name)
 
             if missing_testset:
+                generation = report.get("test_generation", {})
+                generation_detail = ""
+                if isinstance(generation, dict):
+                    detail = generation.get("error") or generation.get("reason")
+                    if detail:
+                        generation_detail = f" Test generation reported: {detail}"
                 result = _unavailable_metric(
                     "No instructor testset was supplied and automatic test generation did not produce an executable suite. "
-                    "This metric is left unscored; provide a valid assignment contract and retry with the local model and Docker available."
+                    "This metric is left unscored." + generation_detail
                 )
                 result.update({
                     "status": "inconclusive",
@@ -440,11 +455,22 @@ def _grade_with_rules_file_impl(
                 "Fallback-derived scores are labelled and are not presented as successful LLM scores."
             )
         report["scoring"].setdefault("warnings", []).append(warning)
+    reviewer_request_seconds = (
+        float(llm_result.get("latency_seconds", {}).get("total_llm", 0.0) or 0.0)
+        if isinstance(llm_result, dict) else 0.0
+    )
+    generation_events = report.get("test_generation", {}).get("request_events", [])
+    generation_request_seconds = sum(
+        float(event.get("duration_seconds", 0.0) or 0.0)
+        for event in generation_events if isinstance(event, dict)
+    ) if isinstance(generation_events, list) else 0.0
     report["timings"] = {
         "analyzer_pipeline_seconds": report.get("analyzer_pipeline_elapsed_seconds"),
         "analyzer_metric_seconds": report.get("analyzer_metric_elapsed_seconds", {}),
         "llm_server_setup_seconds": llm_result.get("server_setup_seconds") if isinstance(llm_result, dict) else None,
-        "llm_request_seconds": llm_result.get("latency_seconds", {}).get("total_llm") if isinstance(llm_result, dict) else None,
+        "llm_request_seconds": reviewer_request_seconds,
+        "test_generation_request_seconds": generation_request_seconds,
+        "total_llm_request_seconds": round(reviewer_request_seconds + generation_request_seconds, 6),
         "total_through_scoring_seconds": round(time.perf_counter() - grading_started, 3),
     }
     destination = report_dir or settings.REPORTS_DIR

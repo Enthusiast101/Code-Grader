@@ -42,7 +42,7 @@ If model compression does not reduce the payload, changes protected information,
 
 ## Metric scoring and reports
 
-The LLM returns a 0–10 rating for every enabled metric. Executed correctness and logical test pass rates remain authoritative for those final metric scores, while their LLM ratings are retained for comparison. For other metrics, Python validates the 0–10 rating, converts it to the common 0–100 metric scale, and applies the configured weights. A completed deterministic analyzer score is used when a valid LLM rating is unavailable. Inconclusive evidence remains unscored, and the overall grade is withheld when a required metric cannot be measured. Reports show both the final metric score and the LLM rating where available; the overall grade remains out of 100.
+The LLM returns a 0–10 rating for every enabled metric. Executed correctness and logical test pass rates remain authoritative for those final metric scores, while their LLM ratings are retained for comparison. Metric scores are shown against the configured `max_points` caps; the root rules allocate 20 points to correctness and 10 points to each of syntax, structure, modularity, logical, memory safety, complexity, readability, and originality. A completed deterministic analyzer score is used when a valid LLM rating is unavailable. Inconclusive evidence remains unscored, and the overall grade is withheld when a required metric cannot be measured. Reports show both the earned metric points and LLM rating where available; the overall grade is out of 100.
 
 Every metric explanation in the Gradio and text reports preserves up to three concise, metric-specific sentences (up to 60 words/420 characters) so the rationale can explain evidence, impact, and rubric alignment. Generic RSI filler and separate “Score basis” boilerplate are omitted. Successful compiler diagnostics such as `compiled=True; warnings=0; errors=0` are not emitted as syntax defects.
 
@@ -105,7 +105,7 @@ The editable install points at the current checkout, so source changes take effe
 ### Launch Gradio
 
 ```bash
-python -m grading_agent.ui.app
+LLAMA_SERVER="$HOME/.local/bin/llama-server" PYTHONPATH=src python -m grading_agent.ui.app
 ```
 
 Keep Docker running when using Docker-backed analyzers. The Gradio app can start and supervise `llama-server` when the executable is available on `PATH`; otherwise start a compatible llama.cpp server separately using the same model and configured host/port.

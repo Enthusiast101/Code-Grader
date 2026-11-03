@@ -11,20 +11,24 @@ class OverallScoringTests(unittest.TestCase):
         ]
 
     def test_validated_llm_scores_are_primary_when_no_test_cap_applies(self):
+        metrics = [
+            {"name": "structure", "analyzer": "static_analysis", "weight": 0.6, "enabled": True},
+            {"name": "readability", "analyzer": "readability", "weight": 0.4, "enabled": True},
+        ]
         report = {
-            "correctness": {"status": "completed", "score": 80.0},
-            "logical": {"status": "completed", "score": 90.0},
+            "structure": {"status": "completed", "score": 80.0},
+            "readability": {"status": "completed", "score": 90.0},
         }
         llm = {"metrics": [
-            {"name": "correctness", "score": 7.5, "score_band": "5-10", "origin": "llm", "rationale": "LLM proposal."},
-            {"name": "logical", "score": 2.5, "score_band": "0-5", "origin": "llm", "rationale": "LLM proposal."},
+            {"name": "structure", "score": 7.5, "score_band": "5-10", "origin": "llm", "rationale": "LLM proposal."},
+            {"name": "readability", "score": 2.5, "score_band": "0-5", "origin": "llm", "rationale": "LLM proposal."},
         ]}
-        apply_metric_scores(self.metrics, report, llm)
-        self.assertEqual(report["correctness"]["score"], 7.5)
-        self.assertEqual(report["logical"]["score"], 2.5)
-        self.assertEqual(report["correctness"]["llm_review_score"], 7.5)
-        self.assertEqual(report["logical"]["llm_review_score"], 2.5)
-        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 5.5)
+        apply_metric_scores(metrics, report, llm)
+        self.assertEqual(report["structure"]["score"], 75.0)
+        self.assertEqual(report["readability"]["score"], 25.0)
+        self.assertEqual(report["structure"]["llm_review_score"], 7.5)
+        self.assertEqual(report["readability"]["llm_review_score"], 2.5)
+        self.assertEqual(calculate_overall_score(metrics, report)["score"], 55.0)
 
     def test_executed_correctness_and_logical_test_rates_are_authoritative(self):
         report = {
@@ -32,11 +36,11 @@ class OverallScoringTests(unittest.TestCase):
             "logical": {"status": "completed", "score": 100.0, "tests_passed": 2, "tests_total": 2},
         }
         llm = {"metrics": [
-            {"name": "correctness", "score": 85.0, "origin": "llm", "rationale": "LLM proposed a high score."},
-            {"name": "logical", "score": 95.0, "origin": "llm", "rationale": "Both edge tests passed."},
+            {"name": "correctness", "score": 8.5, "origin": "llm", "rationale": "LLM proposed a high score."},
+            {"name": "logical", "score": 9.5, "origin": "llm", "rationale": "Both edge tests passed."},
         ]}
         apply_metric_scores(self.metrics, report, llm)
-        self.assertEqual(report["correctness"]["llm_review_score"], 85.0)
+        self.assertEqual(report["correctness"]["llm_review_score"], 8.5)
         self.assertEqual(report["correctness"]["score"], 50.0)
         self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
         self.assertTrue(report["correctness"]["test_score_override_applied"])
@@ -50,24 +54,33 @@ class OverallScoringTests(unittest.TestCase):
             "logical": {"status": "inconclusive", "score": None, "reason": "Missing test inputs."},
         }
         llm = {"metrics": [
-            {"name": "correctness", "score": 92.5, "score_band": "90-95", "origin": "llm"},
-            {"name": "logical", "score": 97.5, "score_band": "95-100", "origin": "llm", "rationale": "LLM guessed from source."},
+            {"name": "correctness", "score": 9.25, "score_band": "9-10", "origin": "llm"},
+            {"name": "logical", "score": 9.75, "score_band": "9-10", "origin": "llm", "rationale": "LLM guessed from source."},
         ]}
         apply_metric_scores(self.metrics, report, llm)
-        self.assertEqual(report["logical"]["score"], 97.5)
-        self.assertEqual(report["logical"]["llm_review_score"], 97.5)
+        self.assertIsNone(report["logical"]["score"])
+        self.assertEqual(report["logical"]["llm_review_score"], 9.75)
         final = calculate_overall_score(self.metrics, report)
-        self.assertEqual(final["status"], "completed")
-        self.assertEqual(final["score"], 94.5)
+        self.assertEqual(final["status"], "failed_incomplete")
+        self.assertIsNone(final["score"])
 
 
-    def test_numeric_llm_score_without_supplied_band_is_accepted_and_banded_locally(self):
-        report = {"correctness": {"status": "completed", "score": 42.0}, "logical": {"status": "completed", "score": 58.0}}
-        llm = {"metrics": [{"name": "correctness", "score": 99.0, "origin": "llm"}]}
-        apply_metric_scores(self.metrics, report, llm)
-        self.assertEqual(report["correctness"]["llm_review_score"], 99.0)
-        self.assertEqual(report["correctness"]["score"], 99.0)
-        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 82.6)
+    def test_deterministic_execution_score_overrides_contradictory_llm_score(self):
+        report = {"runtime": {"status": "completed", "score": 42.0, "median_runtime_ms": 2000}}
+        metrics = [{"name": "runtime", "analyzer": "runtime_profile", "weight": 1.0, "enabled": True}]
+        llm = {"metrics": [{"name": "runtime", "score": 9.9, "origin": "llm"}]}
+        apply_metric_scores(metrics, report, llm)
+        self.assertEqual(report["runtime"]["llm_review_score"], 9.9)
+        self.assertEqual(report["runtime"]["score"], 42.0)
+        self.assertEqual(report["runtime"]["score_origin"], "deterministic_analyzer")
+        self.assertEqual(calculate_overall_score(metrics, report)["score"], 42.0)
+
+    def test_compiler_analyzer_score_is_authoritative_over_llm_rubric(self):
+        report = {"syntax": {"analyzer": "compiler_diagnostics", "status": "completed", "score": 85.0, "exit_code": 0, "warning_count": 3}}
+        metrics = [{"name": "syntax", "analyzer": "compiler_diagnostics", "weight": 1.0, "enabled": True}]
+        apply_metric_scores(metrics, report, {"metrics": [{"name": "syntax", "score": 10.0, "origin": "llm"}]})
+        self.assertEqual(report["syntax"]["score"], 85.0)
+        self.assertEqual(report["syntax"]["score_origin"], "deterministic_analyzer")
 
     def test_test_pass_rate_is_derived_from_rows_when_aggregate_counts_are_missing(self):
         report = {
@@ -83,7 +96,7 @@ class OverallScoringTests(unittest.TestCase):
         apply_metric_scores(self.metrics, report, llm)
         self.assertEqual(report["correctness"]["score"], 50.0)
         self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
-        self.assertEqual(report["logical"]["score"], 95.0)
+        self.assertEqual(report["logical"]["score"], 100.0)
 
     def test_completed_analyzer_zero_is_a_real_zero(self):
         report = {"correctness": {"status": "completed", "score": 0.0}, "logical": {"status": "completed", "score": 100.0}}
@@ -127,6 +140,42 @@ class OverallScoringTests(unittest.TestCase):
         ]
         with self.assertRaises(ValueError):
             calculate_overall_score(metrics, {})
+
+    def test_configured_metric_caps_convert_percent_scores_to_points(self):
+        names_and_caps = [
+            ("correctness", 20), ("syntax", 10), ("structure", 10),
+            ("modularity", 10), ("logical", 10), ("memory_safety", 10),
+            ("complexity", 10), ("readability", 10), ("originality", 10),
+        ]
+        metrics = [
+            {"name": name, "weight": cap / 100, "max_points": cap, "enabled": True}
+            for name, cap in names_and_caps
+        ]
+        report = {
+            name: {"status": "completed", "score": 50.0 if name == "correctness" else 100.0}
+            for name, _ in names_and_caps
+        }
+        apply_metric_scores(metrics, report, None)
+        overall = calculate_overall_score(metrics, report)
+        self.assertEqual(report["correctness"]["score_points"], 10.0)
+        self.assertEqual(report["correctness"]["max_points"], 20.0)
+        self.assertEqual(overall["score"], 90.0)
+        self.assertEqual(sum(item["points_awarded"] for item in overall["contributions"]), 90.0)
+        self.assertEqual(sum(item["max_points"] for item in overall["contributions"]), 100.0)
+
+    def test_diagnostic_only_runtime_metric_does_not_change_grade_or_gate_completion(self):
+        metrics = [
+            {"name": "correctness", "weight": 1.0, "max_points": 100, "enabled": True},
+            {"name": "runtime_efficiency", "weight": 0.0, "max_points": 0, "enabled": True, "grade_contribution": False},
+        ]
+        report = {
+            "correctness": {"status": "completed", "score": 80.0},
+            "runtime_efficiency": {"status": "inconclusive", "score": None, "reason": "No runtime tests."},
+        }
+        apply_metric_scores(metrics, report, None)
+        overall = calculate_overall_score(metrics, report)
+        self.assertEqual(overall["score"], 80.0)
+        self.assertEqual([item["metric"] for item in overall["contributions"]], ["correctness"])
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ src/grading_agent/benchmark/formai_manifest.py
 src/grading_agent/benchmark/formai_predict.py
 src/grading_agent/benchmark/formai_sample.py
 src/grading_agent/benchmark/formai_split.py
+src/grading_agent/benchmark/formai_v1_prepare.py
 src/grading_agent/config/__init__.py
 src/grading_agent/config/default_metric_rubric.json
 src/grading_agent/config/rule_loader.py
@@ -53,6 +54,7 @@ src/grading_agent/ui/__init__.py
 src/grading_agent/ui/app.py
 tests/test_analyzer_registry.py
 tests/test_core.py
+tests/test_evaluation_evidence_regressions.py
 tests/test_evidence_ledger.py
 tests/test_final_user_fixes.py
 tests/test_formai_complete_split_and_evidence.py

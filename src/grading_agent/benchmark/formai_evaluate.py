@@ -15,19 +15,63 @@ from typing import Any, Iterable
 from grading_agent.config import settings
 
 
-def _iter_ground_truth(path: Path) -> Iterable[dict[str, Any]]:
-    try:
-        import ijson  # type: ignore
-    except ImportError:
-        with path.open("r", encoding="utf-8") as stream:
-            data = json.load(stream)
-        if not isinstance(data, list):
-            raise ValueError("FormAI ground-truth JSON must be a top-level array.")
-        yield from (item for item in data if isinstance(item, dict))
-        return
 
-    with path.open("rb") as stream:
-        yield from ijson.items(stream, "item")
+def _iter_ground_truth(path: Path) -> Iterable[dict[str, Any]]:
+    """Read either JSON-array or JSONL ground-truth files."""
+
+    with path.open("r", encoding="utf-8") as stream:
+        first_non_whitespace = ""
+
+        while True:
+            char = stream.read(1)
+
+            if not char or not char.isspace():
+                first_non_whitespace = char
+                break
+
+        stream.seek(0)
+
+        # Existing FormAI-v2 format: a JSON array.
+        if first_non_whitespace == "[":
+            try:
+                import ijson
+            except ImportError:
+                data = json.load(stream)
+
+                if not isinstance(data, list):
+                    raise ValueError(
+                        "Ground-truth JSON must contain a top-level array."
+                    )
+
+                for item in data:
+                    if isinstance(item, dict):
+                        yield item
+
+            else:
+                with path.open("rb") as binary_stream:
+                    yield from ijson.items(binary_stream, "item")
+
+        # New FormAI-v1 format: one JSON object per line.
+        else:
+            for line_number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid ground-truth JSONL at line "
+                        f"{line_number}: {exc}"
+                    ) from exc
+
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"Ground-truth line {line_number} "
+                        "must contain a JSON object."
+                    )
+
+                yield item
 
 
 def _is_vulnerable(category: Any) -> bool | None:
@@ -36,7 +80,7 @@ def _is_vulnerable(category: Any) -> bool | None:
     normalized = category.strip().casefold().replace("-", "_").replace(" ", "_")
     if normalized in {"vulnerable", "unsafe", "positive", "true"}:
         return True
-    if normalized in {"safe", "non_vulnerable", "not_vulnerable", "clean", "negative", "false"}:
+    if normalized in {"safe", "safe_within_bound", "non_vulnerable", "not_vulnerable", "clean", "negative", "false"}:
         return False
     return None
 
@@ -62,6 +106,34 @@ def _load_predictions(path: Path) -> dict[str, dict[str, Any]]:
     return predictions
 
 
+def _prediction_is_inconclusive(
+    prediction: dict[str, Any]
+) -> bool:
+    """Identify predictions that cannot safely be scored as binary."""
+
+    if prediction.get("llm_unresolved_positive_summary") is True:
+        return True
+
+    if prediction.get("llm_unresolved_invalid_candidates") is True:
+        return True
+
+    status = prediction.get("prediction_status")
+
+    if isinstance(status, str) and status.casefold() in {
+        "failed",
+        "error",
+        "inconclusive",
+        "skipped",
+        "timeout"
+    }:
+        return True
+
+    if prediction.get("llm_error"):
+        return True
+
+    return False
+
+
 def _as_int_list(value: Any) -> list[int]:
     if isinstance(value, int) and value > 0:
         return [value]
@@ -81,6 +153,116 @@ def _as_string_list(value: Any) -> list[str]:
 def _normalize_type(value: str) -> str:
     import re
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _calculate_binary_metrics(
+    tp: int,
+    fp: int,
+    fn: int,
+    tn: int,
+) -> dict[str, Any]:
+    """Calculate binary classification metrics.
+
+    Undefined metrics are represented as None rather than silently
+    assigning zero when their denominator is zero.
+    """
+
+    total = tp + fp + fn + tn
+    positive_support = tp + fn
+    negative_support = tn + fp
+
+    def ratio(numerator: float, denominator: float):
+        if denominator == 0:
+            return None
+        return round(numerator / denominator, 6)
+
+    precision = ratio(tp, tp + fp)
+    recall = ratio(tp, tp + fn)
+    specificity = ratio(tn, tn + fp)
+
+    accuracy = ratio(tp + tn, total)
+
+    positive_f1 = ratio(
+        2 * tp,
+        2 * tp + fp + fn
+    )
+
+    negative_f1 = ratio(
+        2 * tn,
+        2 * tn + fp + fn
+    )
+
+    # Macro-F1 is undefined if either class has undefined F1.
+    macro_f1 = (
+        round((positive_f1 + negative_f1) / 2, 6)
+        if positive_f1 is not None and negative_f1 is not None
+        else None
+    )
+
+    # Weighted-F1 uses the actual number of examples in each class.
+    weighted_f1 = None
+
+    if total > 0:
+        weighted_sum = 0.0
+
+        if positive_support:
+            weighted_sum += positive_f1 * positive_support
+
+        if negative_support:
+            weighted_sum += negative_f1 * negative_support
+
+        weighted_f1 = round(weighted_sum / total, 6)
+
+    balanced_accuracy = (
+        round((recall + specificity) / 2, 6)
+        if recall is not None and specificity is not None
+        else None
+    )
+
+    mcc_denominator = (
+        (tp + fp) *
+        (tp + fn) *
+        (tn + fp) *
+        (tn + fn)
+    )
+
+    if mcc_denominator:
+        import math
+
+        mcc = round(
+            (tp * tn - fp * fn) /
+            math.sqrt(mcc_denominator),
+            6
+        )
+    else:
+        mcc = None
+
+    return {
+        "sample_count": total,
+        "class_support": {
+            "vulnerable": positive_support,
+            "bounded_negative": negative_support
+        },
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "specificity": specificity,
+        "f1_score": positive_f1,
+        "macro_f1": macro_f1,
+        "weighted_f1": weighted_f1,
+        "per_class_f1": {
+            "vulnerable": positive_f1,
+            "bounded_negative": negative_f1
+        },
+        "balanced_accuracy": balanced_accuracy,
+        "mcc": mcc,
+        "false_positive_rate": ratio(fp, fp + tn),
+        "false_negative_rate": ratio(fn, fn + tp),
+        "zero_denominator_policy": (
+            "Undefined metrics are reported as null; "
+            "they are never silently replaced with zero."
+        )
+    }
 
 
 def evaluate_mode(
@@ -127,6 +309,9 @@ def evaluate_mode(
             missing += 1
             continue
         matched += 1
+        if _prediction_is_inconclusive(prediction):
+            inconclusive += 1
+            continue
         raw_prediction = prediction.get("predicted_vulnerable")
         if isinstance(raw_prediction, bool):
             predicted = raw_prediction
@@ -158,23 +343,16 @@ def evaluate_mode(
         else:
             tn += 1
 
+    # Calculate metrics after processing every program.
     extra_predictions = sorted(set(predictions) - ground_truth_names)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    specificity = tn / (tn + fp) if tn + fp else 0.0
-    accuracy = (tp + tn) / evaluated if evaluated else 0.0
-    balanced_accuracy = (recall + specificity) / 2
-    partial_metrics = {
-        "precision": round(precision, 6),
-        "recall": round(recall, 6),
-        "f1_score": round(f1, 6),
-        "accuracy": round(accuracy, 6),
-        "specificity": round(specificity, 6),
-        "false_positive_rate": round(fp / (fp + tn), 6) if fp + tn else 0.0,
-        "false_negative_rate": round(fn / (fn + tp), 6) if fn + tp else 0.0,
-        "balanced_accuracy": round(balanced_accuracy, 6),
-    }
+
+    partial_metrics = _calculate_binary_metrics(
+        tp=tp,
+        fp=fp,
+        fn=fn,
+        tn=tn
+    )
+
     complete = (
         valid_ground_truth > 0
         and missing == 0
@@ -215,6 +393,10 @@ def evaluate_mode(
         "false_positive_rate": partial_metrics["false_positive_rate"] if complete else None,
         "false_negative_rate": partial_metrics["false_negative_rate"] if complete else None,
         "balanced_accuracy": partial_metrics["balanced_accuracy"] if complete else None,
+        "macro_f1": partial_metrics["macro_f1"] if complete else None,
+        "weighted_f1": partial_metrics["weighted_f1"] if complete else None,
+        "mcc": partial_metrics["mcc"] if complete else None,
+        "per_class_f1": partial_metrics["per_class_f1"] if complete else None,
         "observed_subset_metrics": partial_metrics,
         "localization": localization,
         "error_type_accuracy": error_type_accuracy,
@@ -230,6 +412,11 @@ def evaluate_mode(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ground-truth", required=True, type=Path, help="Program-level FormAI labels JSON.")
+    parser.add_argument(
+    "--dataset-name",
+    default="FormAI-v2",
+    help="Dataset name for the evaluation report."
+)
     parser.add_argument("--predictions", required=True, action="append", metavar="MODE=JSONL", help="Repeat, e.g. tools_only=tools.jsonl")
     parser.add_argument("--line-tolerance", type=int, default=settings.FORM_AI_LINE_TOLERANCE)
     parser.add_argument("--output", type=Path, default=Path(settings.FORM_AI_EVALUATION_OUTPUT))
@@ -248,7 +435,7 @@ def main() -> None:
         modes[name] = evaluate_mode(args.ground_truth, Path(filename), line_tolerance=args.line_tolerance)
 
     result = {
-        "dataset": "FormAI-v2",
+        "dataset": args.dataset_name,
         "ground_truth_file": str(args.ground_truth),
         "modes": modes,
         "comparison_note": "Compare tools-only, LLM-only, hybrid, and hybrid+RSI on the same held-out program split. Keep labels out of prediction-time runs and do not tune on the final test split.",
