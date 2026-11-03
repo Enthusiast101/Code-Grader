@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from grading_agent.config import settings
@@ -41,8 +41,10 @@ def resolve_project_path(
     if not isinstance(relative_path, str) or not relative_path.strip():
         raise RuleValidationError(f"'{field_name}' must be a non-empty path.")
 
-    candidate = Path(relative_path)
-    if candidate.is_absolute():
+    normalized_path = relative_path.strip().replace("\\", "/")
+    candidate = Path(normalized_path)
+    windows_candidate = PureWindowsPath(relative_path.strip())
+    if candidate.is_absolute() or windows_candidate.is_absolute() or windows_candidate.drive:
         raise RuleValidationError(
             f"'{field_name}' must be relative to the project root."
         )
@@ -367,7 +369,9 @@ def load_rules(
                 raise RuleValidationError(
                     f"'{name}.params.corpus_dir' must be a non-empty directory path."
                 )
-            candidate = Path(corpus_dir)
+            candidate = Path(corpus_dir.strip().replace("\\", "/"))
+            if PureWindowsPath(corpus_dir.strip()).is_absolute() or PureWindowsPath(corpus_dir.strip()).drive:
+                raise RuleValidationError("similarity corpus_dir must be project-relative.")
             if candidate.is_absolute():
                 raise RuleValidationError("similarity corpus_dir must be project-relative.")
             resolved_dir = (project_root / candidate).resolve()
@@ -477,8 +481,32 @@ def load_rules(
     # rather than imposing an addition-only schema such as operand_type/sum_type.
     _validate_json_value(problem_contract, "problem_contract")
 
+    rubric_path = settings.DEFAULT_RUBRIC_PATH
+    try:
+        with rubric_path.open("r", encoding="utf-8") as file:
+            default_rubric = json.load(file)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuleValidationError(f"Could not load default metric rubric {rubric_path}: {exc}") from exc
+    if not isinstance(default_rubric, dict):
+        raise RuleValidationError("The default metric rubric must contain a JSON object.")
+    _validate_json_value(default_rubric, "default_metric_rubric")
+    if not isinstance(default_rubric.get("metrics", {}), dict):
+        raise RuleValidationError("The default metric rubric 'metrics' field must be an object.")
+    instructor_rubric = rules.get("rubric", rules.get("rubrics", {}))
+    if not isinstance(instructor_rubric, dict):
+        raise RuleValidationError("'rubric' must be a JSON object when provided.")
+    _validate_json_value(instructor_rubric, "rubric")
+    merged_rubric = dict(default_rubric)
+    merged_metrics = dict(default_rubric.get("metrics", {}))
+    supplied_metrics = instructor_rubric.get("metrics", instructor_rubric)
+    if isinstance(supplied_metrics, dict):
+        merged_metrics.update(supplied_metrics)
+    merged_rubric.update({key: value for key, value in instructor_rubric.items() if key != "metrics"})
+    merged_rubric["metrics"] = merged_metrics
+
     normalized_rules = dict(rules)
     normalized_rules["problem_contract"] = dict(problem_contract)
+    normalized_rules["rubric"] = merged_rubric
     normalized_rules["time_limit_s"] = time_limit_s
     normalized_rules["memory_limit_mb"] = memory_limit_mb
     normalized_rules["submission"] = {

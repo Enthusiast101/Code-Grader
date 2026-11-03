@@ -4,8 +4,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import json
+import math
 import re
 import time
+from difflib import SequenceMatcher
 from contextvars import ContextVar
 from typing import Any
 
@@ -18,6 +20,7 @@ from grading_agent.llm.context_compressor import (
     compress_review_history, compress_semantic_sections,
 )
 from grading_agent.reporting.rationale import compact_rationale
+from grading_agent.scoring.score_bands import band_for_score, rubric_prompt_block, score_from_band
 
 _LAST_FITTED_SOURCE_LINES: ContextVar[set[int] | None] = ContextVar(
     "grading_last_fitted_source_lines", default=None
@@ -35,7 +38,7 @@ def _compact_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # First pass preserves configuration, aggregate metric results, and every
     # test result. Source lines and lower-priority details are added afterward.
     priority_kinds = {
-        "preflight", "rubric", "metric_summary", "test_summary", "test_result",
+        "preflight", "rubric", "inferred_contract", "metric_summary", "test_summary", "test_result",
         "compiler_diagnostics", "static_analysis", "static_finding", "model_audit", "model_audit_finding",
         "memory_safety_measurement", "valgrind_result", "sanitizer_result", "runtime_measurement",
         "readability_measurement", "source_metric", "scope_limitation", "coverage_summary",
@@ -771,7 +774,10 @@ def _request_json(
         bool(settings.runtime_value("LLAMA_REASONING_ENABLED"))
         if enable_thinking is None else bool(enable_thinking)
     )
-    thinking = requested_thinking and not schema_constrained
+    # Keep the model's configured reasoning/thinking mode enabled even for
+    # schema-constrained calls. The JSON schema governs the final answer; it
+    # must not silently disable the model reasoning configuration.
+    thinking = requested_thinking
     request_body = {
         "model": settings.runtime_value("MODEL"),
         "messages": request_messages,
@@ -1834,6 +1840,36 @@ def _compact_metric_context(metric: dict[str, Any], report: dict[str, Any]) -> d
     }
 
 
+def _test_oracle_examples(report: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
+    """Return instructor-configured input/expected pairs without student output.
+
+    These examples are partial oracle evidence, not a complete assignment
+    specification. They are useful when a Gradio rules editor contains only an
+    assignment slug but the configured analyzer has concrete expected outputs.
+    """
+    examples: list[dict[str, Any]] = []
+    for metric_name in ("correctness", "logical"):
+        result = report.get(metric_name, {})
+        if not isinstance(result, dict):
+            continue
+        rows = result.get("results", [])
+        if not isinstance(rows, list):
+            continue
+        for index, row in enumerate(rows, 1):
+            if not isinstance(row, dict) or "input" not in row or "expected" not in row:
+                continue
+            examples.append({
+                "metric": metric_name,
+                "test_id": row.get("test_id", index),
+                "input": str(row.get("input", ""))[:220],
+                "expected_output": str(row.get("expected", ""))[:180],
+                "tags": row.get("tags", [])[:6] if isinstance(row.get("tags"), list) else [],
+            })
+            if len(examples) >= max(1, limit):
+                return examples
+    return examples
+
+
 def _program_understanding_payload(
     report: dict[str, Any],
     rules: dict[str, Any],
@@ -1846,6 +1882,13 @@ def _program_understanding_payload(
     return {
         "task": str(report.get("problem", "C programming assignment"))[:500],
         "problem_contract": _grading_context_value(rules.get("problem_contract", {})),
+        "assignment_derived_inferred_contract": _grading_context_value(_inferred_contract_from_report(report)),
+        "instructor_test_oracle_examples": _test_oracle_examples(report),
+        "assignment_contract_is_actionable": _assignment_contract_is_specific(
+            report.get("problem", rules.get("problem", "")),
+            rules.get("problem_contract", {}),
+            _inferred_contract_from_report(report),
+        ),
         "source_filename": report.get("submission"),
         "source_line_count": len(source_code.splitlines()),
         "source_was_truncated": truncated,
@@ -1865,8 +1908,11 @@ def _program_understanding_payload(
         ],
         "instructions": [
             "Describe what the submitted source actually does at runtime; do not describe the assignment's expected solution as if the code already implements it.",
-            "Separately summarize the intended behavior required by the assignment contract.",
-            "Explicitly state whether actual behavior matches, partially matches, or differs from the intended behavior.",
+            "Separately summarize intended behavior only from the assignment statement, instructor contract, or assignment-derived inferred contract.",
+            "Never infer the intended assignment from what the student source happens to implement.",
+            "If assignment_contract_is_actionable is false but instructor_test_oracle_examples are present, describe only those as partial tested input/output requirements; do not claim they are a complete specification.",
+            "If assignment_contract_is_actionable is false and no instructor_test_oracle_examples are present, set intended_behavior to 'Not specified in the supplied assignment' and contract_alignment to 'undetermined'; do not guess.",
+            "If assignment_contract_is_actionable is true, explicitly state whether actual behavior matches, partially matches, or differs from the stated/inferred contract.",
             "Describe the actual algorithm, functions, data structures, and main execution flow.",
             "Do not grade the program or list defects in this stage; just produce a faithful semantic map.",
             "Never claim that the program reads input, computes a value, or prints a result unless that operation is present in the submitted source.",
@@ -1876,22 +1922,111 @@ def _program_understanding_payload(
     }
 
 
+def _normalise_contract_alignment(actual: str, intended: str, raw_alignment: str) -> str:
+    """Standardize contract comparison and avoid unsupported partial-match labels."""
+    raw = " ".join(str(raw_alignment or "").casefold().replace("_", " ").split())
+    if not raw or "undetermined" in raw or "not specified" in raw:
+        return "undetermined — the expected assignment behavior is not sufficiently specified."
+    if re.search(r"\b(mismatch|does not match|not aligned|incorrectly implements|fails to implement)\b", raw):
+        return "mismatch — a specific divergence must be identified in the validated findings before it affects grading."
+    if re.search(r"\b(partial match|partially aligned|partial alignment)\b", raw):
+        stop = {
+            "the", "a", "an", "is", "if", "it", "into", "from", "to", "of", "and", "or", "not",
+            "then", "its", "this", "those", "these", "by", "as", "for", "on", "with", "their",
+            "program", "source", "behavior", "expected", "actual", "assignment",
+        }
+        actual_tokens = set(re.findall(r"[a-z0-9]+", str(actual).casefold())) - stop
+        expected_tokens = set(re.findall(r"[a-z0-9]+", str(intended).casefold())) - stop
+        coverage = len(actual_tokens & expected_tokens) / max(1, len(expected_tokens))
+        if expected_tokens and coverage >= 0.75:
+            return "aligned — the source behavior summary substantially covers the stated expected behavior; no specific divergence was identified."
+        return "partial_match — the summaries differ; a concrete unmet requirement must be established before this is treated as a defect."
+    if re.search(r"\b(aligned|fully matches|matches the requested|fully implements)\b", raw):
+        return "aligned — the source behavior is reported as consistent with the assignment."
+    return str(raw_alignment).strip()[:700]
+
+
 def _normalise_program_understanding(
     parsed: dict[str, Any] | None,
     source_line_count: int,
     visible_source_lines: set[int],
+    source_code: str = "",
 ) -> dict[str, Any] | None:
     if not isinstance(parsed, dict):
         return None
+    for wrapper_key in ("program_understanding", "result", "response", "output"):
+        wrapped = parsed.get(wrapper_key)
+        if isinstance(wrapped, dict):
+            parsed = wrapped
+            break
 
     # Prefer the explicit source-grounded behavior key. Legacy aliases remain
     # accepted for older/mock model responses, but are normalized as actual behavior.
-    purpose = parsed.get(
-        "actual_behavior",
-        parsed.get("program_purpose", parsed.get("purpose", parsed.get("summary"))),
+    behavior_keys = (
+        "actual_behavior", "source_behavior", "actual_source_behavior",
+        "source_behavior_description", "what_the_program_does", "program_purpose",
+        "purpose", "summary", "description", "behavior",
     )
-    if not isinstance(purpose, str) or not purpose.strip():
+    purpose: str | None = None
+    # Small local models sometimes wrap the requested object or use a near-
+    # equivalent field name. Search shallow nested objects, but never treat an
+    # arbitrary task/assignment description as actual source behavior.
+    containers = [parsed]
+    for key in ("program_understanding", "result", "response", "output", "analysis"):
+        nested = parsed.get(key)
+        if isinstance(nested, dict):
+            containers.append(nested)
+    for container in containers:
+        for key in behavior_keys:
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                purpose = value.strip()
+                break
+            if isinstance(value, dict):
+                nested_value = next((
+                    value.get(candidate) for candidate in ("summary", "description", "text", "behavior")
+                    if isinstance(value.get(candidate), str) and value.get(candidate).strip()
+                ), None)
+                if nested_value:
+                    purpose = nested_value.strip()
+                    break
+        if purpose:
+            break
+    if not purpose:
         return None
+
+    # Some local models put multiple requested fields into one string and add
+    # Markdown labels, even though the outer JSON object is valid. Split those
+    # labels back into their fields before rendering the report.
+    label_pattern = re.compile(
+        r"(?:\\\*|\*)*\s*(actual source behavior|actual behavior|expected assignment behavior|"
+        r"intended behavior|contract comparison|contract alignment|actual algorithm|algorithm overview)"
+        r"\s*:\s*(?:\\\*|\*)*",
+        re.IGNORECASE,
+    )
+    matches = list(label_pattern.finditer(purpose))
+    embedded: dict[str, str] = {}
+    if len(matches) >= 2:
+        section_names = {
+            "actual source behavior": "actual_behavior", "actual behavior": "actual_behavior",
+            "expected assignment behavior": "intended_behavior", "intended behavior": "intended_behavior",
+            "contract comparison": "contract_alignment", "contract alignment": "contract_alignment",
+            "actual algorithm": "algorithm_overview", "algorithm overview": "algorithm_overview",
+        }
+        prefix = purpose[:matches[0].start()].strip(" \t\r\n:;*-\\")
+        if prefix:
+            embedded["actual_behavior"] = prefix
+        for index, match in enumerate(matches):
+            key = section_names[match.group(1).casefold()]
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(purpose)
+            value = purpose[match.end():end].strip(" \t\r\n:;*-\\")
+            if value:
+                if key not in embedded:
+                    embedded[key] = value
+                elif key == "actual_behavior":
+                    embedded[key] += " " + value
+        if embedded.get("actual_behavior"):
+            purpose = embedded["actual_behavior"]
 
     def text_list(value: Any, limit: int = 8, item_chars: int = 260) -> list[str]:
         if not isinstance(value, list):
@@ -1922,13 +2057,52 @@ def _normalise_program_understanding(
             )
             functions.append({"name": name, "role": role, "line_start": start, "line_end": end})
 
+    intended_behavior = str(
+        parsed.get("intended_behavior") or parsed.get("expected_behavior") or embedded.get("intended_behavior", "")
+    ).strip()[:900]
+    alignment = str(
+        parsed.get("contract_alignment") or parsed.get("behavior_difference") or embedded.get("contract_alignment", "")
+    ).strip()
+    algorithm_overview = str(
+        parsed.get("algorithm_overview") or parsed.get("algorithm") or embedded.get("algorithm_overview", "")
+    ).strip()
+
+    # An exact C type check overrides conflicting model claims about division.
+    integer_division_lines = [
+        number for number in range(1, len(source_code.splitlines()) + 1)
+        if _integer_division_at_line(source_code, number) is not None
+    ] if source_code else []
+    if integer_division_lines:
+        source_fact = (
+            f"Source check: line {integer_division_lines[0]} divides integer-typed operands before conversion to floating point, "
+            "so the quotient is truncated before it can preserve a fractional part."
+        )
+        false_division_claim = re.compile(
+            r"(?:floating[- ]point|float|double)\s+division|division\s+(?:is\s+)?(?:performed\s+)?using\s+(?:floating[- ]point|double)|"
+            r"(?:preserv|retain)[a-z]*\s+(?:the\s+)?fractional\s+(?:part|result)",
+            re.IGNORECASE,
+        )
+
+        def correct_division_claim(value: str) -> str:
+            sentences = re.split(r"(?<=[.!?])\s+", value.strip())
+            kept = [sentence for sentence in sentences if not false_division_claim.search(sentence)]
+            cleaned = " ".join(kept).strip()
+            return (cleaned + " " if cleaned else "") + source_fact
+
+        purpose = correct_division_claim(purpose)
+        algorithm_overview = correct_division_claim(algorithm_overview) if algorithm_overview else source_fact
+
     return {
         "status": "completed",
         "program_purpose": purpose.strip()[:900],
         "actual_behavior": purpose.strip()[:900],
-        "intended_behavior": str(parsed.get("intended_behavior", parsed.get("expected_behavior", ""))).strip()[:900],
-        "contract_alignment": str(parsed.get("contract_alignment", parsed.get("behavior_difference", ""))).strip()[:700],
-        "algorithm_overview": str(parsed.get("algorithm_overview", parsed.get("algorithm", ""))).strip()[:1_200],
+        "intended_behavior": intended_behavior,
+        "contract_alignment": _normalise_contract_alignment(
+            purpose.strip(),
+            intended_behavior,
+            alignment,
+        ),
+        "algorithm_overview": algorithm_overview[:1_200],
         "functions": functions,
         "data_structures": text_list(parsed.get("data_structures")),
         "execution_flow": text_list(parsed.get("execution_flow"), limit=10),
@@ -1970,24 +2144,83 @@ def _fallback_program_understanding(
     actual_parts.append("Input APIs observed: " + (", ".join(input_apis) if input_apis else "none detected") + ".")
     actual_parts.append("Output APIs observed: " + (", ".join(output_apis) if output_apis else "none detected") + ".")
     actual_parts.append("Dynamic-memory APIs observed: " + (", ".join(allocation_apis) if allocation_apis else "none detected") + ".")
+
+    # A narrow source-pattern summary for a common beginner C task. It is a
+    # statement about the submitted code, not an inference about assignment
+    # requirements, and it explicitly preserves C's integer-division semantics.
+    count_input_match = re.search(r"\bscanf\s*\([^;]*&\s*(?P<count>[A-Za-z_]\w*)", source, re.DOTALL)
+    loop_count_match = re.search(r"\bfor\s*\([^;]*;[^;]*<\s*(?P<count>[A-Za-z_]\w*)", source, re.DOTALL)
+    total_name_match = re.search(r"\b(?P<total>sum|total)\s*\+=", source)
+    average_loop = bool(
+        count_input_match and loop_count_match
+        and count_input_match.group("count") == loop_count_match.group("count")
+        and total_name_match and re.search(r"\b(?:printf|fprintf)\s*\(", source)
+    )
+    if average_loop:
+        count_name = count_input_match.group("count")
+        total_name = total_name_match.group("total") if total_name_match else "sum"
+        division_lines = [
+            number for number in range(1, len(lines) + 1)
+            if _integer_division_at_line(source, number) is not None
+        ]
+        if division_lines:
+            actual_parts.append(
+                f"The source reads a count into {count_name}, iterates over that many values, "
+                f"accumulates them in {total_name}, then computes and prints a quotient. "
+                f"The detected division at line {division_lines[0]} uses integer operands before conversion, "
+                "so any fractional part is truncated."
+            )
+        else:
+            actual_parts.append(
+                f"The source reads a count into {count_name}, iterates over that many values, "
+                f"accumulates them in {total_name}, and prints a computed result."
+            )
     contract = rules.get("problem_contract", {})
     intended = ""
     if isinstance(contract, dict):
         intended = str(contract.get("description", contract.get("task", contract.get("expected_behavior", ""))))
-    if not intended:
+    inferred = _inferred_contract_from_report(report)
+    actionable = _assignment_contract_is_specific(
+        report.get("problem", rules.get("problem", "")),
+        rules.get("problem_contract", {}), inferred,
+    )
+    if inferred:
+        intended = (
+            f"Input: {inferred.get('input_format')}. Semantics: "
+            + "; ".join(str(item) for item in inferred.get("semantics", [])[:6])
+            + f" Output: {inferred.get('output_format')}."
+        )
+    elif not actionable:
+        oracle_examples = _test_oracle_examples(report)
+        if oracle_examples:
+            intended = "The complete assignment statement is unavailable; instructor test examples establish only: " + "; ".join(
+                f"input {str(row.get('input', ''))[:45]!r} -> expected {str(row.get('expected_output', ''))[:35]!r}"
+                for row in oracle_examples[:4]
+            )
+        else:
+            intended = "Not specified in the supplied assignment; expected behavior cannot be inferred from the student's source."
+    elif not intended:
         intended = str(report.get("problem", ""))
     return {
         "status": "fallback",
         "program_purpose": "Conservative static source inventory; detailed semantic interpretation was unavailable from the LLM.",
         "actual_behavior": " ".join(actual_parts),
         "intended_behavior": intended[:900],
-        "contract_alignment": "Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract.",
+        "contract_alignment": (
+            "partially specified by configured instructor test examples only; full assignment semantics remain undetermined."
+            if not actionable and _test_oracle_examples(report) else
+            "undetermined — no actionable assignment statement or contract was available."
+            if not actionable else
+            "Not automatically established by the fallback summary; compare the observed source behavior with the assignment contract."
+        ),
         "algorithm_overview": "Source-level inventory only; no algorithmic behavior is inferred without a successful semantic review.",
         "functions": functions[:20],
         "data_structures": ["Array declaration detected." for _ in [0] if re.search(r"\[[^\]]*\]", source)] + (["Dynamic memory allocation detected."] if any(name in allocation_apis for name in ("malloc", "calloc", "realloc")) else []),
         "execution_flow": ["Function definitions and API usage were inventoried from source text."],
         "assumptions": ["This fallback is a lexical inventory, not a proof of program behavior."],
-        "ambiguities": ["LLM program understanding was unavailable; verify complex control/data flow manually."],
+        "ambiguities": [
+            "LLM program understanding was unavailable; verify complex control/data flow manually."
+        ] + ([] if actionable else ["The assignment statement lacks actionable requirements; task-specific correctness is not measurable."]),
         "source_line_count": len(lines),
     }
 
@@ -2119,9 +2352,9 @@ def _fallback_metric_score(
         "No measured analyzer score or valid LLM metric score was available."
     )
     return {
-        "name": metric_name, "score": 70.0,
-        "rationale": evidence_note + " A neutral provisional score is used; the findings remain visible for human review.",
-        "basis": "limited_evidence",
+        "name": metric_name, "score": None,
+        "rationale": evidence_note + " No score is assigned without a valid LLM or completed analyzer measurement.",
+        "basis": "insufficient_evidence",
         "evidence_ids": list(dict.fromkeys(
             ref for item in relevant for ref in item.get("evidence_ids", [])
         ))[:6],
@@ -2142,6 +2375,12 @@ def _compact_global_review_payload(
     payload = {
         "task": str(report.get("problem", "C programming assignment"))[:500],
         "problem_contract": _grading_context_value(rules.get("problem_contract", {})),
+        "assignment_derived_inferred_contract": _grading_context_value(_inferred_contract_from_report(report)),
+        "assignment_contract_is_actionable": _assignment_contract_is_specific(
+            report.get("problem", rules.get("problem", "")),
+            rules.get("problem_contract", {}),
+            _inferred_contract_from_report(report),
+        ),
         "source_line_count": len(source_code.splitlines()),
         "source_was_truncated": truncated,
         "source_visible_line_ranges": _compress_line_numbers(visible_lines),
@@ -2154,6 +2393,7 @@ def _compact_global_review_payload(
         "review_constraints": [
             "Inspect the source and analyzer evidence together; analyzer output is evidence, not infallible truth.",
             "Only report a defect when the source, assignment contract, or cited test/analyzer evidence supports it.",
+            "An empty instructor problem_contract is not itself a student-code defect. Use the assignment-derived inferred contract only when it was generated from the assignment statement without seeing student source. If assignment_contract_is_actionable is false and no tests exist, state task-correctness uncertainty; never create an 'empty contract' finding.",
             "Do not invent compiler runs, test outcomes, execution measurements, or evidence IDs.",
             "A passing finite test suite does not prove universal correctness or memory safety.",
             "A source-level concern that was not dynamically tested must be labelled potential or unverified.",
@@ -2205,6 +2445,209 @@ def _infer_finding_metric(raw: dict[str, Any], metric_names: set[str]) -> str:
     return "unmapped"
 
 
+def _inferred_contract_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    generated = report.get("test_generation", {})
+    if not isinstance(generated, dict) or generated.get("status") != "completed":
+        return {}
+    contract = generated.get("inferred_contract", {})
+    if not isinstance(contract, dict):
+        return {}
+    required = ("input_format", "output_format", "semantics")
+    if any(not str(contract.get(key, "")).strip() for key in required):
+        return {}
+    return contract
+
+
+def _assignment_contract_summary(report: dict[str, Any], rules: dict[str, Any]) -> str:
+    explicit = rules.get("problem_contract", {})
+    if isinstance(explicit, dict) and explicit:
+        return _grading_context_value(explicit)
+    inferred = _inferred_contract_from_report(report)
+    if inferred:
+        return _grading_context_value(inferred)
+    return "No actionable assignment contract is available. Do not infer requirements from the student's source."
+
+
+def _source_checks_scanf_result(source: str) -> bool:
+    """Recognise common direct and assigned scanf-result checks."""
+    direct = re.search(
+        r"\b(?:f?scanf)\s*\([^;]*\)\s*(?:!=|==|<=|>=|<|>)\s*\d+",
+        source, re.IGNORECASE | re.DOTALL,
+    )
+    if direct:
+        return True
+    assigned = re.search(
+        r"\b(?:int|long|short|size_t)\s+(\w+)\s*=\s*(?:f?scanf)\s*\([^;]*\);"
+        r"[\s\S]{0,240}?\bif\s*\([^)]*\b\1\b[^)]*(?:!=|==|<=|>=|<|>)",
+        source, re.IGNORECASE,
+    )
+    return bool(assigned)
+
+
+def _source_validates_positive_count(source: str, variable: str = "count") -> bool:
+    name = re.escape(variable)
+    patterns = (
+        rf"\bif\s*\(\s*{name}\s*<=\s*0\s*\)",
+        rf"\bif\s*\(\s*{name}\s*<\s*1\s*\)",
+        rf"\bif\s*\(\s*{name}\s*==\s*0\s*\)",
+        rf"\bif\s*\(\s*!\s*{name}\s*\)",
+    )
+    return any(re.search(pattern, source, re.IGNORECASE) for pattern in patterns)
+
+
+def _explicit_style_requirement(rules: dict[str, Any]) -> bool:
+    rubric = rules.get("rubric", rules.get("rubrics", {}))
+    text = json.dumps(rubric, ensure_ascii=False).casefold()
+    return any(term in text for term in ("variable naming", "naming convention", "descriptive variable names", "comment quality"))
+
+
+def _finding_prevalidation_reason(
+    finding: dict[str, Any],
+    source: str,
+    rules: dict[str, Any],
+    report: dict[str, Any],
+) -> str | None:
+    title = str(finding.get("title", ""))
+    description = str(finding.get("description", ""))
+    claim = f"{title}. {description}".casefold()
+    metric = str(finding.get("metric", ""))
+    line = finding.get("line_start")
+
+    # Configuration/test-coverage limitations are not defects in student code.
+    if re.search(
+        r"empty contract|missing (?:an? )?(?:explicit )?contract|contract ambiguity|"
+        r"no (?:assignment )?contract|no test cases? (?:were )?configured|"
+        r"no test data|test data (?:is|are) (?:missing|unavailable)|"
+        r"underspecified assignment",
+        claim,
+    ):
+        return "This is an assignment/configuration limitation, not a defect in the submitted source."
+
+    # Reject a claim whose own explanation explicitly says the behavior is safe/correct.
+    if re.search(
+        r"which is correct|this is correct|therefore correct|is handled correctly|"
+        r"does not cause undefined behavior|doesn't cause undefined behavior|"
+        r"no undefined behavior|no risk|not a defect|not an issue|is safe because|"
+        r"the loop body is skipped, which is correct",
+        claim,
+    ):
+        return "The finding contradicts its own explanation, which describes the behavior as correct or safe."
+
+    if re.search(r"scanf.{0,160}(?:does not|doesn't|fails? to|without|no|not).{0,100}(?:check|validat|inspect).{0,80}(?:return|result|failure)", claim) \
+            or re.search(r"(?:does not|doesn't|fails? to|without).{0,100}(?:check|validat).{0,80}scanf", claim):
+        if _source_checks_scanf_result(source):
+            return "The source checks the scanf return value; the claimed missing-input-check defect is disproved by the code."
+
+    if re.search(r"count|loop count|number of (?:values|elements|items)", claim) and re.search(
+        r"(?:does not|doesn't|fails? to|without|missing|lacks?|no).{0,100}(?:validat|check|bound|positive|non.?negative)", claim
+    ):
+        if _source_validates_positive_count(source, "count") or _source_validates_positive_count(source, "n"):
+            return "The source validates the loop count before iteration; the claimed missing count validation is unsupported."
+
+    # A loop induction variable is not itself an out-of-bounds memory access.
+    if metric == "memory_safety" and re.search(r"loop variable|loop index|for.?loop|bounds check", claim):
+        lines = source.splitlines()
+        start = max(1, int(line or 1) - 1)
+        end = min(len(lines), int(finding.get("line_end") or line or 1) + 8)
+        context = "\n".join(lines[start - 1:end])
+        if not re.search(r"\b[A-Za-z_]\w*\s*\[\s*[A-Za-z_]\w*\s*\]", context):
+            return "The cited loop has no associated indexed buffer/array access; an induction variable alone is not a memory-safety defect."
+
+    if metric == "memory_safety":
+        lines = source.splitlines()
+        start = max(1, int(line or 1) - 2)
+        end = min(len(lines), int(finding.get("line_end") or line or 1) + 6)
+        context = "\n".join(lines[start - 1:end])
+        memory_operation = re.search(
+            r"\b(?:malloc|calloc|realloc|free|memcpy|memmove|strcpy|strncpy)\s*\(|"
+            r"\b[A-Za-z_]\w*\s*\[[^\]]+\]|\*\s*[A-Za-z_]\w*|->",
+            context,
+        )
+        if not memory_operation:
+            return "No pointer, allocation, dereference, or indexed-memory operation supports this memory-safety claim at the cited location."
+
+    if re.search(r"variable naming|naming convention|variable name|comments? could|formatting preference", claim):
+        if not _explicit_style_requirement(rules):
+            return "This is an optional style preference, not an explicitly configured grading requirement."
+
+    has_contract = _assignment_contract_is_specific(
+        report.get("problem", rules.get("problem", "")),
+        rules.get("problem_contract", {}),
+        _inferred_contract_from_report(report),
+    )
+    if not has_contract and not _has_configured_tests(report.get(metric, {})) and metric in {"correctness", "logical"}:
+        if re.search(
+            r"assignment|contract|required behavior|expected output|specification|task requirement|"
+            r"input validation|invalid input|malformed input|scanf|loop count|count must|"
+            r"edge case|expected result|output format|program must|task must",
+            claim,
+        ):
+            return "No actionable assignment contract or relevant tests exist; this task-dependent correctness claim is unmeasurable."
+
+    # Remove generic observations which contain no testable claim, even when
+    # the model disguises the generic phrase in the description rather than title.
+    if (
+        re.fullmatch(r"potential (?:input|logic|memory|runtime|program) issue", title.strip(), re.IGNORECASE)
+        or re.search(r"\bpotential (?:input|logic|memory|runtime|program)[ -]handling issue\b", claim)
+        or re.search(r"\b(issue|risk|problem)\s+(?:may|might|could)\s+exist\b", claim)
+    ):
+        return "The finding is generic and does not identify a falsifiable defect."
+    return None
+
+
+def _deduplicate_validated_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    for finding in findings:
+        text = " ".join(re.findall(r"[a-z0-9_]+", f"{finding.get('title', '')} {finding.get('description', '')}".casefold()))
+        duplicate = False
+        for prior in unique:
+            same_metric = finding.get("metric") == prior.get("metric")
+            left, right = finding.get("line_start"), prior.get("line_start")
+            same_area = left is not None and right is not None and abs(left - right) <= 2
+            prior_text = " ".join(re.findall(r"[a-z0-9_]+", f"{prior.get('title', '')} {prior.get('description', '')}".casefold()))
+            ratio = SequenceMatcher(None, text, prior_text).ratio()
+            tokens_a, tokens_b = set(text.split()), set(prior_text.split())
+            overlap = len(tokens_a & tokens_b) / max(1, len(tokens_a | tokens_b))
+            if same_metric and (text == prior_text or (same_area and (ratio >= 0.68 or overlap >= 0.66))):
+                duplicate = True
+                break
+        if not duplicate:
+            unique.append(finding)
+    return unique
+
+
+def _prevalidate_rsi_findings(
+    review: dict[str, Any], source: str, rules: dict[str, Any], report: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for finding in review.get("findings", []) if isinstance(review.get("findings"), list) else []:
+        if not isinstance(finding, dict):
+            continue
+        reason = _finding_prevalidation_reason(finding, source, rules, report)
+        if reason:
+            rejected.append({
+                "finding_id": finding.get("id"), "metric": finding.get("metric"),
+                "title": finding.get("title"), "line_start": finding.get("line_start"),
+                "reason": reason,
+            })
+        else:
+            kept.append(finding)
+    deduped = _deduplicate_validated_findings(kept)
+    if len(deduped) != len(kept):
+        kept_ids = {id(item) for item in deduped}
+        for item in kept:
+            if id(item) not in kept_ids:
+                rejected.append({
+                    "finding_id": item.get("id"), "metric": item.get("metric"),
+                    "title": item.get("title"), "line_start": item.get("line_start"),
+                    "reason": "Duplicate of another retained finding describing the same defect.",
+                })
+    cleaned = dict(review)
+    cleaned["findings"] = deduped
+    return cleaned, rejected
+
+
 def _normalise_global_review(
     parsed: dict[str, Any] | None,
     enabled_metrics: list[dict[str, Any]],
@@ -2221,18 +2664,26 @@ def _normalise_global_review(
     for wrapper_key in ("result", "review", "response", "output"):
         wrapped = parsed.get(wrapper_key)
         if isinstance(wrapped, dict) and any(
-            key in wrapped for key in ("findings", "issues", "defects", "bugs")
+            key in wrapped for key in ("findings", "issues", "defects", "bugs", "observations", "identified_issues")
         ):
             parsed = wrapped
             break
     raw_findings_value = next(
         (parsed[key] for key in (
-            "findings", "issues", "defects", "bugs", "observations", "identified_issues"
+            "findings", "issues", "defects", "bugs", "observations", "identified_issues",
+            "finding_descriptions",
         ) if key in parsed),
         None,
     )
     if isinstance(raw_findings_value, dict):
-        raw_findings_value = [raw_findings_value]
+        # Accept both a single finding object and keyed finding maps returned
+        # by local models. Evidence/location validation below still decides
+        # whether each mapped value can be retained.
+        raw_findings_value = (
+            [raw_findings_value]
+            if any(key in raw_findings_value for key in ("description", "text", "details", "issue", "line_start", "line"))
+            else list(raw_findings_value.values())
+        )
     elif isinstance(raw_findings_value, str):
         raw_findings_value = [raw_findings_value] if raw_findings_value.strip() else []
     if not isinstance(raw_findings_value, list):
@@ -2362,36 +2813,13 @@ def _normalise_global_review(
 
 
 def _program_understanding_response_schema() -> dict[str, Any]:
-    """Small JSON Schema for the initial semantic map."""
-    function_schema = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string", "maxLength": 100},
-            "role": {"type": "string", "maxLength": 220},
-            "line_start": {"type": "integer"},
-            "line_end": {"type": "integer"},
-        },
-        "required": ["name", "role", "line_start", "line_end"],
-    }
-    return {
-        "type": "object",
-        "properties": {
-            "actual_behavior": {"type": "string", "maxLength": 700},
-            "intended_behavior": {"type": "string", "maxLength": 500},
-            "contract_alignment": {"type": "string", "maxLength": 450},
-            "algorithm_overview": {"type": "string", "maxLength": 450},
-            "functions": {"type": "array", "items": function_schema, "maxItems": 12},
-            "data_structures": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 12},
-            "execution_flow": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 12},
-            "assumptions": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 8},
-            "ambiguities": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 8},
-        },
-        "required": [
-            "actual_behavior", "intended_behavior", "contract_alignment",
-            "algorithm_overview", "functions", "data_structures",
-            "execution_flow", "assumptions", "ambiguities",
-        ],
-    }
+    """Keep JSON object framing but let the semantic normalizer accept aliases.
+
+    Strict property grammars caused small local models to fail three times for
+    harmless schema variations (for example ``actual_source_behavior`` instead
+    of ``actual_behavior``). Required semantic content is validated in Python.
+    """
+    return {"type": "object", "additionalProperties": True}
 
 
 def _global_rsi_response_schema(enabled_metrics: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2439,7 +2867,7 @@ def _metric_score_response_schema(enabled_metrics: list[dict[str, Any]]) -> dict
             "type": "object",
             "properties": {
                 "score": {"type": "number"},
-                "rationale": {"type": "string", "maxLength": 120},
+                "rationale": {"type": "string", "maxLength": 420},
                 "zero_score_reason": {"type": "string", "maxLength": 160},
                 "confidence": {"type": "number"},
             },
@@ -2467,28 +2895,518 @@ def _call_grading_json(
     response_schema: dict[str, Any] | None = None,
     schema_name: str = "grading_response",
     validator: Callable[[dict[str, Any]], bool] | None = None,
+    max_attempts: int | None = None,
 ) -> tuple[dict[str, Any] | None, list[str], list[float], int]:
-    """Make exactly one structured request and validate the returned object."""
-    started = time.perf_counter()
+    """Request structured output with bounded self-correction retries."""
     diagnostics: list[str] = []
-    try:
-        parsed, raw = _request_json(
-            messages,
-            max_tokens=max_tokens,
-            enable_thinking=False,
-            response_schema=response_schema,
-            schema_name=schema_name,
-        )
-    except (requests.RequestException, RuntimeError, ValueError) as exc:
-        parsed, raw = None, f"{type(exc).__name__}: {exc}"
-    elapsed = [round(time.perf_counter() - started, 3)]
+    latencies: list[float] = []
+    working = [dict(item) for item in messages]
+    if max_attempts is None:
+        try:
+            max_attempts = int(settings.LLM_GRADING_RETRY_ATTEMPTS)
+        except (TypeError, ValueError, AttributeError):
+            max_attempts = 3
+    else:
+        try:
+            max_attempts = int(max_attempts)
+        except (TypeError, ValueError):
+            max_attempts = 2
+    max_attempts = max(1, min(3, max_attempts))
+    for attempt in range(1, max_attempts + 1):
+        started = time.perf_counter()
+        try:
+            parsed, raw = _request_json(
+                working, max_tokens=max_tokens, enable_thinking=None,
+                response_schema=response_schema, schema_name=schema_name,
+            )
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
+            parsed, raw = None, f"{type(exc).__name__}: {exc}"
+        latencies.append(round(time.perf_counter() - started, 3))
+        valid = isinstance(parsed, dict) and (validator is None or validator(parsed))
+        if valid:
+            if attempt > 1:
+                diagnostics.append(f"{schema_name}: valid response recovered on attempt {attempt}/{max_attempts}.")
+            return parsed, diagnostics, latencies, attempt
+        reason = (str(raw)[:900] if parsed is None else
+                  "JSON object failed stage-specific validation; required fields, types, ranges, or evidence anchors are invalid.")
+        diagnostics.append(f"{schema_name} attempt {attempt}/{max_attempts}: {reason or 'invalid response'}")
+        if attempt < max_attempts:
+            working = [dict(item) for item in messages]
+            working.append({"role": "assistant", "content": str(raw)[:3000] if raw else json.dumps(parsed, ensure_ascii=False)[:3000]})
+            working.append({"role": "user", "content": (
+                f"REPAIR REQUIRED (attempt {attempt + 1}/{max_attempts}). Your previous answer was rejected: {reason}. "
+                "Re-read the original task and evidence. Return a corrected, complete JSON object matching the exact schema. "
+                "Do not omit required keys, invent evidence IDs, add prose, or change source line anchors. If evidence is insufficient, state that explicitly in the allowed fields."
+            )})
+    return None, diagnostics, latencies, len(latencies)
 
-    valid = isinstance(parsed, dict) and (validator is None or validator(parsed))
-    if valid:
-        return parsed, diagnostics, elapsed, 1
-    reason = str(raw)[:700] if parsed is None else "valid JSON did not satisfy the stage-specific response contract"
-    diagnostics.append(f"{schema_name}: {reason or 'invalid JSON response'}")
-    return None, diagnostics, elapsed, 1
+
+def _finding_validation_schema() -> dict[str, Any]:
+    decision_schema = {
+        "type": "object",
+        "properties": {
+            "finding_id": {"type": "string"},
+            "decision": {"type": "string", "enum": ["accept", "reject", "uncertain"]},
+            "source_line_valid": {"type": "boolean"},
+            "contract_relevant": {"type": "boolean"},
+            "claim_supported": {"type": "boolean"},
+            "logical_consistency": {"type": "boolean"},
+            "evidence_valid": {"type": "boolean"},
+            "reason": {"type": "string", "minLength": 12, "maxLength": 500},
+        },
+        "required": [
+            "finding_id", "decision", "source_line_valid", "contract_relevant",
+            "claim_supported", "logical_consistency", "evidence_valid", "reason",
+        ],
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "decisions": {"type": "array", "items": decision_schema},
+            "summary": {"type": "string", "maxLength": 500},
+        },
+        "required": ["decisions", "summary"],
+    }
+
+
+def _c_identifier_type(source: str, identifier: str) -> str | None:
+    """Return a simple local C declaration type for an identifier, if visible."""
+    type_pattern = re.compile(
+        r"\b(?P<type>(?:unsigned\s+|signed\s+)?(?:char|short(?:\s+int)?|int|long(?:\s+long)?(?:\s+int)?|size_t|float|double|long\s+double))\s+[^;{}]*?\b"
+        + re.escape(identifier) + r"\b",
+        re.IGNORECASE,
+    )
+    for source_line in source.splitlines():
+        match = type_pattern.search(source_line)
+        if match:
+            return " ".join(match.group("type").casefold().split())
+    return None
+
+
+def _is_integer_c_type(type_name: str | None) -> bool:
+    if not type_name:
+        return False
+    return bool(re.search(r"\b(char|short|int|long|size_t)\b", type_name)) and not bool(
+        re.search(r"\b(float|double)\b", type_name)
+    )
+
+
+def _single_numeric_output(value: Any) -> float | None:
+    text = str(value or "").strip()
+    number_pattern = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
+    if re.fullmatch(number_pattern, text):
+        token = text
+    else:
+        # Some assignments print a label such as "Average: 2.50". Accept only
+        # one numeric token so this does not guess which value is the result.
+        tokens = re.findall(number_pattern, text)
+        if len(tokens) != 1:
+            return None
+        token = tokens[0]
+    try:
+        number = float(token)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _integer_division_at_line(source: str, line_number: int) -> tuple[str, str, str] | None:
+    """Find integer/integer division used in a floating-point result context.
+
+    Handles both ``double avg = sum / count`` and the subtle but common
+    ``printf("%.2f", (double)(sum / count))`` bug. A cast applied to the
+    *quotient* is too late; only a cast applied directly to an operand changes
+    the arithmetic type before division.
+    """
+    lines = source.splitlines()
+    if not isinstance(line_number, int) or isinstance(line_number, bool) or not 1 <= line_number <= len(lines):
+        return None
+    code = lines[line_number - 1].split("//", 1)[0]
+    matches = list(re.finditer(
+        r"(?P<num>[A-Za-z_]\w*)\s*/\s*(?P<den>[A-Za-z_]\w*)\b", code
+    ))
+    if not matches:
+        return None
+
+    for match in matches:
+        numerator, denominator = match.group("num", "den")
+        numerator_type = _c_identifier_type(source, numerator)
+        denominator_type = _c_identifier_type(source, denominator)
+        if not (_is_integer_c_type(numerator_type) and _is_integer_c_type(denominator_type)):
+            continue
+
+        # A cast immediately before an operand makes that operand floating;
+        # a cast before the opening parenthesis of the whole quotient does not.
+        before_numerator = code[:match.start("num")]
+        before_denominator = code[match.start("num"):match.start("den")]
+        direct_cast = re.compile(r"\(\s*(?:float|double|long\s+double)\s*\)\s*$")
+        if direct_cast.search(before_numerator) or direct_cast.search(before_denominator):
+            continue
+
+        # Integer division is suspicious here only when its result is intended
+        # for floating-point output/storage. The exact failed fractional oracle
+        # is checked separately before this is accepted as a defect.
+        assignment = re.search(r"\b(?P<lhs>[A-Za-z_]\w*)\s*=\s*[^;]*$", code[:match.start("num")])
+        floating_destination = False
+        destination = "floating-point result"
+        if assignment:
+            candidate = assignment.group("lhs")
+            candidate_type = _c_identifier_type(source, candidate)
+            floating_destination = bool(candidate_type and re.search(r"\b(float|double)\b", candidate_type))
+            if floating_destination:
+                destination = candidate
+        floating_format = bool(re.search(r"%[-+0-9.]*[fFeEgGaA]", code))
+        cast_after_division = bool(
+            re.search(r"\(\s*(?:float|double|long\s+double)\s*\)\s*\(", before_numerator)
+        )
+        if floating_destination or floating_format or cast_after_division:
+            return destination, numerator, denominator
+    return None
+
+
+def _integer_division_test_evidence(
+    source: str,
+    ledger: list[dict[str, Any]],
+    line_number: int | None = None,
+    metric_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Corroborate integer truncation with a float destination and failed oracle test."""
+    lines = source.splitlines()
+    candidate_lines = [line_number] if isinstance(line_number, int) else []
+    if not candidate_lines:
+        candidate_lines = list(range(1, len(lines) + 1))
+    for number in candidate_lines:
+        if _integer_division_at_line(source, number) is None:
+            continue
+        for item in ledger:
+            if item.get("kind") != "test_result":
+                continue
+            facts = item.get("facts", {}) if isinstance(item.get("facts"), dict) else {}
+            if facts.get("metric") not in {"correctness", "logical"} or facts.get("passed") is not False:
+                continue
+            if metric_name and facts.get("metric") != metric_name:
+                continue
+            expected = _single_numeric_output(facts.get("expected"))
+            actual = _single_numeric_output(facts.get("actual"))
+            if expected is None or actual is None or math.isclose(expected, round(expected), abs_tol=1e-9):
+                continue
+            truncated = float(math.trunc(expected))
+            if math.isclose(actual, truncated, abs_tol=0.011):
+                source_id = f"E-SOURCE-L{number:03d}"
+                evidence_ids = [source_id]
+                if item.get("id"):
+                    evidence_ids.append(str(item["id"]))
+                return {
+                    "line": number,
+                    "lhs": _integer_division_at_line(source, number)[0],
+                    "numerator": _integer_division_at_line(source, number)[1],
+                    "denominator": _integer_division_at_line(source, number)[2],
+                    "expected": expected,
+                    "actual": actual,
+                    "test_id": facts.get("test_id"),
+                    "metric": facts.get("metric"),
+                    "evidence_ids": evidence_ids,
+                }
+    return None
+
+
+def _recover_integer_division_finding(
+    source: str,
+    ledger: list[dict[str, Any]],
+    enabled_metrics: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Recover the common C integer-division defect from exact source/test evidence."""
+    metric_names = {str(item.get("name")) for item in enabled_metrics}
+    if not metric_names.intersection({"correctness", "logical"}):
+        return None
+    evidence = _integer_division_test_evidence(source, ledger)
+    if not evidence or evidence.get("metric") not in metric_names:
+        return None
+    metric = evidence["metric"]
+    return {
+        "id": "F-RECOVERED-INT-DIV",
+        "metric": metric,
+        "severity": "high",
+        "title": "Integer division truncates the fractional result",
+        "description": (
+            f"Line {evidence['line']} assigns {evidence['numerator']} / {evidence['denominator']} to floating-point "
+            f"{evidence['lhs']}, but both operands are integer-typed so division truncates before conversion. "
+            f"The configured test expected {evidence['expected']:.2f} and received {evidence['actual']:.2f}."
+        ),
+        "line_start": evidence["line"],
+        "line_end": evidence["line"],
+        "code_excerpt": linesafe(source, evidence["line"]),
+        "evidence_ids": evidence["evidence_ids"],
+        "confidence": 1.0,
+        "origin": "deterministic_source_test_recovery",
+    }
+
+
+def linesafe(source: str, line_number: int) -> str:
+    lines = source.splitlines()
+    return lines[line_number - 1][:400] if 1 <= line_number <= len(lines) else ""
+
+
+def _candidate_integer_division_evidence(
+    finding: dict[str, Any], source: str, ledger: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    claim = f"{finding.get('title', '')} {finding.get('description', '')}".casefold()
+    if not re.search(r"integer division|truncat|fractional|fractional part|division|average|arithmetic mean", claim):
+        return None
+    line = finding.get("line_start")
+    evidence = _integer_division_test_evidence(
+        source, ledger, line if isinstance(line, int) else None, str(finding.get("metric", "")) or None,
+    )
+    if evidence is None:
+        return None
+    return evidence
+
+
+def _enrich_candidate_evidence(
+    candidates: list[dict[str, Any]], source: str, ledger: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Attach precise source/test references; return independent deterministic proofs."""
+    known_ids = {str(item.get("id")) for item in ledger if item.get("id")}
+    enriched: list[dict[str, Any]] = []
+    proofs: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        item = dict(candidate)
+        refs = [str(ref) for ref in item.get("evidence_ids", []) if str(ref) in known_ids]
+        line = item.get("line_start")
+        if isinstance(line, int) and not isinstance(line, bool):
+            source_id = f"E-SOURCE-L{line:03d}"
+            if source_id in known_ids:
+                refs.append(source_id)
+        proof = _candidate_integer_division_evidence(item, source, ledger)
+        if proof:
+            refs.extend(proof["evidence_ids"])
+            proofs[str(item.get("id"))] = proof
+        item["evidence_ids"] = list(dict.fromkeys(refs))[:8]
+        enriched.append(item)
+    return enriched, proofs
+
+
+def _adjudicate_rsi_findings(
+    candidates: list[dict[str, Any]],
+    *,
+    report: dict[str, Any],
+    rules: dict[str, Any],
+    program_understanding: dict[str, Any] | None,
+    ledger: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Adjudicate RSI candidates, short-circuiting only when source+oracle prove a defect.
+
+    Exact deterministic corroboration is preferred over another slow model call:
+    the line must show integer operands assigned to a floating destination, and a
+    configured instructor test must show the expected fractional result while the
+    program returns the integer-truncated value. Other candidates still require the
+    independent same-model adjudication and remain fail-closed on ambiguity.
+    """
+    if not candidates:
+        return [], [], {"status": "not_needed", "calls": 0, "diagnostics": []}
+
+    source_code = str(report.get("source_code") or "")
+    candidates, deterministic_proofs = _enrich_candidate_evidence(candidates, source_code, ledger)
+    deterministic_accepted: list[dict[str, Any]] = []
+    unresolved_candidates: list[dict[str, Any]] = []
+    for item in candidates:
+        proof = deterministic_proofs.get(str(item.get("id")))
+        if proof and isinstance(item.get("line_start"), int) and item.get("line_start") == proof.get("line"):
+            deterministic_accepted.append({
+                **item,
+                "validation_status": "accepted_deterministic_source_test",
+                "validation_reason": (
+                    f"Source line {proof['line']} performs integer division using integer operands before assignment "
+                    f"to a floating-point variable; instructor test {proof['test_id']} confirms expected "
+                    f"{proof['expected']:.2f} versus actual {proof['actual']:.2f}."
+                ),
+            })
+        else:
+            unresolved_candidates.append(item)
+
+    # When a test and source types already prove a root defect, nearby RSI
+    # restatements of the same arithmetic problem should not trigger another
+    # slow adjudication request or be described as wholly unproven.
+    duplicate_rejections: list[dict[str, Any]] = []
+    retained_integer_division = [
+        item for item in deterministic_accepted
+        if item.get("origin") == "deterministic_source_test_recovery"
+        or item.get("validation_status") == "accepted_deterministic_source_test"
+    ]
+    if retained_integer_division:
+        retained_lines = [
+            int(item["line_start"]) for item in retained_integer_division
+            if isinstance(item.get("line_start"), int) and not isinstance(item.get("line_start"), bool)
+        ]
+        arithmetic_terms = re.compile(
+            r"integer division|truncat|fraction|thirds|quotient|average|arithmetic mean|division result",
+            re.IGNORECASE,
+        )
+        still_unresolved: list[dict[str, Any]] = []
+        for item in unresolved_candidates:
+            candidate_text = f"{item.get('title', '')} {item.get('description', '')}"
+            candidate_line = item.get("line_start")
+            nearby = (
+                isinstance(candidate_line, int)
+                and any(abs(candidate_line - line) <= 2 for line in retained_lines)
+            )
+            same_metric = any(item.get("metric") == accepted.get("metric") for accepted in retained_integer_division)
+            if nearby and same_metric and arithmetic_terms.search(candidate_text):
+                retained_line = min(retained_lines, key=lambda line: abs(candidate_line - line))
+                duplicate_rejections.append({
+                    "finding_id": item.get("id"), "metric": item.get("metric"),
+                    "title": item.get("title"), "line_start": candidate_line,
+                    "reason": (
+                        f"This candidate overlaps the integer-division defect already validated at line {retained_line}; "
+                        "it was excluded as a duplicate and was not counted separately."
+                    ),
+                    "decision": "duplicate_of_validated_finding",
+                })
+            else:
+                still_unresolved.append(item)
+        unresolved_candidates = still_unresolved
+
+    if not unresolved_candidates:
+        return deterministic_accepted, duplicate_rejections, {
+            "status": "completed",
+            "validation_mode": "deterministic_source_test_corroboration",
+            "calls": 0,
+            "latency_seconds": [],
+            "diagnostics": [],
+            "summary": "Retained findings were corroborated by source semantics and configured test-oracle failures; duplicate candidates were excluded.",
+            "candidate_count": len(candidates),
+            "accepted_count": len(deterministic_accepted),
+            "rejected_count": len(duplicate_rejections),
+        }
+
+    source, truncated, visible = _bounded_numbered_source(
+        source_code, settings.runtime_value("LLM_GLOBAL_SOURCE_MAX_CHARS")
+    )
+    actionable_contract = _assignment_contract_is_specific(
+        report.get("problem", rules.get("problem", "")),
+        rules.get("problem_contract", {}), _inferred_contract_from_report(report),
+    )
+    oracle_examples = _test_oracle_examples(report)
+    payload = {
+        "task": str(report.get("problem", ""))[:1_000],
+        "instructor_contract": _grading_context_value(rules.get("problem_contract", {})),
+        "assignment_derived_inferred_contract": _grading_context_value(_inferred_contract_from_report(report)),
+        "contract_is_actionable": actionable_contract,
+        "partial_test_oracle_available": bool(oracle_examples),
+        "instructor_test_oracle_examples": oracle_examples,
+        "source_was_truncated": truncated,
+        "source_visible_line_ranges": _compress_line_numbers(visible),
+        "source_code_with_line_numbers": source,
+        "program_understanding": program_understanding or {},
+        "candidate_findings": unresolved_candidates,
+        "evidence_ledger": _compact_ledger(ledger),
+        "instructions": [
+            "A finding is a student-code defect or rubric violation, not a missing test suite or incomplete grading configuration.",
+            "Verify the exact cited source lines and whether the shown code supports the described defect.",
+            "Check whether the finding contradicts its own explanation or any explicit guard/validation in the source.",
+            "For memory safety, require an actual relevant pointer, allocation, dereference, or indexed-memory operation; a loop induction variable alone is not a memory defect.",
+            "Do not require malformed-input handling unless the assignment specifies it or the source's required-input path is unsafe.",
+            "Treat instructor contracts, assignment-only inferred contracts, and instructor test input/expected-output examples as expected-behavior evidence. Test examples are partial, not a complete specification.",
+            "Every evidence ID must exist in the ledger and materially support the claim. Prefer exact failed test results and matching source-line records over aggregate metric summaries.",
+            "A failed test with different expected and actual output corroborates a behavior defect in that metric; it does not by itself prove an unrelated root cause.",
+            "Reject duplicate findings and optional style preferences unless the rubric explicitly requires them.",
+            "Use uncertain rather than accepting a claim with missing or conflicting support.",
+        ],
+    }
+    system = (
+        "You are the independent post-RSI finding adjudicator for a C assignment grader. "
+        "Validate every candidate independently. Accept only a concrete, source-grounded defect "
+        "that is relevant to the supplied contract or a configured instructor test oracle. "
+        "Do not mark a specific failed test as invalid merely because an aggregate metric summary "
+        "is generic; inspect the test_result record containing input, expected, and actual values. "
+        "Missing/empty assignment text is a grading limitation, not a student-code finding. "
+        "Return one decision for every finding ID exactly once. Return JSON only."
+    )
+    expected_ids = {str(item.get("id")) for item in unresolved_candidates}
+
+    def valid_response(value: dict[str, Any]) -> bool:
+        rows = value.get("decisions")
+        if not isinstance(rows, list) or len(rows) != len(expected_ids):
+            return False
+        ids: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return False
+            finding_id = str(row.get("finding_id", ""))
+            if finding_id not in expected_ids or finding_id in ids:
+                return False
+            ids.append(finding_id)
+            if row.get("decision") not in {"accept", "reject", "uncertain"}:
+                return False
+            for field in ("source_line_valid", "contract_relevant", "claim_supported", "logical_consistency", "evidence_valid"):
+                if not isinstance(row.get(field), bool):
+                    return False
+            if len(str(row.get("reason", "")).strip()) < 12:
+                return False
+        return set(ids) == expected_ids and isinstance(value.get("summary"), str)
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    parsed, diagnostics, latencies, calls = _call_grading_json(
+        messages,
+        # Validation is a compact one-decision-per-finding task. A bounded token
+        # budget and two attempts prevent a single adjudication from dominating
+        # grading latency; deterministic proof above handles exact test/source cases.
+        max_tokens=min(700, settings.runtime_value("LLM_GLOBAL_RSI_MAX_TOKENS")),
+        response_schema=_finding_validation_schema(),
+        schema_name="post_rsi_finding_validation",
+        validator=valid_response,
+        max_attempts=2,
+    )
+    if parsed is None:
+        rejected = list(duplicate_rejections) + [{
+            "finding_id": item.get("id"), "metric": item.get("metric"),
+            "title": item.get("title"), "line_start": item.get("line_start"),
+            "reason": "This candidate could not be independently validated from its own source location and evidence. It was excluded; other validated findings remain unaffected.",
+        } for item in unresolved_candidates]
+        return deterministic_accepted, rejected, {
+            "status": "completed_with_deterministic_fallback" if deterministic_accepted else "unavailable_fail_closed",
+            "validation_mode": "deterministic_source_test_plus_llm_for_unresolved",
+            "calls": calls,
+            "latency_seconds": latencies,
+            "diagnostics": diagnostics,
+            "candidate_count": len(candidates),
+            "accepted_count": len(deterministic_accepted),
+            "rejected_count": len(rejected),
+        }
+
+    decision_by_id = {str(row["finding_id"]): row for row in parsed["decisions"]}
+    accepted: list[dict[str, Any]] = list(deterministic_accepted)
+    rejected: list[dict[str, Any]] = list(duplicate_rejections)
+    required_flags = (
+        "source_line_valid", "contract_relevant", "claim_supported",
+        "logical_consistency", "evidence_valid",
+    )
+    for item in unresolved_candidates:
+        row = decision_by_id[str(item.get("id"))]
+        valid = row.get("decision") == "accept" and all(row.get(flag) is True for flag in required_flags)
+        if valid:
+            accepted.append({**item, "validation_status": "accepted", "validation_reason": str(row.get("reason", ""))[:500]})
+        else:
+            rejected.append({
+                "finding_id": item.get("id"), "metric": item.get("metric"),
+                "title": item.get("title"), "line_start": item.get("line_start"),
+                "reason": str(row.get("reason", "Finding did not pass every independent validation check."))[:500],
+                "decision": row.get("decision"),
+                "failed_checks": [flag for flag in required_flags if row.get(flag) is not True],
+            })
+    return accepted, rejected, {
+        "status": "completed" if not rejected else "completed_with_rejections",
+        "validation_mode": "deterministic_source_test_plus_llm_for_unresolved",
+        "calls": calls,
+        "latency_seconds": latencies,
+        "diagnostics": diagnostics,
+        "summary": str(parsed.get("summary", ""))[:500],
+        "candidate_count": len(candidates), "accepted_count": len(accepted),
+        "rejected_count": len(rejected),
+    }
 
 
 def understand_program_with_llm(
@@ -2521,11 +3439,13 @@ def understand_program_with_llm(
     source_line_count = len(str(report.get("source_code") or "").splitlines())
     parsed, diagnostics, latencies, calls = _call_grading_json(
         messages,
-        max_tokens=settings.runtime_value("LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS"),
+        max_tokens=min(1_000, settings.runtime_value("LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS")),
         response_schema=_program_understanding_response_schema(),
         schema_name="program_understanding",
+        max_attempts=2,
         validator=lambda item: _normalise_program_understanding(
-            item, source_line_count, visible_source_lines or set(range(1, source_line_count + 1))
+            item, source_line_count, visible_source_lines or set(range(1, source_line_count + 1)),
+            str(report.get("source_code") or ""),
         ) is not None,
     )
     visible_source_lines = _LAST_FITTED_SOURCE_LINES.get() or visible_source_lines or set(range(1, source_line_count + 1))
@@ -2533,7 +3453,51 @@ def understand_program_with_llm(
         parsed,
         len(str(report.get("source_code") or "").splitlines()),
         visible_source_lines,
+        str(report.get("source_code") or ""),
     )
+    contract_is_actionable = _assignment_contract_is_specific(
+        report.get("problem", rules.get("problem", "")),
+        rules.get("problem_contract", {}),
+        _inferred_contract_from_report(report),
+    )
+    if understanding is not None:
+        if not contract_is_actionable:
+            # Do not derive the specification from student code. Configured
+            # instructor test pairs can, however, establish a partial oracle.
+            oracle_examples = _test_oracle_examples(report)
+            if oracle_examples:
+                sample_text = "; ".join(
+                    f"input {str(row.get('input', ''))[:45]!r} -> expected {str(row.get('expected_output', ''))[:35]!r}"
+                    for row in oracle_examples[:4]
+                )
+                understanding["intended_behavior"] = (
+                    "A complete assignment statement was not supplied. The configured instructor test oracle establishes only these examples: "
+                    + sample_text
+                )[:900]
+                understanding["contract_alignment"] = (
+                    "partially specified by instructor test examples only; full assignment semantics remain undetermined."
+                )
+                ambiguities = list(understanding.get("ambiguities", []))
+                ambiguities.append("Only configured input/expected-output examples are available; they do not define the complete task contract.")
+                understanding["ambiguities"] = list(dict.fromkeys(ambiguities))[:8]
+                understanding["contract_source"] = "configured instructor test oracle; partial examples only"
+            else:
+                # Do not allow the understanding model to copy observed source
+                # behavior into an invented assignment expectation.
+                understanding["intended_behavior"] = "Not specified in the supplied assignment; expected behavior cannot be inferred from the student's source."
+                understanding["contract_alignment"] = "undetermined — no actionable assignment statement, instructor contract, assignment-derived I/O contract, or test oracle was available."
+                ambiguities = list(understanding.get("ambiguities", []))
+                ambiguities.append("The assignment statement is a title/label or otherwise lacks actionable requirements; task-specific correctness is not measurable.")
+                understanding["ambiguities"] = list(dict.fromkeys(ambiguities))[:8]
+        else:
+            inferred = _inferred_contract_from_report(report)
+            if inferred:
+                understanding["intended_behavior"] = (
+                    f"Input: {inferred.get('input_format')}. Semantics: "
+                    + "; ".join(str(item) for item in inferred.get("semantics", [])[:6])
+                    + f" Output: {inferred.get('output_format')}."
+                )[:900]
+                understanding["contract_source"] = "LLM-inferred from the assignment statement only; student source was excluded."
     metadata = {
         "status": "completed" if understanding is not None else "unavailable",
         "calls": calls,
@@ -2561,35 +3525,21 @@ def _call_global_review_iteration(
     ledger: list[dict[str, Any]],
     visible_source_lines: set[int],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str], list[float], int]:
-    """Run one findings-only RSI request, with no generation retries."""
-    started = time.perf_counter()
-    diagnostics: list[str] = []
-    raw = ""
-    try:
-        parsed, raw = _request_json(
-            messages,
-            max_tokens=settings.runtime_value("LLM_GLOBAL_RSI_MAX_TOKENS"),
-            enable_thinking=False,
-            response_schema=_global_rsi_response_schema(enabled_metrics),
-            schema_name="whole_program_rsi_findings",
-        )
-    except (requests.RequestException, RuntimeError, ValueError) as exc:
-        parsed = None
-        raw = f"{type(exc).__name__}: {exc}"
-    latency = [round(time.perf_counter() - started, 3)]
-
-    actual_visible_lines = _LAST_FITTED_SOURCE_LINES.get() or visible_source_lines
-    accepted = _normalise_global_review(
-        parsed, enabled_metrics, source_code, ledger, actual_visible_lines
+    """Run one RSI pass, retrying malformed or evidence-invalid JSON."""
+    schema = _global_rsi_response_schema(enabled_metrics)
+    parsed, diagnostics, latencies, calls = _call_grading_json(
+        messages, max_tokens=settings.runtime_value("LLM_GLOBAL_RSI_MAX_TOKENS"),
+        response_schema=schema, schema_name="whole_program_rsi_findings",
+        validator=lambda item: _normalise_global_review(
+            item, enabled_metrics, source_code, ledger,
+            _LAST_FITTED_SOURCE_LINES.get() or visible_source_lines
+        ) is not None,
     )
-    if accepted is not None:
-        return accepted, parsed, diagnostics, latency, 1
-    if parsed is None:
-        reason = f"{str(raw)[:900]}"
-    else:
-        reason = "valid JSON did not satisfy the findings response contract"
-    diagnostics.append(reason)
-    return None, parsed, diagnostics, latency, 1
+    actual_lines = _LAST_FITTED_SOURCE_LINES.get() or visible_source_lines
+    accepted = _normalise_global_review(parsed, enabled_metrics, source_code, ledger, actual_lines)
+    if accepted is None and not diagnostics:
+        diagnostics.append("RSI response failed evidence validation.")
+    return accepted, parsed, diagnostics, latencies, calls
 
 
 def _is_specific_metric_rationale(value: Any) -> bool:
@@ -2619,6 +3569,11 @@ def _normalise_metric_scores(
     """Accept a compact metric-score map without requiring unrelated findings."""
     if not isinstance(parsed, dict):
         return {}
+    for wrapper_key in ("result", "response", "output", "evaluation"):
+        wrapped = parsed.get(wrapper_key)
+        if isinstance(wrapped, dict) and any(key in wrapped for key in ("metrics", "scores", "metric_scores")):
+            parsed = wrapped
+            break
     metric_names = {str(item.get("name")) for item in enabled_metrics}
     known_evidence = {str(item.get("id")) for item in ledger if item.get("id")}
     raw = parsed.get("metrics", parsed.get("scores", parsed.get("metric_scores", {})))
@@ -2640,11 +3595,18 @@ def _normalise_metric_scores(
 
     result: dict[str, dict[str, Any]] = {}
     for item in items:
-        name = str(item.get("name", item.get("metric", ""))).strip()
+        name = str(item.get("name", item.get("metric", item.get("metric_name", item.get("criterion", ""))))).strip()
         if name not in metric_names or name in result:
             continue
-        score = item.get("score", item.get("value"))
-        if isinstance(score, bool) or not isinstance(score, (int, float)):
+        score = item.get("score", item.get("value", item.get("rating")))
+        if score is None and isinstance(item.get("score_band"), str):
+            score = score_from_band(item["score_band"])
+        if isinstance(score, str):
+            try:
+                score = float(score.strip())
+            except ValueError:
+                score = None
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
             continue
         score = float(score)
         if not 0.0 <= score <= 100.0:
@@ -2656,7 +3618,7 @@ def _normalise_metric_scores(
         if not isinstance(refs, list):
             refs = []
         valid_refs = list(dict.fromkeys(str(ref) for ref in refs if str(ref) in known_evidence))[:6]
-        rationale = compact_rationale(item.get("rationale", ""), max_words=18, max_chars=120)
+        rationale = compact_rationale(item.get("rationale", item.get("explanation", item.get("reason", ""))), max_words=60, max_chars=420)
         if not _is_specific_metric_rationale(rationale):
             # A usable numeric LLM score remains authoritative even when its
             # prose is weak. Do not discard the score and silently replace it
@@ -2674,9 +3636,9 @@ def _normalise_metric_scores(
                     if statement and not _is_positive_compiler_statement(statement):
                         evidence_candidates.append(statement)
             evidence_rationale = next(
-                (compact_rationale(value, max_words=18, max_chars=120)
+                (compact_rationale(value, max_words=60, max_chars=420)
                  for value in evidence_candidates
-                 if _is_specific_metric_rationale(compact_rationale(value, max_words=18, max_chars=120))),
+                 if _is_specific_metric_rationale(compact_rationale(value, max_words=60, max_chars=420))),
                 "",
             )
             rationale = evidence_rationale or (
@@ -2697,8 +3659,15 @@ def _normalise_metric_scores(
     return result
 
 
-def _assignment_contract_is_specific(problem: Any, contract: Any) -> bool:
-    """Return whether the supplied assignment contains actionable requirements."""
+def _assignment_contract_is_specific(
+    problem: Any, contract: Any, inferred_contract: Any = None,
+) -> bool:
+    """Return whether an actual assignment source supplies actionable requirements.
+
+    A label such as ``grading`` or a summary copied from the submitted source is
+    not a task contract. Assignment-derived inferred contracts are accepted
+    only when produced by the source-blind test-generation stage.
+    """
     if isinstance(contract, dict):
         actionable_keys = {
             "requirements", "input", "output", "constraints", "specification",
@@ -2710,9 +3679,36 @@ def _assignment_contract_is_specific(problem: Any, contract: Any) -> bool:
     contract_text = _grading_context_value(contract)
     if isinstance(contract_text, str) and len(contract_text.strip()) >= 55:
         return True
+    if isinstance(inferred_contract, dict):
+        input_format = str(inferred_contract.get("input_format", "")).strip()
+        output_format = str(inferred_contract.get("output_format", "")).strip()
+        semantics = inferred_contract.get("semantics", [])
+        if len(input_format) >= 8 and len(output_format) >= 8 and isinstance(semantics, list) and any(
+            isinstance(item, str) and len(item.strip()) >= 12 for item in semantics
+        ):
+            return True
     task = " ".join(str(problem or "").split())
     words = task.split()
-    return len(words) >= 3 and len(task) >= 24
+    task_verb = re.search(
+        r"\b(read|given|accept|take|input|output|compute|calculate|find|determine|print|return|"
+        r"sort|count|check|implement|write|convert|generate|traverse|search|sum|average|"
+        r"minimum|maximum|largest|smallest|solve|identify|produce)\b",
+        task, re.IGNORECASE,
+    )
+    return len(task) >= 32 and len(words) >= 6 and bool(task_verb)
+
+
+def _has_configured_tests(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    try:
+        total = int(result.get("tests_total", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+        total = 0
+    if total > 0:
+        return True
+    cases = result.get("results")
+    return isinstance(cases, list) and bool(cases)
 
 
 def _all_configured_tests_failed(result: Any) -> bool:
@@ -2734,7 +3730,22 @@ def _score_metrics_after_rsi(
     ledger: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], list[str], list[float], int]:
     """Make one model-authored rubric score request; fill omissions locally."""
-    enabled = [item for item in rules.get("metrics", []) if item.get("enabled", True)]
+    enabled = []
+    for item in rules.get("metrics", []):
+        if not item.get("enabled", True):
+            continue
+        name = str(item.get("name", ""))
+        analyzer_result = report.get(name, {})
+        if (
+            name in {"correctness", "logical"}
+            and isinstance(analyzer_result, dict)
+            and str(analyzer_result.get("status", "")).casefold() == "completed"
+            and _has_configured_tests(analyzer_result)
+        ):
+            # These metrics are exactly defined by executed test outcomes. Do
+            # not ask the model to invent or override their pass-rate score.
+            continue
+        enabled.append(item)
     enabled_names = [str(item.get("name")) for item in enabled]
     if not enabled_names:
         return {}, [], [], 0
@@ -2745,10 +3756,15 @@ def _score_metrics_after_rsi(
     )
     task_statement = str(report.get("problem", "C programming assignment"))[:500]
     problem_contract = _grading_context_value(rules.get("problem_contract", {}))
-    contract_is_specific = _assignment_contract_is_specific(task_statement, rules.get("problem_contract", {}))
+    inferred_contract = _inferred_contract_from_report(report)
+    contract_is_specific = _assignment_contract_is_specific(
+        task_statement, rules.get("problem_contract", {}), inferred_contract,
+    )
     payload = {
         "task": task_statement,
         "problem_contract": problem_contract,
+        "assignment_derived_inferred_contract": _grading_context_value(inferred_contract),
+        "assignment_contract_is_actionable": contract_is_specific,
         "instructor_rubric": _grading_context_value(rules.get("rubric", rules.get("rubrics", {}))),
         "source_line_count": len(source_text.splitlines()),
         "source_was_truncated": source_truncated,
@@ -2767,37 +3783,31 @@ def _score_metrics_after_rsi(
         "assignment, instructor rubric, validated findings, and analyzer evidence. The LLM is "
         "the scoring authority; analyzers are supporting evidence, not scores to copy. Do not "
         "invent requirements. Missing test data or runtime measurements are not failed tests. "
+        "Never infer expected assignment behavior from the submitted source. If assignment_contract_is_actionable is false and no configured tests exist, Python will mark correctness/logical unmeasured. Do not penalize missing scanf return checks or malformed-input handling unless the assignment requires it. "
         "Assess logical correctness and runtime complexity from source when measurements are "
         "unavailable. Trace pointer ownership, allocations, frees, and later dereferences for "
         "memory safety. Distinguish confirmed defects from potential concerns. A zero requires "
         "a specific, fully demonstrated failure; provide zero_score_reason, otherwise use an "
         "appropriate nonzero score. For every metric return a concise, source-specific rationale "
-        "of at most 18 words and 120 characters. Include zero_score_reason as an empty string "
+        "in 2–3 concise, metric-specific sentences (roughly 30–60 words). Include zero_score_reason as an empty string "
         "when not applicable and confidence as a number from 0 to 1. Return exactly one JSON "
-        "object with scores containing every enabled metric exactly once. No Markdown."
+        "object with scores containing every enabled metric exactly once. No Markdown.\n\n"
+        + rubric_prompt_block(rules.get("rubric", rules.get("rubrics", {})) if isinstance(rules.get("rubric", rules.get("rubrics", {})), dict) else None)
     )
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
-    started = time.perf_counter()
-    raw = ""
-    try:
-        parsed, raw = _request_json(
-            messages,
-            max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
-            enable_thinking=False,
-            response_schema=_metric_score_response_schema(enabled),
-            schema_name="rubric_metric_scores",
-        )
-    except (requests.RequestException, RuntimeError, ValueError) as exc:
-        parsed = None
-        raw = f"{type(exc).__name__}: {exc}"
-    latency = [round(time.perf_counter() - started, 3)]
-
+    parsed, request_diagnostics, latency, score_attempts = _call_grading_json(
+        messages, max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
+        response_schema=_metric_score_response_schema(enabled),
+        schema_name="rubric_metric_scores",
+        validator=lambda item: bool(_normalise_metric_scores(item, enabled, ledger)),
+    )
+    raw = "; ".join(request_diagnostics)
     found = _normalise_metric_scores(parsed, enabled, ledger)
     scores: dict[str, dict[str, Any]] = {}
-    diagnostics: list[str] = []
+    diagnostics: list[str] = list(request_diagnostics)
     for metric_name, score_item in found.items():
         # The LLM is the rubric-scoring authority. Python validates range/schema
         # and evidence references, but never silently edits a valid model score.
@@ -2807,7 +3817,30 @@ def _score_metrics_after_rsi(
                 ref for item in relevant for ref in item.get("evidence_ids", [])
             ))[:6]
         score_item["basis"] = "llm_rubric_assessment"
+        score_item["score_band"] = band_for_score(score_item["score"])
         scores[metric_name] = score_item
+
+    # A title such as "grading" is not a task specification. Without an
+    # actionable assignment or actual tests, a numeric task-correctness score
+    # would be invented from the student's own implementation.
+    if not contract_is_specific:
+        for metric_name in ("correctness", "logical"):
+            if metric_name not in enabled_names or _has_configured_tests(report.get(metric_name, {})):
+                continue
+            scores[metric_name] = {
+                "name": metric_name,
+                "score": None,
+                "rationale": (
+                    "The assignment statement does not define actionable expected behavior, and no configured tests measure this metric. "
+                    "The submitted source cannot define its own specification; this metric is unmeasured."
+                ),
+                "basis": "insufficient_evidence",
+                "evidence_ids": [],
+                "origin": "insufficient_evidence_fallback",
+            }
+            diagnostics.append(
+                f"{metric_name} was marked unmeasured: no actionable assignment contract or configured tests were available."
+            )
 
     missing = [name for name in enabled_names if name not in scores]
     if parsed is None:
@@ -2817,15 +3850,15 @@ def _score_metrics_after_rsi(
     for name in missing:
         if name == "correctness" and not contract_is_specific and not _all_configured_tests_failed(report.get(name)):
             scores[name] = {
-                "name": name, "score": 60.0,
-                "rationale": "The assignment contract is underspecified; this provisional score reflects observed behavior without inventing missing requirements.",
-                "basis": "limited_evidence", "evidence_ids": [],
+                "name": name, "score": None,
+                "rationale": "The assignment contract is underspecified; no defensible score can be assigned without inventing requirements.",
+                "basis": "insufficient_evidence", "evidence_ids": [],
                 "origin": "insufficient_evidence_fallback",
             }
         else:
             scores[name] = _fallback_metric_score(name, report, final_review.get("findings", []))
-        scores[name]["rationale"] = compact_rationale(scores[name].get("rationale"), max_words=18, max_chars=120)
-    return scores, diagnostics, latency, 1
+        scores[name]["rationale"] = compact_rationale(scores[name].get("rationale"), max_words=60, max_chars=420)
+    return scores, diagnostics, latency, score_attempts
 
 
 def build_fallback_llm_evaluation(
@@ -2843,6 +3876,21 @@ def build_fallback_llm_evaluation(
         _fallback_metric_score(str(item.get("name")), report, review["findings"])
         for item in enabled
     ]
+    actionable_contract = _assignment_contract_is_specific(
+        report.get("problem", rules.get("problem", "")),
+        rules.get("problem_contract", {}),
+        _inferred_contract_from_report(report),
+    )
+    for score in scores:
+        metric_name = str(score.get("name", ""))
+        if metric_name in {"correctness", "logical"} and not actionable_contract and not _has_configured_tests(report.get(metric_name, {})):
+            score.update({
+                "score": None,
+                "rationale": "No actionable assignment contract or configured tests are available; task-specific correctness is unmeasured.",
+                "basis": "insufficient_evidence",
+                "origin": "insufficient_evidence_fallback",
+                "evidence_ids": [],
+            })
     for score in scores:
         score["iterations_requested"] = 0
         score["iterations_completed"] = 0
@@ -2945,6 +3993,7 @@ def evaluate_metrics_with_llm(
             diagnostics.append("Program understanding used a deterministic source-inventory fallback.")
     request_latencies: list[float] = []
     total_calls = int(understanding_meta.get("calls", 0))
+    prevalidation_rejections: list[dict[str, Any]] = []
     visible_source_lines = set().union(*[
         set(range(start, end + 1))
         for start, end in payload.get("source_visible_line_ranges", [])
@@ -3012,10 +4061,33 @@ def evaluate_metrics_with_llm(
                 f"RSI iteration {iteration}: deterministic fallback retained the review state; {error_text}"
             )
 
+        # Deterministically reject configuration findings, self-contradictions,
+        # disproved source claims, unsupported memory-safety claims, stylistic
+        # nitpicks, and duplicate findings before they can propagate to later RSI
+        # passes or influence the independent metric-scoring stage.
+        accepted, rejected_this_pass = _prevalidate_rsi_findings(
+            accepted,
+            str(report.get("source_code") or ""),
+            rules,
+            report,
+        )
+        for rejected_item in rejected_this_pass:
+            identity = (
+                rejected_item.get("finding_id"), rejected_item.get("metric"),
+                rejected_item.get("title"), rejected_item.get("line_start"),
+            )
+            if not any((
+                item.get("finding_id"), item.get("metric"), item.get("title"), item.get("line_start")
+            ) == identity for item in prevalidation_rejections):
+                prevalidation_rejections.append(rejected_item)
+        if rejected_this_pass:
+            diagnostics.append(
+                f"RSI iteration {iteration}: excluded {len(rejected_this_pass)} candidate finding(s) during deterministic consistency checks."
+            )
+
         latest_valid = accepted
-        # Chain the complete validated response, not a raw alias/schema variant.
-        # This is the exact review state accepted at the end of this iteration,
-        # and it can be safely loss-compressed without dropping findings.
+        # Chain the complete, prevalidated response so later RSI passes are
+        # asked to reconsider only findings that survived source-level checks.
         previous_response = accepted
         iteration_history.append({
             "iteration": iteration,
@@ -3028,7 +4100,63 @@ def evaluate_metrics_with_llm(
             "request_latencies_seconds": latencies,
         })
 
-    # Stage 5: independent, compact rubric scoring. Do not make the defect-review
+    # Recover an exact, common numeric defect even when the small review model
+    # omitted it: integer-typed operands assigned to float/double, corroborated by
+    # a configured test whose fractional expected output was integer-truncated.
+    # This rule is deliberately narrow and never infers an assignment from source.
+    if latest_valid is not None:
+        recovered = _recover_integer_division_finding(
+            str(report.get("source_code") or ""), ledger, enabled,
+        )
+        if recovered:
+            same_defect = any(
+                item.get("metric") == recovered.get("metric")
+                and item.get("line_start") == recovered.get("line_start")
+                and re.search(r"integer division|truncat|fractional|average|mean",
+                              f"{item.get('title', '')} {item.get('description', '')}", re.IGNORECASE)
+                for item in latest_valid.get("findings", [])
+            )
+            if not same_defect:
+                latest_valid = dict(latest_valid)
+                latest_valid["findings"] = list(latest_valid.get("findings", [])) + [recovered]
+                diagnostics.append(
+                    "Deterministic recovery: integer division was independently confirmed by source types and a failed instructor test oracle."
+                )
+
+    # Stage 5: independently adjudicate the remaining RSI candidates with the
+    # same configured model. This is a separate validation gate, not a scoring
+    # request: a candidate must pass source-location, contract relevance, claim,
+    # logical-consistency, and evidence checks before it can affect scores.
+    finding_validation_meta: dict[str, Any] = {"status": "not_needed", "calls": 0, "diagnostics": []}
+    llm_rejections: list[dict[str, Any]] = []
+    finding_validation_latencies: list[float] = []
+    if latest_valid is not None and latest_valid.get("findings"):
+        validated_findings, llm_rejections, finding_validation_meta = _adjudicate_rsi_findings(
+            latest_valid["findings"],
+            report=report,
+            rules=rules,
+            program_understanding=report.get("program_understanding"),
+            ledger=ledger,
+        )
+        latest_valid = dict(latest_valid)
+        latest_valid["findings"] = validated_findings
+        finding_validation_latencies = list(finding_validation_meta.get("latency_seconds", []))
+        total_calls += int(finding_validation_meta.get("calls", 0))
+        diagnostics.extend(
+            "Post-RSI finding validation: " + str(item)[:700]
+            for item in finding_validation_meta.get("diagnostics", [])
+        )
+    rejected_findings = prevalidation_rejections + llm_rejections
+    if latest_valid is not None:
+        latest_valid = dict(latest_valid)
+        latest_valid["rejected_findings"] = rejected_findings
+        if rejected_findings and not latest_valid.get("findings"):
+            latest_valid["overall_assessment"] = (
+                "No candidate defect survived source, contract, consistency, and evidence validation. "
+                "Rejected candidates are recorded separately and did not affect metric scores."
+            )
+
+    # Stage 6: independent, compact rubric scoring. Do not make the defect-review
     # stage fail just because the model omits one or more metric scores.
     metric_score_diagnostics: list[str] = []
     metric_score_latencies: list[float] = []
@@ -3062,7 +4190,21 @@ def evaluate_metrics_with_llm(
     for name in enabled_names:
         if name not in final_metrics:
             final_metrics[name] = _fallback_metric_score(name, report, final_findings)
-    metrics_without_llm = [name for name in enabled_names if final_metrics.get(name, {}).get("origin") != "llm"]
+    metrics_without_llm = []
+    for name in enabled_names:
+        if final_metrics.get(name, {}).get("origin") == "llm":
+            continue
+        deterministic_result = report.get(name, {})
+        if (
+            name in {"correctness", "logical"}
+            and isinstance(deterministic_result, dict)
+            and str(deterministic_result.get("status", "")).casefold() == "completed"
+            and _has_configured_tests(deterministic_result)
+        ):
+            # Test-defined metrics have an authoritative deterministic score
+            # in the aggregation stage; a model score is optional.
+            continue
+        metrics_without_llm.append(name)
     completed_global_iterations = sum(item.get("status") in {"completed", "completed_with_fallback"} for item in iteration_history)
     fallback_iterations = sum(item.get("status") == "completed_with_fallback" for item in iteration_history)
     metrics_output: list[dict[str, Any]] = []
@@ -3089,11 +4231,18 @@ def evaluate_metrics_with_llm(
         })
 
     understanding_incomplete = bool(understanding_meta.get("fallback_used"))
+    material_rejections = [
+        item for item in rejected_findings
+        if not isinstance(item, dict) or item.get("decision") != "duplicate_of_validated_finding"
+    ]
     partial = (
         completed_global_iterations != max_iterations
         or bool(metrics_without_llm)
         or understanding_incomplete
         or fallback_iterations > 0
+        or bool(material_rejections)
+        or finding_validation_meta.get("status") in {"unavailable_fail_closed", "completed_with_deterministic_fallback"}
+        or any(item.get("score") is None for item in final_metrics.values() if isinstance(item, dict))
     )
     status = (
         "unavailable" if latest_valid is None
@@ -3101,6 +4250,14 @@ def evaluate_metrics_with_llm(
         else "completed"
     )
     report["llm_rsi_findings"] = final_findings
+    report["llm_rsi_rejected_findings"] = rejected_findings
+    report["llm_rsi_finding_validation"] = {
+        **finding_validation_meta,
+        "prevalidation_rejected_count": len(prevalidation_rejections),
+        "adjudication_rejected_count": len(llm_rejections),
+        "accepted_count": len(final_findings),
+        "rejected_count": len(rejected_findings),
+    }
     report["llm_rsi_iteration_history"] = iteration_history
     report["llm_rsi_context_compression"] = context_compression_events
     report["llm_rsi_metric_scoring"] = {
@@ -3136,7 +4293,8 @@ def evaluate_metrics_with_llm(
         for event in context_compression_events if isinstance(event, dict)
     )
     total_llm_seconds = (
-        understanding_seconds + sum(request_latencies) + sum(metric_score_latencies) + compression_seconds
+        understanding_seconds + sum(request_latencies) + sum(finding_validation_latencies)
+        + sum(metric_score_latencies) + compression_seconds
     )
     result = {
         "status": status,
@@ -3147,7 +4305,13 @@ def evaluate_metrics_with_llm(
         "program_understanding_metadata": understanding_meta,
         "overall_assessment": latest_valid["overall_assessment"] if latest_valid else "",
         "findings": final_findings,
-        "findings_status": "completed_with_fallback" if fallback_iterations else "completed" if latest_valid is not None else "unavailable",
+        "rejected_findings": rejected_findings,
+        "finding_validation": report["llm_rsi_finding_validation"],
+        "findings_status": (
+            "completed_with_rejections" if material_rejections else
+            "completed_with_fallback" if fallback_iterations else
+            "completed" if latest_valid is not None else "unavailable"
+        ),
         "llm_iterations_completed": sum(item.get("status") == "completed" for item in iteration_history),
         "metric_scoring_status": "completed" if not metrics_without_llm and latest_valid is not None else "completed_with_fallback",
         "metrics_without_llm_score": metrics_without_llm,
@@ -3166,6 +4330,7 @@ def evaluate_metrics_with_llm(
             "program_understanding": understanding_seconds,
             "program_understanding_requests": understanding_meta.get("request_latencies_seconds", []),
             "rsi_requests": request_latencies,
+            "finding_validation_requests": finding_validation_latencies,
             "metric_scoring_requests": metric_score_latencies,
             "context_compression": round(compression_seconds, 3),
             "total_llm": round(total_llm_seconds, 3),
@@ -3190,15 +4355,16 @@ def evaluate_metrics_with_llm(
             "source_was_truncated": payload.get("source_was_truncated", False),
         },
         "request_strategy": (
-            "one request for program understanding; one request per sequential whole-program "
-            "RSI pass; one request for metric scoring; same-model compression only when needed; "
-            "no repair/retry requests; Python applies metric weights"
+            "program understanding; sequential whole-program RSI passes with deterministic source-level prevalidation; "
+            "one same-model post-RSI adjudication request (up to three structured-output repair attempts) when candidates remain; "
+            "separate metric scoring (up to three repair attempts); semantic compression only when needed; Python applies metric weights"
         ),
         "policy": (
-            "RSI findings are validated independently of metric scoring. A scoring-schema "
-            "failure cannot discard valid findings; missing LLM metric scores use deterministic "
-            "analyzer fallbacks and are explicitly marked. A failed RSI pass is never described "
-            "as proof that no defects exist."
+            "Only RSI findings surviving deterministic source checks and same-model adjudication can influence metric scoring. "
+            "Configuration limitations, unsupported claims, self-contradictions, duplicates, and optional style preferences are "
+            "recorded as rejected candidates and never penalize the submission. Missing assignment contracts or tests leave "
+            "correctness/logical unmeasured rather than inferring requirements from student code. A failed RSI pass is never "
+            "described as proof that no defects exist."
         ),
     }
     _CONTEXT_COMPRESSION_EVENTS.reset(compression_context_token)

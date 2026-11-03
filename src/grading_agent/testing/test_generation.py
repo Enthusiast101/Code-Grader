@@ -11,12 +11,28 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
 MAX_GENERATED_CASES = 80
 MAX_INPUT_CHARS = 20_000
 MAX_REFERENCE_SOURCE_CHARS = 100_000
+
+
+def _project_relative_path(project_root: Path, value: Any, field_name: str) -> Path:
+    """Resolve slash-agnostic project-relative paths on Windows and POSIX."""
+    if not isinstance(value, str) or not value.strip():
+        raise TestGenerationError("invalid_project_path", f"{field_name} must be a non-empty project-relative path.")
+    raw = value.strip()
+    candidate = Path(raw.replace("\\", "/"))
+    windows_candidate = PureWindowsPath(raw)
+    root = Path(project_root).resolve()
+    if candidate.is_absolute() or windows_candidate.is_absolute() or windows_candidate.drive:
+        raise TestGenerationError("invalid_project_path", f"{field_name} must be project-relative.")
+    resolved = (root / candidate).resolve()
+    if not resolved.is_relative_to(root):
+        raise TestGenerationError("invalid_project_path", f"{field_name} must remain under the project root.")
+    return resolved
 
 
 class TestGenerationError(RuntimeError):
@@ -43,7 +59,10 @@ def assignment_fingerprint(
         "generation_seed": generation_seed, "rsi_passes": rsi_passes,
         "max_cases": max_cases, "temperature": temperature,
     }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    try:
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise TestGenerationError("invalid_fingerprint_data", f"Assignment fingerprint data is not valid JSON: {exc}") from exc
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -58,6 +77,18 @@ def _validate_candidate(value: Any, pass_number: int) -> dict[str, Any]:
         raise TestGenerationError("invalid_ambiguities", f"RSI pass {pass_number} returned malformed ambiguity details.")
     if ambiguity:
         raise TestGenerationError("ambiguous_assignment", "Unresolved assignment ambiguities: " + "; ".join(ambiguity[:5]))
+    inferred = value.get("inferred_contract")
+    if not isinstance(inferred, dict):
+        raise TestGenerationError("missing_inferred_contract", f"RSI pass {pass_number} omitted the assignment-derived I/O contract.")
+    for field in ("input_format", "output_format"):
+        if not isinstance(inferred.get(field), str) or len(inferred[field].strip()) < 8:
+            raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must infer a meaningful {field}.")
+    for field in ("constraints", "semantics", "formatting"):
+        entries = inferred.get(field)
+        if not isinstance(entries, list) or not all(isinstance(item, str) and item.strip() for item in entries):
+            raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} returned invalid inferred_contract.{field}.")
+    if not inferred["semantics"]:
+        raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must identify at least one task semantic.")
     if not isinstance(reference, str) or not reference.strip() or len(reference) > MAX_REFERENCE_SOURCE_CHARS:
         raise TestGenerationError("missing_reference", f"RSI pass {pass_number} omitted a bounded C reference solution.")
     if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
@@ -91,9 +122,36 @@ def _validate_candidate(value: Any, pass_number: int) -> dict[str, Any]:
         claims = []
     return {
         "spec_summary": summary.strip()[:2_000], "ambiguities": [],
+        "inferred_contract": {
+            "input_format": inferred["input_format"].strip()[:1_000],
+            "output_format": inferred["output_format"].strip()[:1_000],
+            "constraints": [item.strip()[:400] for item in inferred["constraints"][:25]],
+            "semantics": [item.strip()[:400] for item in inferred["semantics"][:25]],
+            "formatting": [item.strip()[:400] for item in inferred["formatting"][:25]],
+        },
         "reference_solution_c": reference, "test_inputs": cleaned,
         "coverage_claims": claims[:30],
     }
+
+
+def _assignment_statement_is_actionable(problem: str, problem_contract: dict[str, Any]) -> bool:
+    """Do not let the model invent a task from a title or from student source."""
+    actionable = {
+        "requirements", "input", "output", "constraints", "specification",
+        "expected_behavior", "function_signature", "acceptance_criteria",
+    }
+    if any(str(key).casefold() in actionable and value not in (None, "", [], {})
+           for key, value in problem_contract.items()):
+        return True
+    text = " ".join(problem.split())
+    words = text.split()
+    has_task_verb = re.search(
+        r"\b(read|given|accept|take|input|output|compute|calculate|find|determine|print|return|"
+        r"sort|count|check|implement|write|convert|generate|traverse|search|sum|average|"
+        r"minimum|maximum|largest|smallest|solve|identify|produce)\b",
+        text, re.IGNORECASE,
+    )
+    return len(text) >= 32 and len(words) >= 6 and bool(has_task_verb)
 
 
 def generate_assignment_test_spec(
@@ -111,6 +169,11 @@ def generate_assignment_test_spec(
         raise TestGenerationError("missing_assignment", "A complete assignment statement is required.")
     if not isinstance(problem_contract, dict):
         raise TestGenerationError("invalid_contract", "problem_contract must be an object.")
+    if not _assignment_statement_is_actionable(problem, problem_contract):
+        raise TestGenerationError(
+            "underspecified_assignment",
+            "The assignment is only a title or lacks actionable requirements. Provide the complete natural-language problem statement or an instructor problem_contract; the student's source cannot be used to guess the task.",
+        )
     if isinstance(passes, bool) or not isinstance(passes, int) or not 1 <= passes <= 5:
         raise ValueError("passes must be an integer from 1 to 5")
     if isinstance(max_cases, bool) or not isinstance(max_cases, int) or not 1 <= max_cases <= MAX_GENERATED_CASES:
@@ -120,6 +183,13 @@ def generate_assignment_test_spec(
         "type": "object", "properties": {
             "spec_summary": {"type": "string"},
             "ambiguities": {"type": "array", "items": {"type": "string"}},
+            "inferred_contract": {"type": "object", "properties": {
+                "input_format": {"type": "string"},
+                "output_format": {"type": "string"},
+                "constraints": {"type": "array", "items": {"type": "string"}},
+                "semantics": {"type": "array", "items": {"type": "string"}},
+                "formatting": {"type": "array", "items": {"type": "string"}},
+            }, "required": ["input_format", "output_format", "constraints", "semantics", "formatting"]},
             "reference_solution_c": {"type": "string"},
             "test_inputs": {"type": "array", "minItems": 1, "maxItems": max_cases, "items": {
                 "type": "object", "properties": {
@@ -129,7 +199,7 @@ def generate_assignment_test_spec(
                 }, "required": ["id", "input", "tags", "rationale"],
             }},
             "coverage_claims": {"type": "array", "items": {"type": "string"}},
-        }, "required": ["spec_summary", "ambiguities", "reference_solution_c", "test_inputs", "coverage_claims"],
+        }, "required": ["spec_summary", "ambiguities", "inferred_contract", "reference_solution_c", "test_inputs", "coverage_claims"],
     }
     base = {
         "assignment": problem, "problem_contract": problem_contract,
@@ -139,7 +209,11 @@ def generate_assignment_test_spec(
     system = (
         "You design tests and a reference solution for a C assignment. Work only from the "
         "assignment and instructor contract; student source is deliberately excluded. "
-        "First formalize all input/output rules and constraints. Return a complete C11 "
+        "First formalize all input/output rules and constraints. Return inferred_contract "
+        "with input_format, output_format, constraints, semantics, and formatting. Derive "
+        "these fields only from the assignment and instructor contract; never infer task "
+        "requirements from a student's source (which is not provided). If a required detail "
+        "is absent or ambiguous, list it in ambiguities and do not guess. Return a complete C11 "
         "reference solution and test INPUTS, not expected outputs. Cover valid normal cases, "
         "minimum and maximum constraints, empty/singleton cases where valid, duplicates, "
         "negative/zero values, numeric boundaries, overflow boundaries and task-specific "
@@ -264,9 +338,11 @@ def write_frozen_suite(
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"{fingerprint}.json"
     payload = {
-        "schema_version": 1, "assignment_fingerprint": fingerprint,
+        "schema_version": 2, "assignment_fingerprint": fingerprint,
         "model_id": model_id, "test_cases": cases,
         "test_generation_rsi": generated_spec.get("test_generation_rsi", []),
+        "spec_summary": generated_spec.get("spec_summary", ""),
+        "inferred_contract": generated_spec.get("inferred_contract", {}),
         "reference_solution_c": str(generated_spec.get("reference_solution_c", "")),
         "reference_solution_sha256": hashlib.sha256(str(generated_spec.get("reference_solution_c", "")).encode()).hexdigest(),
         "oracle_kind": oracle_kind,
@@ -278,7 +354,7 @@ def write_frozen_suite(
             "RSI-reviewed and executed in the sandbox, but not formally proven equivalent; instructor approval is recommended for high-stakes grading."
         ),
     }
-    encoded = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    encoded = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     if path.exists():
         if path.read_text(encoding="utf-8") != encoded:
             raise TestGenerationError("frozen_suite_conflict", "A frozen suite already exists for this fingerprint but differs; do not overwrite silently.")
@@ -312,6 +388,8 @@ def load_frozen_suite(path: Path, expected_fingerprint: str) -> list[dict[str, A
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise TestGenerationError("suite_unreadable", f"Cannot read frozen test suite: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TestGenerationError("suite_invalid", "Frozen test suite must contain a JSON object.")
     if data.get("assignment_fingerprint") != expected_fingerprint:
         raise TestGenerationError("suite_fingerprint_mismatch", "Frozen suite does not match the current assignment fingerprint.")
     cases = data.get("test_cases")
@@ -426,11 +504,11 @@ def prepare_assignment_test_suite(
     reference_source = None
     reference_hash = None
     if reference_path_value:
-        candidate = Path(str(reference_path_value))
-        if candidate.is_absolute():
-            raise TestGenerationError("reference_path_invalid", "test_generation.reference_solution_path must be project-relative.")
-        resolved = (project_root / candidate).resolve()
-        if not resolved.is_relative_to(project_root) or not resolved.is_file():
+        try:
+            resolved = _project_relative_path(project_root, str(reference_path_value), "test_generation.reference_solution_path")
+        except TestGenerationError as exc:
+            raise TestGenerationError("reference_path_invalid", str(exc)) from exc
+        if not resolved.is_file():
             raise TestGenerationError("reference_path_invalid", "Configured reference solution is missing or outside the project root.")
         reference_source = resolved.read_text(encoding="utf-8")
         reference_hash = hashlib.sha256(reference_source.encode("utf-8")).hexdigest()
@@ -445,7 +523,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")),
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":contract-v2",
         rsi_passes=int(passes), max_cases=int(max_cases), temperature=float(temperature),
     )
     # Include instructor test contents and any trusted reference in the final
@@ -455,13 +533,14 @@ def prepare_assignment_test_suite(
         "instructor_cases": instructor_cases,
         "reference_solution_sha256": reference_hash,
     }
-    fingerprint = hashlib.sha256(
-        json.dumps(supplemental, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    try:
+        fingerprint = hashlib.sha256(
+            json.dumps(supplemental, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError) as exc:
+        raise TestGenerationError("invalid_fingerprint_data", f"Assignment fingerprint data is not valid JSON: {exc}") from exc
     cache_dir_value = testing_cfg.get("cache_dir", ".generated_tests")
-    cache_dir = (project_root / str(cache_dir_value)).resolve()
-    if not cache_dir.is_relative_to(project_root):
-        raise TestGenerationError("cache_path_invalid", "Generated test cache must remain under project root.")
+    cache_dir = _project_relative_path(project_root, cache_dir_value, "test_generation.cache_dir")
     cache_dir.mkdir(parents=True, exist_ok=True)
     frozen_path = cache_dir / f"{fingerprint}.json"
     require_frozen = testing_cfg.get("require_frozen_suite", False)
@@ -537,7 +616,7 @@ def prepare_assignment_test_suite(
     all_path = cache_dir / f"{fingerprint}-all.json"
     edge_path = cache_dir / f"{fingerprint}-edges.json"
     for target, content in ((all_path, all_cases), (edge_path, edge_cases)):
-        encoded = json.dumps(content, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        encoded = json.dumps(content, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n"
         if target.exists() and target.read_text(encoding="utf-8") != encoded:
             raise TestGenerationError("testset_cache_conflict", f"Refusing to overwrite conflicting generated test file {target.name}.")
         if not target.exists():
@@ -560,6 +639,8 @@ def prepare_assignment_test_suite(
         "edge_test_count": len(edge_cases),
         "rsi_passes": generation_history,
         "metric_testset_paths": metric_bindings,
+        "inferred_contract": frozen.get("inferred_contract", {}),
+        "spec_summary": frozen.get("spec_summary", ""),
         "oracle_kind": frozen.get("oracle_kind", "LLM-generated-reference-executed-in-sandbox"),
         "oracle_caveat": frozen.get("oracle_caveat", "Reference oracle requires instructor audit."),
     }

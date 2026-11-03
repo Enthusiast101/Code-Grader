@@ -12,12 +12,16 @@ dependencies = [
     "requests",
     "docker>=7.0.0",
     "lizard==1.17.10",
+    "gradio>=5.0",
 ]
 
 [project.optional-dependencies]
 benchmark = ["ijson>=3.2.3"]
-ui = ["gradio>=5.0"]
-all = ["ijson>=3.2.3", "gradio>=5.0"]
+ui = []
+all = ["ijson>=3.2.3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+grading_agent = ["config/*.json"]

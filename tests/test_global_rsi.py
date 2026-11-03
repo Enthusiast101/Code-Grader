@@ -115,7 +115,7 @@ class GlobalRSITests(unittest.TestCase):
 
         def fake_request(messages, *, max_tokens=None, enable_thinking=None, response_schema=None, schema_name=None, **kwargs):
             captured.append(messages)
-            self.assertFalse(enable_thinking)
+            self.assertIsNone(enable_thinking)  # Respect the globally configured reasoning mode.
             parsed = responses.pop(0)
             return parsed, json.dumps(parsed)
 
@@ -123,7 +123,7 @@ class GlobalRSITests(unittest.TestCase):
         with patch.object(reviewer, "_request_json", side_effect=fake_request):
             result = reviewer.evaluate_metrics_with_llm(report, RULES, max_iterations=3)
 
-        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["status"], "completed_with_warnings")
         self.assertEqual(result["llm_calls"], 5)
         self.assertEqual(result["iterations_completed"], 3)
         self.assertEqual(len(captured), 5)
@@ -137,7 +137,8 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(report["program_understanding"]["functions"][0]["name"], "add")
         self.assertEqual(report["program_understanding"]["actual_behavior"], "Reads two integers and prints their sum.")
         self.assertEqual(report["program_understanding"]["intended_behavior"], "Read two integers and print their sum.")
-        self.assertEqual(report["llm_rsi_findings"][0]["line_start"], 5)
+        self.assertEqual(report["llm_rsi_findings"], [])
+        self.assertTrue(report["llm_rsi_rejected_findings"])
         self.assertEqual(result["latency_seconds"]["metric_scoring_requests"], [0.0])
 
         apply_metric_scores(RULES["metrics"], report, result)
@@ -204,7 +205,7 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(request_body["chat_template_kwargs"]["enable_thinking"], False)
         self.assertEqual(request_body["reasoning_effort"], "none")
 
-    def test_structured_grading_disables_reasoning_for_schema_reliability(self) -> None:
+    def test_structured_grading_respects_configured_reasoning_mode(self) -> None:
         responses = [understanding_response()]
         captured = []
 
@@ -219,7 +220,7 @@ class GlobalRSITests(unittest.TestCase):
 
         self.assertIsNotNone(understanding)
         self.assertEqual(metadata["status"], "completed")
-        self.assertEqual(captured, [False])
+        self.assertEqual(captured, [None])
 
     def test_global_review_normalizer_accepts_common_aliases_and_empty_no_issue_review(self) -> None:
         empty = reviewer._normalise_global_review(
@@ -273,7 +274,7 @@ class GlobalRSITests(unittest.TestCase):
         request_body = post.call_args.kwargs["json"]
         self.assertEqual(request_body["response_format"]["type"], "json_schema")
         self.assertEqual(request_body["response_format"]["schema"], schema)
-        self.assertFalse(request_body["chat_template_kwargs"]["enable_thinking"])
+        self.assertTrue(request_body["chat_template_kwargs"]["enable_thinking"])
         self.assertNotIn("grammar", request_body)
 
     def test_empty_final_content_explains_external_server_reasoning_mismatch(self) -> None:
@@ -313,11 +314,13 @@ class GlobalRSITests(unittest.TestCase):
             status_code = 200
 
         process = FakeProcess()
+        version_result = type("VersionResult", (), {"returncode": 0, "stdout": "version 0.0.0 (build 12005)", "stderr": ""})()
         with settings.runtime_overrides({
             "LLAMA_REASONING_ENABLED": True,
             "LLAMA_REASONING_FORMAT": "deepseek",
             "LLAMA_REASONING_BUDGET": 768,
         }), patch.object(llm_server.shutil, "which", return_value="/usr/bin/llama-server"), \
+             patch.object(llm_server.subprocess, "run", return_value=version_result), \
              patch.object(llm_server.subprocess, "Popen", return_value=process) as popen, \
              patch.object(llm_server.requests, "get", return_value=FakeHealthResponse()):
             returned = llm_server.initiate_server()
@@ -351,7 +354,8 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(result["iterations_completed"], 3)
         self.assertEqual(result["iterations_with_fallback"], 2)
         self.assertEqual(len(result["metrics"]), 2)
-        self.assertEqual(result["findings_status"], "completed_with_fallback")
+        self.assertEqual(result["findings_status"], "completed_with_rejections")
+        self.assertTrue(result["rejected_findings"])
         self.assertEqual(result["metric_scoring_status"], "completed_with_fallback")
         self.assertEqual(result["llm_calls"], 5)
 
@@ -397,6 +401,324 @@ class GlobalRSITests(unittest.TestCase):
         self.assertIsNotNone(accepted)
         self.assertEqual(accepted["findings"][0]["metric"], "correctness")
         self.assertEqual(len(accepted["findings"]), 1)
+
+    def test_structured_stage_retry_override_is_respected(self) -> None:
+        with patch.object(reviewer.settings, "LLM_GRADING_RETRY_ATTEMPTS", 3), patch.object(
+            reviewer, "_request_json", return_value=(None, "invalid JSON")
+        ) as request:
+            parsed, diagnostics, latencies, calls = reviewer._call_grading_json(
+                [{"role": "user", "content": "Return JSON."}],
+                max_tokens=100, schema_name="fast_validator", max_attempts=1,
+            )
+        self.assertIsNone(parsed)
+        self.assertEqual(calls, 1)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(len(latencies), 1)
+        self.assertTrue(diagnostics)
+
+    def test_program_understanding_accepts_minimal_alias_response_and_optional_fields(self) -> None:
+        schema = reviewer._program_understanding_response_schema()
+        self.assertNotIn("actual_behavior", schema.get("required", []))
+        normalized = reviewer._normalise_program_understanding(
+            {"summary": "Reads N integers and prints their arithmetic mean."}, 1, {1}
+        )
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized["actual_behavior"], "Reads N integers and prints their arithmetic mean.")
+
+    def test_integer_division_failure_is_recovered_from_source_and_exact_test_oracle(self) -> None:
+        source = """#include <stdio.h>
+int main(void) {
+    int count;
+    if (scanf("%d", &count) != 1 || count <= 0) return 1;
+    long long sum = 0;
+    for (int i = 0; i < count; ++i) {
+        int value;
+        if (scanf("%d", &value) != 1) return 1;
+        sum += value;
+    }
+    double average = sum / count;
+    printf("%.2f\n", average);
+    return 0;
+}
+"""
+        report = make_report()
+        report["problem"] = "03_computation_average"
+        report["source_code"] = source
+        report["configuration"]["enabled_metrics"] = [
+            {"name": "correctness", "analyzer": "io_tests", "weight": 1.0}
+        ]
+        report["correctness"] = {
+            "status": "completed", "score": 0.0, "tests_passed": 0, "tests_total": 1,
+            "results": [{
+                "test_id": "fractional-average", "passed": False,
+                "input": "4\n1 2 2 5\n", "expected": "2.50\n", "actual": "2.00\n",
+            }],
+        }
+        rules = {"problem": "03_computation_average", "problem_contract": {}, "metrics": [
+            {"name": "correctness", "enabled": True, "weight": 1.0, "params": {}}
+        ]}
+        ledger = reviewer.build_evidence_ledger(report, rules)
+        recovered = reviewer._recover_integer_division_finding(source, ledger, rules["metrics"])
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered["line_start"], 11)
+        self.assertIn("E-CORRECTNESS-TEST-001", recovered["evidence_ids"])
+        self.assertIn("E-SOURCE-L011", recovered["evidence_ids"])
+        with patch.object(reviewer, "_request_json", side_effect=AssertionError("unneeded model adjudication")):
+            accepted, rejected, metadata = reviewer._adjudicate_rsi_findings(
+                [recovered], report=report, rules=rules,
+                program_understanding=understanding_response(), ledger=ledger,
+            )
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(rejected, [])
+        self.assertEqual(metadata["validation_mode"], "deterministic_source_test_corroboration")
+        self.assertEqual(metadata["calls"], 0)
+
+    def test_test_oracle_examples_are_available_when_assignment_is_only_a_slug(self) -> None:
+        report = make_report()
+        report["problem"] = "03_computation_average"
+        report["correctness"]["results"] = [{
+            "test_id": "fractional-average", "input": "4\n1 2 2 5\n",
+            "expected": "2.50\n", "actual": "2.00\n", "passed": False,
+        }]
+        examples = reviewer._test_oracle_examples(report)
+        self.assertEqual(examples[0]["expected_output"], "2.50\n")
+        payload = reviewer._program_understanding_payload(report, RULES)
+        self.assertTrue(payload["instructor_test_oracle_examples"])
+
+
+    def test_program_understanding_accepts_small_model_behavior_aliases(self) -> None:
+        schema = reviewer._program_understanding_response_schema()
+        self.assertEqual(schema.get("type"), "object")
+        self.assertTrue(schema.get("additionalProperties"))
+        normalized = reviewer._normalise_program_understanding(
+            {"program_understanding": {"actual_source_behavior": "Reads N values and prints their mean."}},
+            1, {1},
+        )
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized["actual_behavior"], "Reads N values and prints their mean.")
+
+    def test_integer_division_detector_handles_cast_after_quotient_in_printf(self) -> None:
+        source = '''#include <stdio.h>
+int main(void) {
+    int count;
+    long long sum = 0;
+    double average;
+    if (scanf("%d", &count) != 1) return 1;
+    average = (double)(sum / count);
+    printf("Average: %.2f\\n", (double)(sum / count));
+    return 0;
+}
+'''
+        self.assertIsNotNone(reviewer._integer_division_at_line(source, 7))
+        self.assertIsNotNone(reviewer._integer_division_at_line(source, 8))
+        # Casting an operand before division is correct and must not be flagged.
+        correct_source = source.replace("(double)(sum / count)", "(double)sum / count")
+        self.assertIsNone(reviewer._integer_division_at_line(correct_source, 7))
+        self.assertIsNone(reviewer._integer_division_at_line(correct_source, 8))
+
+    def test_integer_division_recovery_accepts_labeled_numeric_output(self) -> None:
+        source = '''#include <stdio.h>
+int main(void) {
+    int count;
+    long long sum = 0;
+    double average;
+    if (scanf("%d", &count) != 1) return 1;
+    average = (double)(sum / count);
+    printf("Average: %.2f\\n", average);
+    return 0;
+}
+'''
+        report = make_report()
+        report["problem"] = "03_computation_average"
+        report["source_code"] = source
+        report["configuration"]["enabled_metrics"] = [{"name": "correctness", "analyzer": "io_tests", "weight": 1.0}]
+        report["correctness"] = {
+            "status": "completed", "score": 0.0, "tests_passed": 0, "tests_total": 1,
+            "results": [{
+                "test_id": "fractional-average", "passed": False,
+                "input": "2\\n2 3\\n", "expected": "Average: 2.50\\n", "actual": "Average: 2.00\\n",
+            }],
+        }
+        rules = {"problem": report["problem"], "problem_contract": {}, "metrics": [
+            {"name": "correctness", "enabled": True, "weight": 1.0, "params": {}}
+        ]}
+        ledger = reviewer.build_evidence_ledger(report, rules)
+        recovered = reviewer._recover_integer_division_finding(source, ledger, rules["metrics"])
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered["line_start"], 7)
+        self.assertIn("E-CORRECTNESS-TEST-001", recovered["evidence_ids"])
+
+    def test_fallback_program_understanding_reports_actual_average_flow_and_partial_oracle(self) -> None:
+        source = '''#include <stdio.h>
+int main(void) {
+    int count;
+    if (scanf("%d", &count) != 1 || count <= 0) return 1;
+    long long sum = 0;
+    for (int i = 0; i < count; ++i) {
+        int value;
+        if (scanf("%d", &value) != 1) return 1;
+        sum += value;
+    }
+    printf("Average: %.2f\\n", (double)(sum / count));
+    return 0;
+}
+'''
+        report = {
+            "source_code": source, "problem": "03_computation_average",
+            "correctness": {"results": [{"input": "2\\n2 3\\n", "expected": "2.50\\n", "actual": "2.00\\n", "passed": False}]},
+        }
+        fallback = reviewer._fallback_program_understanding(report, {"problem_contract": {}})
+        self.assertIn("integer operands", fallback["actual_behavior"])
+        self.assertIn("complete assignment statement is unavailable", fallback["intended_behavior"])
+
+    def test_prevalidation_rejects_contract_limitations_contradictions_and_style_nits(self) -> None:
+        source = """#include <stdio.h>
+int main(void) {
+    int count;
+    if (scanf("%d", &count) != 1) return 1;
+    if (count <= 0) return 1;
+    for (int i = 0; i < count; ++i) { int value; if (scanf("%d", &value) != 1) return 1; }
+    return 0;
+}
+"""
+        findings = [
+            {"id": "F01", "metric": "correctness", "title": "Empty Contract Ambiguity", "description": "The submission cannot be checked because no assignment contract or test cases were configured.", "line_start": 1},
+            {"id": "F02", "metric": "logical", "title": "Missing scanf validation", "description": "The program does not check whether scanf read the initial count successfully.", "line_start": 4},
+            {"id": "F03", "metric": "memory_safety", "title": "Loop variable bounds risk", "description": "The for-loop variable is not bounds-checked, so it may access invalid memory.", "line_start": 6},
+            {"id": "F04", "metric": "logical", "title": "Unbounded loop risk", "description": "For count <= 0 the loop body is skipped, which is correct and causes no undefined behavior.", "line_start": 6},
+            {"id": "F05", "metric": "readability", "title": "Variable naming", "description": "The variable names could be more descriptive.", "line_start": 3},
+        ]
+        cleaned, rejected = reviewer._prevalidate_rsi_findings(
+            {"overall_assessment": "candidate findings", "findings": findings},
+            source, {**RULES, "problem_contract": {}},
+            {"problem": "grading", "correctness": {"tests_total": 0, "results": []}, "logical": {"tests_total": 0, "results": []}},
+        )
+        self.assertEqual(cleaned["findings"], [])
+        self.assertEqual({item["finding_id"] for item in rejected}, {"F01", "F02", "F03", "F04", "F05"})
+
+    def test_contract_alignment_does_not_keep_unsupported_partial_match(self) -> None:
+        actual = (
+            "The program reads an integer from stdin into count. If the input is not a single integer "
+            "or count is non-positive, it returns 1. Otherwise, it reads count integers from stdin, "
+            "accumulates their sum, computes the average, and prints it formatted to two decimal places."
+        )
+        intended = (
+            "The program reads a single integer from stdin, validates it is positive, then reads count "
+            "integers from stdin, accumulates the sum, computes the average, and prints the average "
+            "formatted to two decimal places."
+        )
+        normalised = reviewer._normalise_program_understanding({
+            "actual_behavior": actual,
+            "intended_behavior": intended,
+            "contract_alignment": "partial_match",
+            "functions": [], "data_structures": [], "execution_flow": [], "assumptions": [], "ambiguities": [],
+        }, 1, {1})
+        self.assertTrue(normalised["contract_alignment"].startswith("aligned"))
+
+    def test_correctness_and_logical_are_unmeasured_without_contract_or_tests(self) -> None:
+        report = make_report()
+        report["problem"] = "grading"
+        report["correctness"] = {"status": "not_run", "score": None, "tests_total": 0, "results": []}
+        report["logical"] = {"status": "not_run", "score": None, "tests_total": 0, "results": []}
+        rules = {
+            "problem": "grading", "problem_contract": {},
+            "metrics": [
+                {"name": "correctness", "enabled": True, "weight": 0.4},
+                {"name": "logical", "enabled": True, "weight": 0.3},
+                {"name": "syntax", "enabled": True, "weight": 0.3},
+            ],
+        }
+        response = {"scores": {"correctness": 75, "logical": 80, "syntax": 100}}
+        with patch.object(reviewer, "_request_json", return_value=(response, json.dumps(response))):
+            scores, diagnostics, _latency, _calls = reviewer._score_metrics_after_rsi(
+                report, rules, understanding_response(), {"findings": [], "overall_assessment": "No findings."}, [],
+            )
+        self.assertIsNone(scores["correctness"]["score"])
+        self.assertIsNone(scores["logical"]["score"])
+        self.assertEqual(scores["syntax"]["score"], 100)
+        self.assertTrue(any("marked unmeasured" in message for message in diagnostics))
+
+    def test_unavailable_finding_adjudicator_fails_closed(self) -> None:
+        candidate = {
+            "id": "F01", "metric": "correctness", "severity": "high",
+            "title": "Wrong result", "description": "The code subtracts instead of adding.",
+            "line_start": 3, "line_end": 3, "evidence_ids": [], "confidence": 0.9,
+        }
+        report = make_report()
+        with patch.object(reviewer.settings, "LLM_GRADING_RETRY_ATTEMPTS", 2), \
+             patch.object(reviewer, "_request_json", return_value=(None, "not valid JSON")) as request:
+            accepted, rejected, metadata = reviewer._adjudicate_rsi_findings(
+                [candidate], report=report, rules=RULES,
+                program_understanding=understanding_response(), ledger=[],
+            )
+        self.assertEqual(accepted, [])
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(metadata["status"], "unavailable_fail_closed")
+        self.assertEqual(metadata["calls"], 2)
+        self.assertEqual(request.call_count, 2)
+
+    def test_text_report_shows_rejected_findings_and_unmeasured_grade_as_na(self) -> None:
+        report = {
+            "problem": "grading", "submission": "main.c",
+            "scoring": {"status": "failed_incomplete", "score": None, "warnings": ["Evidence unavailable."]},
+            "configuration": {"enabled_metrics": [{"name": "correctness", "weight": 1.0}]},
+            "correctness": {"score": None, "status": "inconclusive", "score_rationale": "No assignment contract or tests."},
+            "llm_rsi_findings": [],
+            "llm_rsi_rejected_findings": [{
+                "metric": "correctness", "title": "Empty Contract Ambiguity", "line_start": 1,
+                "reason": "An empty contract is a grading limitation, not a source defect.",
+            }],
+            "llm_rsi_evaluation": {"status": "completed_with_warnings", "llm_calls": 5, "latency_seconds": {}},
+        }
+        rendered = render_text_report(report)
+        self.assertIn("Final grade: N/A", rendered)
+        self.assertIn("EXCLUDED RSI CANDIDATES (NOT USED FOR SCORING)", rendered)
+        self.assertNotIn("Final grade: 0.00/100", rendered)
+
+    def test_only_adjudicated_findings_reach_metric_scoring(self) -> None:
+        source = """#include <stdio.h>
+int main(void) {
+    int a, b;
+    if (scanf("%d %d", &a, &b) != 2) return 1;
+    printf("%d\n", a - b);
+    return 0;
+}
+"""
+        report = make_report()
+        report["source_code"] = source
+        report["correctness"]["results"] = [{"test_id": 1, "passed": False, "input": "4 1", "expected": "5", "actual": "3"}]
+        finding_response = {
+            "overall_assessment": "The source subtracts instead of adding the two required integers.",
+            "findings": [{
+                "metric": "correctness", "severity": "high", "title": "Subtraction used instead of addition",
+                "description": "The assignment requires the sum of a and b, but line 5 computes a - b.",
+                "line_start": 5, "line_end": 5, "evidence_ids": [], "confidence": 0.99,
+            }],
+            "unresolved_questions": [],
+        }
+        validation_response = {
+            "decisions": [{
+                "finding_id": "F01", "decision": "accept", "source_line_valid": True,
+                "contract_relevant": True, "claim_supported": True, "logical_consistency": True,
+                "evidence_valid": True,
+                "reason": "Line 5 subtracts the operands while the assignment requires their sum.",
+            }],
+            "summary": "The finding is directly supported by source line 5 and the task contract.",
+        }
+        responses = [understanding_response(), finding_response, validation_response, metric_score_response(55, 100)]
+        schemas_seen = []
+        def fake_request(messages, *, max_tokens=None, enable_thinking=None, response_schema=None, schema_name=None, **kwargs):
+            schemas_seen.append(schema_name)
+            parsed = responses.pop(0)
+            return parsed, json.dumps(parsed)
+
+        with patch.object(reviewer, "_request_json", side_effect=fake_request):
+            result = reviewer.evaluate_metrics_with_llm(report, RULES, max_iterations=1)
+        self.assertEqual(schemas_seen[2], "post_rsi_finding_validation")
+        self.assertEqual(result["findings"][0]["validation_status"], "accepted")
+        self.assertEqual(result["finding_validation"]["accepted_count"], 1)
+        self.assertEqual(result["llm_calls"], 4)
+        self.assertEqual(result["status"], "completed")
 
     def test_unavailable_rsi_is_not_reported_as_no_defects(self) -> None:
         report = {
@@ -620,7 +942,7 @@ class GlobalRSITests(unittest.TestCase):
             def json():
                 return {"choices": [{"message": {"content": json.dumps({
                     "overall_assessment": "One verified memory-safety defect.",
-                    "finding_descriptions": ["Pointer is dereferenced after free."],
+                    "finding_descriptions": {"finding_0": "Pointer is dereferenced after free."},
                 })}}]}
 
         with settings.runtime_overrides({

@@ -145,47 +145,47 @@ def _same_model_chat(
             MAX_COMPRESSION_RESPONSE_TOKENS,
             max(configured_budget, requested_budget),
         ),
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": bool(settings.runtime_value("LLAMA_REASONING_ENABLED"))},
         "messages": messages,
         "response_format": {
             "type": "json_schema",
             "schema": response_schema,
         },
-        "reasoning_effort": "none",
-        "reasoning_format": "none",
     }
 
-    response = requests.post(
-        f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}",
-        json=body,
-        timeout=settings.runtime_value("LLAMA_REQUEST_TIMEOUT"),
-    )
-    response.raise_for_status()
-    data = response.json()
-    try:
-        message = data["choices"][0]["message"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError(
-            "Same-model context compression returned an unexpected chat response."
-        ) from exc
-
-    content = message.get("content", "") if isinstance(message, dict) else ""
-    if isinstance(content, list):
-        content = "\n".join(
-            str(part.get("text", ""))
-            for part in content
-            if isinstance(part, dict) and part.get("type") in {"text", "output_text"}
-        )
-    parsed = _parse_json_object(content)
-    if parsed is None:
-        choice = data.get("choices", [{}])[0] if isinstance(data, dict) else {}
-        usage = data.get("usage", {}) if isinstance(data, dict) else {}
-        raise ValueError(
-            "Same-model compression did not return schema-constrained final JSON "
-            f"(finish_reason={choice.get('finish_reason', 'unknown')}, "
-            f"completion_tokens={usage.get('completion_tokens', 'unknown')})."
-        )
-    return parsed
+    # Retry once with an explicit repair instruction; compression failure must
+    # not corrupt protected source/evidence data or abort grading.
+    last_error: Exception | None = None
+    for attempt in range(1, 3):
+        try:
+            response = requests.post(
+                f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}",
+                json=body, timeout=settings.runtime_value("LLAMA_REQUEST_TIMEOUT"),
+            )
+            response.raise_for_status()
+            data = response.json()
+            message = data["choices"][0]["message"]
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(part.get("text", "")) for part in content
+                    if isinstance(part, dict) and part.get("type") in {"text", "output_text"}
+                )
+            parsed = _parse_json_object(content)
+            if parsed is not None:
+                return parsed
+            raise ValueError("compression response was not a valid JSON object")
+        except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
+            last_error = exc
+            if attempt == 1:
+                messages.append({"role": "assistant", "content": str(content if 'content' in locals() else '')[:2500]})
+                messages.append({"role": "user", "content": (
+                    "REPAIR: the previous compression response was invalid. Return one complete JSON object "
+                    "matching the exact schema. Preserve every requested key and all semantic distinctions; "
+                    "do not include reasoning or Markdown outside the JSON object."
+                )})
+                body["messages"] = messages
+    raise ValueError(f"same-model compression failed after 2 attempts: {last_error}")
 
 
 def _deterministic_review_compaction(

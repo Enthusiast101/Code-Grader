@@ -73,6 +73,28 @@ def build_evidence_ledger(
     if isinstance(contract, dict) and contract:
         _add(ledger, "E-RULE-CONTRACT-001", "rubric", "Instructor-defined problem contract.", **contract)
 
+    generated = report.get("test_generation", {})
+    generated = generated if isinstance(generated, dict) else {}
+    inferred_contract = generated.get("inferred_contract", {})
+    if generated.get("status") == "completed" and isinstance(inferred_contract, dict) and inferred_contract:
+        _add(
+            ledger, "E-INFERRED-CONTRACT-001", "inferred_contract",
+            "Assignment-derived I/O contract produced from the natural-language assignment without access to the student source.",
+            source="assignment_only_test_generation",
+            input_format=inferred_contract.get("input_format"),
+            output_format=inferred_contract.get("output_format"),
+            constraints=inferred_contract.get("constraints", [])[:12],
+            semantics=inferred_contract.get("semantics", [])[:12],
+            formatting=inferred_contract.get("formatting", [])[:12],
+            spec_summary=generated.get("spec_summary", ""),
+        )
+    elif generated.get("status") in {"unavailable", "disabled"}:
+        _add(
+            ledger, "E-CONTRACT-STATUS-001", "scope_limitation",
+            "No assignment-derived I/O contract was available; task-specific correctness claims must not be inferred from the student source.",
+            status=generated.get("status"), reason=str(generated.get("reason", generated.get("error", "")))[:240],
+        )
+
     rule_by_name = {
         item.get("name"): item
         for item in rules.get("metrics", [])

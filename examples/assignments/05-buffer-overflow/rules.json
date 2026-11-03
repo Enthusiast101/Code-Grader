@@ -1,5 +1,12 @@
 {
-  "problem": "05_buffer_overflow",
+  "problem": "Read one ASCII username. Accept names of 1 through 7 characters and print \"Hello <name>\" followed by a newline. For a longer name, print \"ERROR\" followed by a newline. Use an 8-byte destination safely, detect excess input, and never write beyond the buffer.",
+  "problem_contract": {
+    "description": "Accept a username of length 1 to 7, then print a greeting. Inputs longer than 7 characters must be rejected safely without overflowing the 8-byte destination.",
+    "operand_type": "ASCII username",
+    "sum_type": "none",
+    "input_range": "1 to 7 characters accepted; longer names rejected",
+    "output_rule": "For valid input print Hello <name>. For overlong input print ERROR."
+  },
   "time_limit_s": 2,
   "memory_limit_mb": 256,
   "submission": {
@@ -10,7 +17,7 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.2,
+      "weight": 0.22,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/05-buffer-overflow/testcases.json"
@@ -19,16 +26,46 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.1,
+      "weight": 0.08,
       "enabled": true,
-      "params": {}
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.1,
+      "weight": 0.12,
       "enabled": true,
-      "params": {}
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
@@ -40,24 +77,46 @@
       }
     },
     {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.05,
+      "enabled": true,
+      "params": {
+        "testset_path": null,
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      }
+    },
+    {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.5,
+      "weight": 0.17,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/05-buffer-overflow/memory_cases.json",
         "run_sanitizers": true
       }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
     }
-  ],
-  "llm_review": {
-    "max_iterations": 3
-  },
-  "problem_contract": {
-    "description": "Accept a username of length 1 to 7, then print a greeting. Inputs longer than 7 characters must be rejected safely without overflowing the 8-byte destination.",
-    "operand_type": "ASCII username",
-    "sum_type": "none",
-    "input_range": "1 to 7 characters accepted; longer names rejected",
-    "output_rule": "For valid input print Hello <name>. For overlong input print ERROR."
-  }
+  ]
 }

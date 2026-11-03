@@ -1,5 +1,12 @@
 {
-  "problem": "09_dp_grid_paths",
+  "problem": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "problem_contract": {
+    "description": "Count right/down paths from the top-left to bottom-right cell without entering cells marked 1. A blocked start or destination yields zero.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= rows, cols <= 30; each cell is 0 (open) or 1 (blocked); path count fits signed 64-bit.",
+    "output_rule": "One signed 64-bit integer: number of valid paths; newline terminated."
+  },
   "time_limit_s": 5,
   "memory_limit_mb": 256,
   "submission": {
@@ -10,7 +17,7 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.3,
+      "weight": 0.22,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/09-dp-grid-paths/testcases.json"
@@ -19,30 +26,71 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.1,
+      "weight": 0.08,
       "enabled": true,
-      "params": {}
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.1,
+      "weight": 0.12,
       "enabled": true,
-      "params": {}
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
       "analyzer": "edge_case_runner",
-      "weight": 0.2,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/09-dp-grid-paths/edge_cases.json"
       }
     },
     {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.05,
+      "enabled": true,
+      "params": {
+        "testset_path": null,
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      }
+    },
+    {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.15,
+      "weight": 0.17,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/09-dp-grid-paths/memory_cases.json",
@@ -52,21 +100,23 @@
     {
       "name": "readability",
       "analyzer": "readability",
-      "weight": 0.15,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "max_line_length": 100
       }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
     }
-  ],
-  "llm_review": {
-    "max_iterations": 3
-  },
-  "problem_contract": {
-    "description": "Count right/down paths from the top-left to bottom-right cell without entering cells marked 1. A blocked start or destination yields zero.",
-    "operand_type": "signed 64-bit integers where applicable",
-    "sum_type": "signed 64-bit integer where applicable",
-    "input_range": "1 <= rows, cols <= 30; each cell is 0 (open) or 1 (blocked); path count fits signed 64-bit.",
-    "output_rule": "One signed 64-bit integer: number of valid paths; newline terminated."
-  }
+  ]
 }

@@ -1,11 +1,9 @@
-"""Five-point anchored advisory score bands for LLM calibration.
-
-These bands constrain LLM review recommendations only. Deterministic analyzer
-scores remain the sole authority for the final grade.
-"""
+"""Five-point anchored score bands for consistent rubric calibration."""
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
+
 
 @dataclass(frozen=True)
 class ScoreBand:
@@ -14,6 +12,7 @@ class ScoreBand:
     upper: int
     midpoint: float
     descriptor: str
+
 
 _DESCRIPTORS = (
     "No usable evidence of the required behavior; essentially absent or wholly invalid.",
@@ -44,12 +43,14 @@ SCORE_BANDS = tuple(
 BAND_BY_LABEL = {band.label: band for band in SCORE_BANDS}
 BAND_LABELS = tuple(BAND_BY_LABEL)
 
+
 def score_from_band(value: Any) -> float | None:
-    """Return fixed midpoint for a valid half-open 5-point band."""
+    """Return the fixed midpoint for a recognized five-point band."""
     if not isinstance(value, str):
         return None
     band = BAND_BY_LABEL.get(value.strip())
     return band.midpoint if band else None
+
 
 def band_for_score(score: float) -> str:
     """Map a finite 0..100 score to a display band; 100 maps to 95-100."""
@@ -61,20 +62,21 @@ def band_for_score(score: float) -> str:
     lower = min(95, int(numeric // 5) * 5)
     return f"{lower}-{lower + 5}"
 
+
 def rubric_prompt_block(metric_rubrics: dict[str, Any] | None = None) -> str:
-    """Build the fixed rubric text embedded in every LLM metric review prompt."""
+    """Build the calibrated scale and metric criteria for scoring prompts."""
     lines = [
-        "ADVISORY SCORE SCALE — choose exactly one 5-point band per metric.",
-        "Bands are half-open [lower, upper), except the final band includes 100.",
-        "The only allowed labels are: " + ", ".join(BAND_LABELS) + ".",
-        "Do not invent a number inside a band. Software converts the chosen band",
-        "to its fixed midpoint (2.5, 7.5, ..., 97.5). This is advisory only;",
-        "deterministic analyzers calculate the actual grade. Apply metric-specific",
-        "criteria and cite evidence IDs. Missing measurements are not zeros.",
+        "CALIBRATED 0-100 SCORE SCALE: use the five-point bands below as anchors.",
+        "Return a numeric score from 0 to 100; do not return a band label.",
+        "Choose scores consistently with the nearest band descriptor and metric-specific rubric.",
+        "Executed correctness/logical test pass rates determine those metrics; validated LLM scores assess other metrics, with completed analyzer fallback.",
+        "Missing measurements are not zeros. Never invent evidence or task requirements.",
         "GENERAL BAND DESCRIPTORS:",
     ]
-    lines.extend(f"{b.label}: {b.descriptor}" for b in SCORE_BANDS)
+    lines.extend(f"{band.label}: {band.descriptor}" for band in SCORE_BANDS)
     if metric_rubrics:
-        lines.append("METRIC-SPECIFIC CRITERIA:")
-        lines.extend(f"{name}: {metric_rubrics[name]}" for name in sorted(metric_rubrics))
+        criteria = metric_rubrics.get("metrics", metric_rubrics)
+        if isinstance(criteria, dict) and criteria:
+            lines.append("METRIC-SPECIFIC CRITERIA:")
+            lines.extend(f"{name}: {criteria[name]}" for name in sorted(criteria))
     return "\n".join(lines)

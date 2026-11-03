@@ -21,6 +21,13 @@ def sample_response():
     return {
         "spec_summary": "Read two integers and print their sum.",
         "ambiguities": [],
+        "inferred_contract": {
+            "input_format": "Two signed integers separated by whitespace.",
+            "output_format": "Print their sum followed by a newline.",
+            "constraints": [],
+            "semantics": ["Compute the mathematical sum of the two input integers."],
+            "formatting": ["One integer result per output line."],
+        },
         "reference_solution_c": "#include <stdio.h>\nint main(void){long long a,b;if(scanf(\"%lld%lld\",&a,&b)!=2)return 1;printf(\"%lld\\n\",a+b);return 0;}\n",
         "test_inputs": [
             {"id": "basic", "input": "2 3\n", "tags": ["normal"], "rationale": "Ordinary positive operands."},
@@ -53,8 +60,15 @@ def test_generation_fails_closed_on_ambiguous_contract():
     response["ambiguities"] = ["The assignment does not define overflow behavior."]
     with pytest.raises(TestGenerationError, match="Unresolved assignment ambiguities"):
         generate_assignment_test_spec(
-            problem="Add two integers.", problem_contract={},
+            problem="Read two integers from input and print their arithmetic sum.", problem_contract={},
             request_json=lambda *_: response,
+        )
+
+
+def test_generation_refuses_a_title_without_an_assignment_contract():
+    with pytest.raises(TestGenerationError, match="only a title"):
+        generate_assignment_test_spec(
+            problem="grading", problem_contract={}, request_json=lambda *_: sample_response(),
         )
 
 

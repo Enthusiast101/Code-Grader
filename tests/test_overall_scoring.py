@@ -10,7 +10,7 @@ class OverallScoringTests(unittest.TestCase):
             {"name": "logical", "analyzer": "edge_case_runner", "weight": 0.4, "enabled": True},
         ]
 
-    def test_analyzers_are_authoritative_even_when_llm_disagrees(self):
+    def test_validated_llm_scores_are_primary_when_no_test_cap_applies(self):
         report = {
             "correctness": {"status": "completed", "score": 80.0},
             "logical": {"status": "completed", "score": 90.0},
@@ -20,13 +20,31 @@ class OverallScoringTests(unittest.TestCase):
             {"name": "logical", "score": 2.5, "score_band": "0-5", "origin": "llm", "rationale": "LLM proposal."},
         ]}
         apply_metric_scores(self.metrics, report, llm)
-        self.assertEqual(report["correctness"]["score"], 80.0)
-        self.assertEqual(report["logical"]["score"], 90.0)
+        self.assertEqual(report["correctness"]["score"], 7.5)
+        self.assertEqual(report["logical"]["score"], 2.5)
         self.assertEqual(report["correctness"]["llm_review_score"], 7.5)
         self.assertEqual(report["logical"]["llm_review_score"], 2.5)
-        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 84.0)
+        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 5.5)
 
-    def test_llm_cannot_fill_an_unmeasured_metric(self):
+    def test_executed_correctness_and_logical_test_rates_are_authoritative(self):
+        report = {
+            "correctness": {"status": "completed", "score": 50.0, "tests_passed": 1, "tests_total": 2},
+            "logical": {"status": "completed", "score": 100.0, "tests_passed": 2, "tests_total": 2},
+        }
+        llm = {"metrics": [
+            {"name": "correctness", "score": 85.0, "origin": "llm", "rationale": "LLM proposed a high score."},
+            {"name": "logical", "score": 95.0, "origin": "llm", "rationale": "Both edge tests passed."},
+        ]}
+        apply_metric_scores(self.metrics, report, llm)
+        self.assertEqual(report["correctness"]["llm_review_score"], 85.0)
+        self.assertEqual(report["correctness"]["score"], 50.0)
+        self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
+        self.assertTrue(report["correctness"]["test_score_override_applied"])
+        self.assertEqual(report["logical"]["score"], 100.0)
+        self.assertEqual(report["logical"]["score_origin"], "deterministic_test_results")
+        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 70.0)
+
+    def test_validated_llm_score_can_measure_a_metric_without_analyzer_output(self):
         report = {
             "correctness": {"status": "completed", "score": 80.0},
             "logical": {"status": "inconclusive", "score": None, "reason": "Missing test inputs."},
@@ -36,21 +54,36 @@ class OverallScoringTests(unittest.TestCase):
             {"name": "logical", "score": 97.5, "score_band": "95-100", "origin": "llm", "rationale": "LLM guessed from source."},
         ]}
         apply_metric_scores(self.metrics, report, llm)
-        self.assertIsNone(report["logical"]["score"])
+        self.assertEqual(report["logical"]["score"], 97.5)
         self.assertEqual(report["logical"]["llm_review_score"], 97.5)
         final = calculate_overall_score(self.metrics, report)
-        self.assertEqual(final["status"], "failed_incomplete")
-        self.assertIsNone(final["score"])
-        self.assertEqual(final["missing_metrics"][0]["metric"], "logical")
+        self.assertEqual(final["status"], "completed")
+        self.assertEqual(final["score"], 94.5)
 
 
-    def test_numeric_llm_score_without_band_is_ignored(self):
+    def test_numeric_llm_score_without_supplied_band_is_accepted_and_banded_locally(self):
         report = {"correctness": {"status": "completed", "score": 42.0}, "logical": {"status": "completed", "score": 58.0}}
         llm = {"metrics": [{"name": "correctness", "score": 99.0, "origin": "llm"}]}
         apply_metric_scores(self.metrics, report, llm)
-        self.assertIsNone(report["correctness"]["llm_review_score"])
-        self.assertEqual(report["correctness"]["score"], 42.0)
-        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 48.4)
+        self.assertEqual(report["correctness"]["llm_review_score"], 99.0)
+        self.assertEqual(report["correctness"]["score"], 99.0)
+        self.assertEqual(calculate_overall_score(self.metrics, report)["score"], 82.6)
+
+    def test_test_pass_rate_is_derived_from_rows_when_aggregate_counts_are_missing(self):
+        report = {
+            "correctness": {"status": "completed", "score": 90.0, "results": [
+                {"passed": True}, {"passed": False},
+            ]},
+            "logical": {"status": "completed", "score": 100.0},
+        }
+        llm = {"metrics": [
+            {"name": "correctness", "score": 95.0, "origin": "llm", "rationale": "Looks correct."},
+            {"name": "logical", "score": 95.0, "origin": "llm", "rationale": "Looks logical."},
+        ]}
+        apply_metric_scores(self.metrics, report, llm)
+        self.assertEqual(report["correctness"]["score"], 50.0)
+        self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
+        self.assertEqual(report["logical"]["score"], 95.0)
 
     def test_completed_analyzer_zero_is_a_real_zero(self):
         report = {"correctness": {"status": "completed", "score": 0.0}, "logical": {"status": "completed", "score": 100.0}}
