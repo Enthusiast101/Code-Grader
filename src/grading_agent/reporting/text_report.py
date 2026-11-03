@@ -156,6 +156,11 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
             if isinstance(gcc_audit, dict):
                 lines.append(f"  GCC -fanalyzer status/findings: {gcc_audit.get('status', 'unknown')} / {len(gcc_audit.get('findings', []))}")
         elif name == "runtime_efficiency":
+            input_source = result.get("test_input_source_metric")
+            if input_source:
+                lines.append(
+                    f"  Profile inputs: reused the configured {input_source} test inputs; expected outputs were not used for timing."
+                )
             if result.get("compile_elapsed_ms") is not None:
                 lines.append(f"  Compile duration: {result['compile_elapsed_ms']:.3f} ms ({result.get('compile_status', 'unknown')})")
             for label, key in (("Average runtime", "mean_runtime_ms"), ("Median runtime", "median_runtime_ms"), ("Maximum runtime", "max_runtime_ms")):

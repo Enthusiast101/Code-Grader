@@ -69,29 +69,59 @@ def assignment_fingerprint(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _validate_candidate(value: Any, pass_number: int) -> dict[str, Any]:
+def _validate_candidate(
+    value: Any,
+    pass_number: int,
+    *,
+    allow_ambiguities: bool = False,
+    fallback_summary: str = "",
+    fallback_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TestGenerationError("invalid_response", f"RSI pass {pass_number} did not return an object.")
     summary, ambiguity = value.get("spec_summary"), value.get("ambiguities", [])
     reference, cases = value.get("reference_solution_c"), value.get("test_inputs")
     if not isinstance(summary, str) or not summary.strip():
-        raise TestGenerationError("missing_spec", f"RSI pass {pass_number} omitted the formal task summary.")
+        # The assignment text is instructor-authored and already passed the
+        # actionable-contract check. Reuse it verbatim rather than discarding
+        # otherwise valid tests because the model omitted optional prose.
+        summary = fallback_summary.strip()
+        if not summary:
+            raise TestGenerationError("missing_spec", f"RSI pass {pass_number} omitted the formal task summary.")
     if not isinstance(ambiguity, list) or not all(isinstance(x, str) for x in ambiguity):
         raise TestGenerationError("invalid_ambiguities", f"RSI pass {pass_number} returned malformed ambiguity details.")
-    if ambiguity:
+    if ambiguity and not allow_ambiguities:
         raise TestGenerationError("ambiguous_assignment", "Unresolved assignment ambiguities: " + "; ".join(ambiguity[:5]))
     inferred = value.get("inferred_contract")
+    fallback_contract = fallback_contract if isinstance(fallback_contract, dict) else {}
+    contract_source = "model"
     if not isinstance(inferred, dict):
-        raise TestGenerationError("missing_inferred_contract", f"RSI pass {pass_number} omitted the assignment-derived I/O contract.")
-    for field in ("input_format", "output_format"):
-        if not isinstance(inferred.get(field), str) or len(inferred[field].strip()) < 8:
-            raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must infer a meaningful {field}.")
-    for field in ("constraints", "semantics", "formatting"):
-        entries = inferred.get(field)
-        if not isinstance(entries, list) or not all(isinstance(item, str) and item.strip() for item in entries):
-            raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} returned invalid inferred_contract.{field}.")
-    if not inferred["semantics"]:
-        raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must identify at least one task semantic.")
+        inferred = dict(fallback_contract)
+        contract_source = "assignment_and_instructor_contract"
+        if not inferred:
+            raise TestGenerationError("missing_inferred_contract", f"RSI pass {pass_number} omitted the assignment-derived I/O contract.")
+    else:
+        inferred = dict(inferred)
+        for field in ("input_format", "output_format"):
+            if not isinstance(inferred.get(field), str) or len(inferred[field].strip()) < 8:
+                fallback_value = fallback_contract.get(field)
+                if not isinstance(fallback_value, str) or len(fallback_value.strip()) < 8:
+                    raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must infer a meaningful {field}.")
+                inferred[field] = fallback_value
+                contract_source = "assignment_and_instructor_contract"
+        for field in ("constraints", "semantics", "formatting"):
+            entries = inferred.get(field)
+            if not isinstance(entries, list) or not all(isinstance(item, str) and item.strip() for item in entries):
+                fallback_entries = fallback_contract.get(field)
+                if not isinstance(fallback_entries, list):
+                    raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} returned invalid inferred_contract.{field}.")
+                inferred[field] = fallback_entries
+                contract_source = "assignment_and_instructor_contract"
+        if not inferred["semantics"]:
+            inferred["semantics"] = fallback_contract.get("semantics", [])
+            contract_source = "assignment_and_instructor_contract"
+            if not inferred["semantics"]:
+                raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must identify at least one task semantic.")
     if not isinstance(reference, str) or not reference.strip() or len(reference) > MAX_REFERENCE_SOURCE_CHARS:
         raise TestGenerationError("missing_reference", f"RSI pass {pass_number} omitted a bounded C reference solution.")
     if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
@@ -124,7 +154,10 @@ def _validate_candidate(value: Any, pass_number: int) -> dict[str, Any]:
     if not isinstance(claims, list) or not all(isinstance(x, str) for x in claims):
         claims = []
     return {
-        "spec_summary": summary.strip()[:2_000], "ambiguities": [],
+        "spec_summary": summary.strip()[:2_000],
+        "spec_summary_source": "assignment_statement" if value.get("spec_summary") != summary else "model",
+        "inferred_contract_source": contract_source,
+        "ambiguities": [item.strip()[:500] for item in ambiguity if item.strip()][:10],
         "inferred_contract": {
             "input_format": inferred["input_format"].strip()[:1_000],
             "output_format": inferred["output_format"].strip()[:1_000],
@@ -162,6 +195,7 @@ def generate_assignment_test_spec(
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
     passes: int = 3, generation_seed: int = 42, max_cases: int = 60,
     additional_focus: str = "",
+    instructor_examples: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Generate a reference solution and test inputs, then sequentially RSI-recheck.
 
@@ -210,8 +244,36 @@ def generate_assignment_test_spec(
     base = {
         "assignment": problem, "problem_contract": problem_contract,
         "generation_seed": generation_seed, "maximum_cases": max_cases,
+        "requested_case_count": max_cases,
         "additional_coverage_focus": additional_focus.strip(),
         "student_submission_included": False,
+    }
+    if instructor_examples:
+        base["authoritative_instructor_examples"] = [
+            {
+                "id": str(case.get("id", f"instructor-{index}")),
+                "input": case["input"],
+                "expected": case["expected"],
+            }
+            for index, case in enumerate(instructor_examples, 1)
+            if isinstance(case, dict)
+            and isinstance(case.get("input"), str)
+            and isinstance(case.get("expected"), str)
+        ][:20]
+    instructor_contract_fallback = {
+        "input_format": str(problem_contract.get("input_format") or problem),
+        "output_format": str(problem_contract.get("output_format") or problem_contract.get("output_rule") or problem),
+        "constraints": [
+            f"{key}: {value}" for key, value in problem_contract.items()
+            if any(marker in str(key).casefold() for marker in ("constraint", "range", "limit"))
+            and value not in (None, "", [], {})
+        ],
+        "semantics": [
+            str(problem_contract.get("description") or problem_contract.get("requirements") or problem)
+        ],
+        "formatting": [
+            str(problem_contract.get("formatting") or problem_contract.get("output_rule") or problem)
+        ],
     }
     system = (
         "You design tests and a reference solution for a C assignment. Work only from the "
@@ -223,11 +285,14 @@ def generate_assignment_test_spec(
         "these fields only from the assignment and instructor contract; never infer task "
         "requirements from a student's source (which is not provided). If a required detail "
         "is absent or ambiguous, list it in ambiguities and do not guess. Return a complete C11 "
-        "reference solution and test INPUTS, not expected outputs. Cover valid normal cases, "
+        "reference solution and test INPUTS, not expected outputs. Generate exactly requested_case_count "
+        "distinct valid test inputs unless the assignment has fewer valid inputs. Cover valid normal cases, "
         "minimum and maximum constraints, empty/singleton cases where valid, duplicates, "
         "negative/zero values, numeric boundaries, overflow boundaries and task-specific "
         "adversarial cases. Do not invent requirements. Put every ambiguity in ambiguities "
-        "and do not guess its answer. Give each test a stable id, tags and rationale. JSON only."
+        "and do not guess its answer. Authoritative instructor examples define expected output for those exact inputs; "
+        "use them to follow the stated output convention, but do not treat them as exhaustive requirements. "
+        "Give each test a stable id, tags and rationale. JSON only."
     )
     accepted, prior, history = None, None, []
     for index in range(1, passes + 1):
@@ -238,8 +303,16 @@ def generate_assignment_test_spec(
             f"PASS {index}: RSI recheck the complete previous specification, C solution and test set. "
             "Actively find misread requirements, omitted boundary cases, undefined behavior, parsing "
             "errors, reference implementation bugs, unsupported assumptions, duplicate/invalid tests, "
-            "and mismatched expected semantics. Return a complete corrected replacement object, not a patch."
+            "and mismatched expected semantics. Resolve each prior ambiguity only from the assignment, "
+            "contract, or authoritative instructor examples. If a detail remains unresolved, avoid "
+            "cases whose expected behavior depends on it and keep the ambiguity explicit. Return a "
+            "complete corrected replacement object, not a patch."
         )
+        if prior is not None and prior.get("case_count_shortfall", 0):
+            instruction += (
+                f" The previous response supplied only {len(prior['test_inputs'])} distinct cases; "
+                f"add valid, non-duplicate cases to reach the requested count of {max_cases}."
+            )
         payload = dict(base, instruction=instruction)
         if prior is not None:
             payload["preceding_complete_response"] = prior
@@ -247,9 +320,19 @@ def generate_assignment_test_spec(
             [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)}],
             schema, f"assignment_test_generation_rsi_{index}",
         )
-        accepted = _validate_candidate(result, index)
+        accepted = _validate_candidate(
+            result,
+            index,
+            allow_ambiguities=index < passes,
+            fallback_summary=problem,
+            fallback_contract=instructor_contract_fallback,
+        )
+        accepted["case_count_shortfall"] = max(0, max_cases - len(accepted["test_inputs"]))
         history.append({
             "pass": index, "status": "completed", "test_count": len(accepted["test_inputs"]),
+            "ambiguities_reported": len(accepted["ambiguities"]),
+            "requested_test_count": max_cases,
+            "test_count_shortfall": accepted["case_count_shortfall"],
             "reference_source_sha256": hashlib.sha256(accepted["reference_solution_c"].encode()).hexdigest(),
             "coverage_claims": accepted["coverage_claims"],
         })
@@ -524,7 +607,7 @@ def prepare_assignment_test_suite(
 
     seed = int(generation_seed)
     passes = testing_cfg.get("rsi_passes", 3)
-    max_cases = testing_cfg.get("max_cases", 60)
+    max_cases = testing_cfg.get("max_cases", 12)
     additional_focus = testing_cfg.get("additional_focus", "")
     if not isinstance(additional_focus, str) or len(additional_focus) > 500:
         raise TestGenerationError("invalid_test_generation_config", "test_generation.additional_focus must be text of at most 500 characters.")
@@ -535,7 +618,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":contract-v2",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":contract-v5",
         rsi_passes=int(passes), max_cases=int(max_cases), temperature=float(temperature),
         additional_focus=additional_focus,
     )
@@ -595,6 +678,7 @@ def prepare_assignment_test_suite(
             request_json=request_json,
             passes=int(passes), generation_seed=int(seed), max_cases=int(max_cases),
             additional_focus=additional_focus,
+            instructor_examples=instructor_cases,
         )
         if reference_source is not None:
             spec["reference_solution_c"] = reference_source
@@ -666,6 +750,18 @@ def prepare_assignment_test_suite(
         "reference_solution_sha256": reference_hash,
         "instructor_test_count": len(instructor_cases),
         "total_test_count": len(all_cases),
+        "generated_test_count": sum(
+            case.get("origin") == "llm_generated_reference_oracle"
+            for case in all_cases if isinstance(case, dict)
+        ),
+        "requested_generated_test_count": int(max_cases),
+        "generated_test_count_shortfall": max(
+            0,
+            int(max_cases) - sum(
+                case.get("origin") == "llm_generated_reference_oracle"
+                for case in all_cases if isinstance(case, dict)
+            ),
+        ),
         "edge_test_count": len(edge_cases),
         "rsi_passes": generation_history,
         "metric_testset_paths": metric_bindings,

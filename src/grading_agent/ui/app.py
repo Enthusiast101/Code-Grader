@@ -5,6 +5,8 @@ import json
 import logging
 import math
 import random
+import time
+from concurrent.futures import ThreadPoolExecutor
 from argparse import Namespace
 from pathlib import Path
 import shutil
@@ -26,6 +28,23 @@ OCEAN_UI_CSS = """
 #app-header {padding: 0.5rem 0 0.2rem 0;}
 #grade-button {min-height: 3.1rem; font-size: 1.05rem;}
 .compact-note {opacity: 0.78;}
+#grading-progress:empty {display: none;}
+.grade-progress-card {display: flex; gap: 1rem; align-items: flex-start; margin: 0.8rem 0 1rem; padding: 1rem 1.1rem; border: 1px solid rgba(25, 140, 160, .3); border-radius: 16px; background: linear-gradient(120deg, rgba(14, 116, 144, .1), rgba(20, 184, 166, .08)); overflow: hidden;}
+.grade-progress-card.is-done {border-color: rgba(16, 140, 100, .35); background: linear-gradient(120deg, rgba(16, 140, 100, .1), rgba(20, 184, 166, .08));}
+.grade-progress-icon {width: 2.4rem; height: 2.4rem; flex: 0 0 2.4rem; display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(140deg, #0891b2, #0f766e); font-size: 1.15rem; box-shadow: 0 0 0 6px rgba(8, 145, 178, .1);}
+.is-done .grade-progress-icon {background: linear-gradient(140deg, #059669, #0f766e);}
+.grade-progress-body {flex: 1; min-width: 0;}
+.grade-progress-title {font-weight: 700; margin: 0 0 .2rem;}
+.grade-progress-heading {display: flex; align-items: center; justify-content: space-between; gap: 1rem;}
+.grade-progress-elapsed {font-variant-numeric: tabular-nums; white-space: nowrap; font-size: .88rem; opacity: .78;}
+.grade-progress-description {opacity: .76; margin: 0 0 .75rem; font-size: .92rem;}
+.grade-progress-track {height: .38rem; border-radius: 99px; overflow: hidden; background: rgba(100, 116, 139, .18);}
+.grade-progress-track span {display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #06b6d4, #14b8a6, #38bdf8); animation: grade-progress-slide 1.7s ease-in-out infinite;}
+.is-done .grade-progress-track span {width: 100%; animation: none; background: linear-gradient(90deg, #10b981, #14b8a6);}
+.grade-progress-stages {display: flex; flex-wrap: wrap; gap: .45rem; margin: 0 0 .75rem;}
+.grade-progress-stage {padding: .2rem .55rem; border: 1px solid rgba(14, 116, 144, .18); border-radius: 99px; background: rgba(255, 255, 255, .35); font-size: .78rem; opacity: .85;}
+@keyframes grade-progress-slide {0% {transform: translateX(-120%);} 100% {transform: translateX(360%);}}
+@media (prefers-reduced-motion: reduce) {.grade-progress-track span {animation: none; width: 65%;}}
 """
 
 
@@ -384,6 +403,7 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
         ])
 
     observed: dict[str, dict[str, Any]] = {}
+    observed_by_input: dict[str, dict[str, Any]] = {}
     for metric_name in ("correctness", "logical", "runtime_efficiency", "memory_safety"):
         result = report.get(metric_name, {})
         rows = result.get("results", []) if isinstance(result, dict) else []
@@ -391,7 +411,10 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
             continue
         for row in rows:
             if isinstance(row, dict) and row.get("test_id") is not None:
-                observed[str(row["test_id"])] = row
+                observed.setdefault(str(row["test_id"]), row)
+                input_value = row.get("input")
+                if isinstance(input_value, str):
+                    observed_by_input.setdefault(input_value, row)
 
     test_cases = []
     generation = report.get("test_generation", {}) if isinstance(report, dict) else {}
@@ -416,15 +439,22 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
     for index, case in enumerate(test_cases, start=1):
         if not isinstance(case, dict):
             continue
-        case_id = str(case.get("id", index))
-        observed_row = observed.get(case_id, {})
+        case_id = str(case.get("id", case.get("test_id", index)))
+        case_input = str(case.get("input", ""))
+        # When no frozen generated suite exists, the fallback case records are
+        # themselves analyzer result rows. Prefer those direct outcomes, then
+        # join suite cases by stable ID and finally by their exact input text.
+        observed_row = (
+            case if isinstance(case.get("passed"), bool)
+            else observed.get(case_id) or observed_by_input.get(case_input, {})
+        )
         passed = observed_row.get("passed")
         result_label = "PASS" if passed is True else "FAIL" if passed is False else "Not run"
         tags = case.get("tags", [])
         case_rows.append([
             case_id,
             ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else "",
-            str(case.get("input", "")),
+            case_input,
             str(case.get("expected", "")),
             str(observed_row.get("actual", "")),
             result_label,
@@ -440,6 +470,25 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
         summary.append(f"**Test cases:** {total} configured · {executed} executed")
     else:
         summary.append("**Test suite:** No validated test suite was available for this run.")
+
+    if generation.get("status") == "completed":
+        generated_count = int(generation.get("generated_test_count", 0) or 0)
+        requested_count = int(generation.get("requested_generated_test_count", generated_count) or 0)
+        instructor_count = int(generation.get("instructor_test_count", 0) or 0)
+        summary.append(
+            f"**Generated cases:** {generated_count}/{requested_count} requested · "
+            f"{instructor_count} instructor cases"
+        )
+        shortfall = int(generation.get("generated_test_count_shortfall", 0) or 0)
+        if shortfall:
+            summary.append(f"**Generation note:** {shortfall} requested cases were not produced.")
+    else:
+        generation_error = generation.get("error") or generation.get("reason")
+        if generation_error:
+            summary.append(
+                "**Automatic generation:** unavailable — "
+                + str(generation_error).replace(chr(10), " ")[:300]
+            )
 
     finding_rows = []
     findings = report.get("llm_rsi_findings", []) if isinstance(report, dict) else []
@@ -620,8 +669,8 @@ def grade_uploaded_submission(
         if int(memory_limit_mb) != memory_limit_mb:
             raise ValueError("Docker memory limit must be a whole number of MB.")
 
-        if isinstance(max_generated_cases, bool) or not 1 <= int(max_generated_cases) <= 80:
-            raise ValueError("Generated test-case limit must be between 1 and 80.")
+        if isinstance(max_generated_cases, bool) or not 1 <= int(max_generated_cases) <= 60:
+            raise ValueError("Generated test-case target must be between 1 and 60.")
         if not isinstance(additional_test_focus, str) or len(additional_test_focus) > 500:
             raise ValueError("Test variation focus must be at most 500 characters.")
         test_generation = rules.setdefault("test_generation", {})
@@ -705,6 +754,64 @@ def grade_uploaded_submission(
     finally:
         if stage_dir is not None:
             shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def grade_uploaded_submission_with_progress(*args: Any):
+    """Stream a live visual indicator, then the completed grading result."""
+    started = time.monotonic()
+
+    def elapsed_label() -> str:
+        elapsed = max(0, int(time.monotonic() - started))
+        minutes, seconds = divmod(elapsed, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+
+    def progress_html(*, done: bool = False, failed: bool = False) -> str:
+        elapsed = elapsed_label()
+        if failed:
+            title = "Grading needs attention"
+            description = "The run stopped before a complete result was produced. See the overview for details."
+            icon, card_class = "!", ""
+            progress = ""
+        elif done:
+            title = "Grading complete"
+            description = "Test variations, analysis, and consolidated metric scoring have finished."
+            icon, card_class = "✓", " is-done"
+            progress = '<div class="grade-progress-track" aria-hidden="true"><span></span></div>'
+        else:
+            title = "Grading in progress"
+            description = "Preparing generated test variations and evaluating the submission."
+            icon, card_class = "↻", ""
+            progress = (
+                '<div class="grade-progress-stages" aria-label="Pipeline stages">'
+                '<span class="grade-progress-stage">Test variations</span>'
+                '<span class="grade-progress-stage">Sandbox runs</span>'
+                '<span class="grade-progress-stage">Source review</span>'
+                '<span class="grade-progress-stage">Metric points</span></div>'
+                '<div class="grade-progress-track" aria-hidden="true"><span></span></div>'
+            )
+        return (
+            f'<section class="grade-progress-card{card_class}" role="status" aria-live="polite">'
+            f'<div class="grade-progress-icon" aria-hidden="true">{icon}</div>'
+            '<div class="grade-progress-body">'
+            '<div class="grade-progress-heading">'
+            f'<div class="grade-progress-title">{title}</div>'
+            f'<div class="grade-progress-elapsed">Elapsed&nbsp; {elapsed}</div>'
+            '</div>'
+            f'<p class="grade-progress-description">{description}</p>{progress}'
+            '</div></section>'
+        )
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="grading-ui") as executor:
+        future = executor.submit(grade_uploaded_submission, *args)
+        yield (progress_html(), *[gr.skip() for _ in range(7)])
+        while not future.done():
+            time.sleep(1)
+            if not future.done():
+                yield (progress_html(), *[gr.skip() for _ in range(7)])
+        result = future.result()
+    failed = isinstance(result[0], str) and result[0].startswith("## Could not complete grading")
+    yield (progress_html(done=not failed, failed=failed), *result)
 
 
 def _prediction_stage_counts(prediction_path: Path) -> dict[str, int]:
@@ -902,8 +1009,8 @@ def build_app() -> gr.Blocks:
             )
             with gr.Row():
                 max_generated_cases = gr.Slider(
-                    1, 80, value=60, step=1, label="Maximum generated test cases",
-                    info="Generated cases and edge cases are run before grading.",
+                    1, 60, value=12, step=1, label="Generated test case target",
+                    info="Requests this many additional cases. Instructor cases are preserved and included in the final suite.",
                 )
                 additional_test_focus = gr.Textbox(
                     label="Test variation focus (optional)",
@@ -911,40 +1018,41 @@ def build_app() -> gr.Blocks:
                     lines=2, max_lines=3, max_length=500,
                 )
             rules_editor_source_hash = gr.State("")
-            with gr.Accordion("Assignment rules and grading settings", open=False):
+            with gr.Accordion("Assignment rules", open=False):
                 rules_status = gr.Markdown("Upload rules JSON to load an editable copy.", elem_classes=["compact-note"])
                 rules_editor = gr.Code(
                     label="Rules JSON", language="json", interactive=True,
                     lines=18, max_lines=36, value="",
                 )
                 gr.Markdown(
-                    "Rules and testcase paths resolve from the repository root. Controls here apply only to this run.",
+                    "Rules and testcase paths resolve from the repository root.",
                     elem_classes=["compact-note"],
                 )
+            with gr.Accordion("Execution settings", open=False):
                 with gr.Row():
                     time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1, label="Per-test timeout (seconds)")
                     memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
                     docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
                     run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
-                with gr.Accordion("LLM and context options", open=False):
-                    with gr.Row():
-                        rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS, step=1, label="RSI iterations")
-                        llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature")
-                        llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10, label="LLM timeout (seconds)")
-                    with gr.Row():
-                        model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
-                        thinking_ui = gr.Checkbox(value=True, label="Enable model thinking")
-                    with gr.Row():
-                        max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
-                        source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024, label="Maximum source characters")
-                        evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512, label="Maximum evidence characters")
-                    with gr.Row():
-                        understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64, label="Understanding token budget")
-                        rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
-                        scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
-                    with gr.Row():
-                        context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED, label="Enable same-model compression")
-                        compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS, step=256, label="Compression threshold")
+            with gr.Accordion("LLM and context options", open=False):
+                with gr.Row():
+                    rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS, step=1, label="RSI iterations")
+                    llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature")
+                    llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10, label="LLM timeout (seconds)")
+                with gr.Row():
+                    model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
+                    thinking_ui = gr.Checkbox(value=True, label="Enable model thinking")
+                with gr.Row():
+                    max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
+                    source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024, label="Maximum source characters")
+                    evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512, label="Maximum evidence characters")
+                with gr.Row():
+                    understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64, label="Understanding token budget")
+                    rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
+                    scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
+                with gr.Row():
+                    context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED, label="Enable same-model compression")
+                    compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS, step=256, label="Compression threshold")
             source_file.change(
                 load_source_editor_from_upload,
                 inputs=[source_file],
@@ -958,6 +1066,7 @@ def build_app() -> gr.Blocks:
                 show_progress="hidden",
             )
             grade_button = gr.Button("Generate test variations & grade", variant="primary", elem_id="grade-button")
+            grading_progress = gr.HTML(value="", elem_id="grading-progress")
             with gr.Tabs():
                 with gr.Tab("Overview"):
                     grade_summary = gr.Markdown()
@@ -968,17 +1077,12 @@ def build_app() -> gr.Blocks:
                         label="Metric results", max_chars=360,
                     )
                 with gr.Tab("Test cases"):
-                    with gr.Accordion("Generated and executed test cases", open=False):
-                        gr.Markdown(
-                            "Expected outputs come from the compiled reference running in the restricted sandbox.",
-                            elem_classes=["compact-note"],
-                        )
-                        test_cases_table = gr.Dataframe(
-                            headers=["Case", "Tags", "Input", "Expected", "Actual", "Result"],
-                            datatype=["str", "str", "str", "str", "str", "str"],
-                            value=[], interactive=False, wrap=True, show_search="filter",
-                            label="Case details", max_chars=1200,
-                        )
+                    test_cases_table = gr.Dataframe(
+                        headers=["Case", "Tags", "Input", "Expected", "Actual", "Result"],
+                        datatype=["str", "str", "str", "str", "str", "str"],
+                        value=[], interactive=False, wrap=True, show_search="filter",
+                        label="Case details", max_chars=1200,
+                    )
                 with gr.Tab("Findings"):
                     findings_table = gr.Dataframe(
                         headers=["Severity", "Metric", "Lines", "Finding", "Evidence"],
@@ -996,7 +1100,7 @@ def build_app() -> gr.Blocks:
                         report_json = gr.File(label="JSON report")
                         report_text = gr.File(label="Readable report")
             grade_button.click(
-                grade_uploaded_submission,
+                grade_uploaded_submission_with_progress,
                 inputs=[
                     source_file, source_editor, source_editor_hash,
                     rules_file, rules_editor, time_limit, memory_limit,
@@ -1007,8 +1111,8 @@ def build_app() -> gr.Blocks:
                     compression_threshold_ui, rules_editor_source_hash,
                     max_generated_cases, additional_test_focus,
                 ],
-                outputs=[grade_summary, metrics_table, test_cases_table, findings_table, graded_source, report_json, report_text],
-                show_progress="minimal", scroll_to_output=True,
+                outputs=[grading_progress, grade_summary, metrics_table, test_cases_table, findings_table, graded_source, report_json, report_text],
+                show_progress="hidden", scroll_to_output=True,
             )
 
         with gr.Tab("FormAI-v2 combined benchmark"):

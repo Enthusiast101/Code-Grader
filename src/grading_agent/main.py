@@ -270,6 +270,30 @@ def run_configured_analyzers(
         elif docker_needed and sandbox is None:
             report["test_generation"] = {"status": "unavailable", "reason": sandbox_error or "Docker sandbox unavailable."}
 
+        # Runtime profiling needs valid inputs, but it does not need expected
+        # outputs or a generated reference solution. If automatic generation
+        # fails (for example, because output formatting is ambiguous), reuse
+        # an instructor-supplied correctness/edge-case input set instead of
+        # marking runtime efficiency unmeasured.
+        runtime_metrics = [
+            item for item in enabled_metrics
+            if item.get("enabled", True) and item.get("analyzer") == "runtime_profile"
+        ]
+        reusable_input_metrics = [
+            item for analyzer in ("io_tests", "edge_case_runner", "memory_safety")
+            for item in enabled_metrics
+            if item.get("enabled", True)
+            and item.get("analyzer") == analyzer
+            and item.get("params", {}).get("resolved_testset_path")
+        ]
+        for runtime_metric in runtime_metrics:
+            runtime_params = runtime_metric.setdefault("params", {})
+            if runtime_params.get("resolved_testset_path") or not reusable_input_metrics:
+                continue
+            input_metric = reusable_input_metrics[0]
+            runtime_params["resolved_testset_path"] = input_metric["params"]["resolved_testset_path"]
+            runtime_params["runtime_input_source_metric"] = str(input_metric.get("name", input_metric.get("analyzer")))
+
         for metric in enabled_metrics:
             metric_name = metric["name"]
             analyzer_name = metric["analyzer"]
@@ -316,6 +340,8 @@ def run_configured_analyzers(
                         source_filename=source_filename,
                         test_case_cache=test_case_cache,
                     )
+                    if analyzer_name == "runtime_profile" and params.get("runtime_input_source_metric"):
+                        result["test_input_source_metric"] = params["runtime_input_source_metric"]
                 except Exception as exc:
                     logger.warning("Analyzer '%s' failed; continuing with remaining metrics: %s", metric_name, exc)
                     result = _unavailable_metric(f"{type(exc).__name__}: {exc}")
