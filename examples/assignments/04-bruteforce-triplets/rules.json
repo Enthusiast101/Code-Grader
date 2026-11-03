@@ -1,5 +1,12 @@
 {
-  "problem": "04_bruteforce_triplets",
+  "problem": "Read N (0 <= N <= 20000), a target, and N signed 32-bit integers. Count index triples i < j < k whose values sum to the target, counting each index triple once. Print the exact count followed by a newline. Use an algorithm asymptotically better than O(N^3) so the maximum input size is practical; a sorted two-pointer O(N^2) method is suitable. Use sufficiently wide integer types for sums and the count.",
+  "problem_contract": {
+    "description": "Count all index triples i < j < k with values[i] + values[j] + values[k] == target. Do not count permutations of the same indices more than once. Must meet the N <= 20,000 constraint using an algorithm asymptotically better than O(N^3).",
+    "operand_type": "64-bit signed integers",
+    "sum_type": "64-bit signed integer count",
+    "input_range": "0 <= N <= 20,000; values and target fit in signed 32-bit integer",
+    "output_rule": "Print the exact triplet count as a decimal integer followed by a newline."
+  },
   "time_limit_s": 2,
   "memory_limit_mb": 256,
   "submission": {
@@ -10,7 +17,7 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.25,
+      "weight": 0.22,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/04-bruteforce-triplets/testcases.json"
@@ -19,21 +26,51 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.1,
+      "weight": 0.08,
       "enabled": true,
-      "params": {}
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.1,
+      "weight": 0.12,
       "enabled": true,
-      "params": {}
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
       "analyzer": "edge_case_runner",
-      "weight": 0.15,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/04-bruteforce-triplets/edge_cases.json"
@@ -42,7 +79,7 @@
     {
       "name": "runtime_efficiency",
       "analyzer": "runtime_profile",
-      "weight": 0.25,
+      "weight": 0.05,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/04-bruteforce-triplets/runtime_cases.json",
@@ -53,22 +90,33 @@
     {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.15,
+      "weight": 0.17,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/04-bruteforce-triplets/memory_cases.json",
         "run_sanitizers": true
       }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
     }
-  ],
-  "llm_review": {
-    "max_iterations": 3
-  },
-  "problem_contract": {
-    "description": "Count all index triples i < j < k with values[i] + values[j] + values[k] == target. Do not count permutations of the same indices more than once. Must meet the N <= 20,000 constraint using an algorithm asymptotically better than O(N^3).",
-    "operand_type": "64-bit signed integers",
-    "sum_type": "64-bit signed integer count",
-    "input_range": "0 <= N <= 20,000; values and target fit in signed 32-bit integer",
-    "output_rule": "Print the exact triplet count as a decimal integer followed by a newline."
-  }
+  ]
 }

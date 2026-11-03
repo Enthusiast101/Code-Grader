@@ -1,5 +1,12 @@
 {
-  "problem": "07_dp_01_knapsack",
+  "problem": "Read n and capacity W, then n positive item weights and n nonnegative item values (1 <= n <= 100, 0 <= W <= 100000, each weight <= 100000, each value <= 1000000000). Choose a subset with total weight at most W that maximizes total value. Each item may be selected at most once. Print the maximum value followed by a newline; use a sufficiently wide integer type for the result.",
+  "problem_contract": {
+    "description": "Maximize the total value of a subset of items whose total weight is at most W. Every item is selectable at most once; this is 0/1 knapsack, not unbounded knapsack.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= n <= 100; 0 <= W <= 100000; positive weights <= 100000; values are in [0, 10^9].",
+    "output_rule": "One signed 64-bit integer: maximum total value; newline terminated."
+  },
   "time_limit_s": 5,
   "memory_limit_mb": 256,
   "submission": {
@@ -10,7 +17,7 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.3,
+      "weight": 0.22,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/07-dp-01-knapsack/testcases.json"
@@ -19,30 +26,71 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.1,
+      "weight": 0.08,
       "enabled": true,
-      "params": {}
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.1,
+      "weight": 0.12,
       "enabled": true,
-      "params": {}
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
       "analyzer": "edge_case_runner",
-      "weight": 0.2,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/07-dp-01-knapsack/edge_cases.json"
       }
     },
     {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.05,
+      "enabled": true,
+      "params": {
+        "testset_path": null,
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      }
+    },
+    {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.15,
+      "weight": 0.17,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/07-dp-01-knapsack/memory_cases.json",
@@ -52,21 +100,23 @@
     {
       "name": "readability",
       "analyzer": "readability",
-      "weight": 0.15,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "max_line_length": 100
       }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
     }
-  ],
-  "llm_review": {
-    "max_iterations": 3
-  },
-  "problem_contract": {
-    "description": "Maximize the total value of a subset of items whose total weight is at most W. Every item is selectable at most once; this is 0/1 knapsack, not unbounded knapsack.",
-    "operand_type": "signed 64-bit integers where applicable",
-    "sum_type": "signed 64-bit integer where applicable",
-    "input_range": "1 <= n <= 100; 0 <= W <= 100000; positive weights <= 100000; values are in [0, 10^9].",
-    "output_rule": "One signed 64-bit integer: maximum total value; newline terminated."
-  }
+  ]
 }

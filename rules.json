@@ -1,5 +1,5 @@
 {
-  "problem": "grading",
+  "problem": "Read an integer N followed by N signed 32-bit integers. The constraint is 1 <= N <= 1000. Compute their arithmetic mean. Accumulate the sum using a signed 64-bit integer to avoid overflow. Use floating-point division to preserve fractional parts. Print exactly one result with two digits after the decimal point.",
   "problem_contract": {},
   "time_limit_s": 5,
   "memory_limit_mb": 512,

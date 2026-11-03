@@ -1,5 +1,12 @@
 {
-  "problem": "03_computation_average",
+  "problem": "Read an integer N (1 <= N <= 1000), followed by N signed 32-bit integers. Accumulate their sum in a signed 64-bit integer, divide using floating-point arithmetic, and print the arithmetic mean with exactly two digits after the decimal point followed by a newline.",
+  "problem_contract": {
+    "description": "Compute the arithmetic mean without truncating fractional results. Use a floating-point division after accumulating safely.",
+    "operand_type": "signed integers",
+    "sum_type": "64-bit signed integer",
+    "input_range": "1 <= N <= 1000; each value fits in signed 32-bit integer",
+    "output_rule": "Print the arithmetic mean with exactly two digits after the decimal point."
+  },
   "time_limit_s": 2,
   "memory_limit_mb": 256,
   "submission": {
@@ -10,7 +17,7 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.35,
+      "weight": 0.22,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/03-computation-average/testcases.json"
@@ -19,45 +26,97 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.1,
+      "weight": 0.08,
       "enabled": true,
-      "params": {}
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.1,
+      "weight": 0.12,
       "enabled": true,
-      "params": {}
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
       "analyzer": "edge_case_runner",
-      "weight": 0.35,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/03-computation-average/edge_cases.json"
       }
     },
     {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.05,
+      "enabled": true,
+      "params": {
+        "testset_path": null,
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      }
+    },
+    {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.1,
+      "weight": 0.17,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/03-computation-average/memory_cases.json",
         "run_sanitizers": true
       }
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
     }
-  ],
-  "llm_review": {
-    "max_iterations": 3
-  },
-  "problem_contract": {
-    "description": "Compute the arithmetic mean without truncating fractional results. Use a floating-point division after accumulating safely.",
-    "operand_type": "signed integers",
-    "sum_type": "64-bit signed integer",
-    "input_range": "1 <= N <= 1000; each value fits in signed 32-bit integer",
-    "output_rule": "Print the arithmetic mean with exactly two digits after the decimal point."
-  }
+  ]
 }

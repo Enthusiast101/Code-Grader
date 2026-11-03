@@ -7,6 +7,7 @@ only, so configuration remains discoverable in one place.
 from __future__ import annotations
 
 import os
+import math
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -36,7 +37,10 @@ def _env_float(name: str, default: float) -> float:
     if value is None or value == "":
         return default
     try:
-        return float(value)
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError(f"Environment variable {name} must be finite, got {value!r}.")
+        return parsed
     except ValueError as exc:
         raise ValueError(f"Environment variable {name} must be numeric, got {value!r}.") from exc
 
@@ -110,6 +114,9 @@ def runtime_overrides(values: Mapping[str, Any] | None = None) -> Iterator[None]
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RULES_PATH = PROJECT_ROOT / "rules.json"
+_PROJECT_RUBRIC_PATH = PROJECT_ROOT / "rubrics" / "default_metric_rubric.json"
+_PACKAGED_RUBRIC_PATH = Path(__file__).resolve().parent / "default_metric_rubric.json"
+DEFAULT_RUBRIC_PATH = _PROJECT_RUBRIC_PATH if _PROJECT_RUBRIC_PATH.is_file() else _PACKAGED_RUBRIC_PATH
 REPORTS_DIR = PROJECT_ROOT / "reports"
 GRADIO_STAGING_DIR = PROJECT_ROOT / ".gradio_runs"
 GRADIO_REPORTS_DIR = REPORTS_DIR / "gradio"
@@ -130,7 +137,8 @@ LLAMA_HEALTH_PATH = "/health"
 LLAMA_HEALTH_HOST = "127.0.0.1" if HOST in {"0.0.0.0", "::"} else HOST
 LLAMA_HEALTH_URL = f"http://{LLAMA_HEALTH_HOST}:{PORT}{LLAMA_HEALTH_PATH}"
 
-DEFAULT_MODEL = "gguf/Qwen3.5-2B-GGUF:Q4_K_M"
+# DEFAULT_MODEL = "gguf/Qwen3.5-2B-GGUF:Q4_K_M"
+DEFAULT_MODEL = "bartowski/Qwen_Qwen3.5-2B-GGUF"
 _LEGACY_PROJECT_DEFAULT_MODELS = {"Qwen/Qwen3-4B-GGUF:Q4_K_M"}
 
 
@@ -192,7 +200,7 @@ LLM_GLOBAL_SCORE_MAX_TOKENS = _env_int("LLM_GLOBAL_SCORE_MAX_TOKENS", 2048)
 LLM_PROGRAM_SOURCE_MAX_CHARS = _env_int("LLM_PROGRAM_SOURCE_MAX_CHARS", 12000)
 LLM_GLOBAL_SOURCE_MAX_CHARS = _env_int("LLM_GLOBAL_SOURCE_MAX_CHARS", 12000)
 LLM_GLOBAL_MAX_FINDINGS = _env_int("LLM_GLOBAL_MAX_FINDINGS", 12)
-LLM_GRADING_RETRY_ATTEMPTS = 1  # The production grading path sends exactly one request per stage.
+LLM_GRADING_RETRY_ATTEMPTS = _env_int("LLM_GRADING_RETRY_ATTEMPTS", 3)  # Bounded structured-output repair attempts.
 # The server can support reasoning globally; schema-constrained stages override
 # the chat template to direct mode for deterministic JSON Schema decoding.
 

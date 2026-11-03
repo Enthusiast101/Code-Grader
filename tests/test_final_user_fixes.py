@@ -60,9 +60,10 @@ class TestFinalUserFixes(unittest.TestCase):
         report = {"correctness": {"score": 0.0, "status": "inconclusive"}}
         apply_metric_scores(metrics, report, {"metrics": []})
         overall = calculate_overall_score(metrics, report)
-        self.assertEqual(report["correctness"]["score"], 70.0)
-        self.assertEqual(report["correctness"]["score_origin"], "neutral_provisional")
-        self.assertEqual(overall["score"], 70.0)
+        self.assertIsNone(report["correctness"]["score"])
+        self.assertEqual(report["correctness"]["score_origin"], "unmeasured")
+        self.assertIsNone(overall["score"])
+        self.assertEqual(overall["status"], "failed_incomplete")
         self.assertTrue(overall["warnings"])
 
     def test_inconclusive_analyzer_does_not_create_severity_based_zero_when_llm_score_is_missing(self):
@@ -71,9 +72,9 @@ class TestFinalUserFixes(unittest.TestCase):
             {"correctness": {"score": 0.0, "status": "inconclusive"}},
             [{"metric": "correctness", "severity": "critical", "title": "Possible contract mismatch", "evidence_ids": ["E-1"]}],
         )
-        self.assertEqual(fallback["score"], 70.0)
+        self.assertIsNone(fallback["score"])
         self.assertEqual(fallback["origin"], "insufficient_evidence_fallback")
-        self.assertIn("finding(s)", fallback["rationale"])
+        self.assertIn("No score is assigned", fallback["rationale"])
 
     def test_generic_metric_rationale_is_replaced_without_discarding_score(self):
         enabled = [{"name": "syntax", "enabled": True}]
@@ -105,11 +106,11 @@ class TestFinalUserFixes(unittest.TestCase):
     def test_scoring_reads_source_and_preserves_valid_llm_zero_without_retry(self):
         source = "int main(void) { puts(\"hello\"); return 0; }\n"
         rules = {
-            "problem": "grading",
-            "problem_contract": {},
+            "problem": "Read one integer and print the integer back unchanged.",
+            "problem_contract": {"requirements": ["Read one integer and print it unchanged."]},
             "metrics": [{"name": "correctness", "enabled": True, "weight": 1.0, "analyzer": "io_tests", "params": {}}],
         }
-        report = {"problem": "grading", "source_code": source, "correctness": {"tests_total": 0, "status": "inconclusive"}}
+        report = {"problem": "Read one integer and print the integer back unchanged.", "source_code": source, "correctness": {"tests_total": 0, "status": "inconclusive"}}
         first = {"scores": {"correctness": {
             "score": 0,
             "rationale": "The source violates the explicitly required input and output behavior and produces none of the required result.",
@@ -137,7 +138,7 @@ class TestFinalUserFixes(unittest.TestCase):
         self.assertEqual(scores["correctness"]["score"], 0.0)
         self.assertEqual(scores["correctness"]["origin"], "llm")
         self.assertIn("source_code_with_line_numbers", calls[0][0][1]["content"])
-        self.assertFalse(calls[0][1]["enable_thinking"])
+        self.assertIsNone(calls[0][1]["enable_thinking"])
         self.assertEqual(diagnostics, [])
 
     def test_compression_calls_same_model_with_direct_json_schema_mode(self):
@@ -158,8 +159,7 @@ class TestFinalUserFixes(unittest.TestCase):
         body = post.call_args.kwargs["json"]
         self.assertEqual(url, f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}")
         self.assertEqual(body["model"], "configured-grading-model")
-        self.assertFalse(body["chat_template_kwargs"]["enable_thinking"])
-        self.assertEqual(body["reasoning_format"], "none")
+        self.assertTrue(body["chat_template_kwargs"]["enable_thinking"])
         self.assertNotIn("grammar", body)
         self.assertEqual(body["response_format"]["type"], "json_schema")
         self.assertEqual(body["response_format"]["schema"]["type"], "object")
@@ -262,3 +262,28 @@ class TestFinalUserFixes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestStructuredLLMRetries(unittest.TestCase):
+    def test_structured_request_retries_invalid_json_then_accepts_repaired_response(self):
+        responses = [
+            (None, "not-json"),
+            ({"ok": True}, '{"ok":true}'),
+        ]
+        with patch.object(reviewer, "_request_json", side_effect=responses) as request:
+            parsed, diagnostics, latencies, calls = reviewer._call_grading_json(
+                [{"role": "system", "content": "Return JSON."}],
+                max_tokens=128,
+                response_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+                schema_name="retry_regression",
+                validator=lambda value: value.get("ok") is True,
+            )
+        self.assertEqual(parsed, {"ok": True})
+        self.assertEqual(calls, 2)
+        self.assertEqual(len(latencies), 2)
+        self.assertTrue(any("attempt 1/3" in item for item in diagnostics))
+        self.assertEqual(request.call_args_list[0].kwargs["enable_thinking"], None)
+
+    def test_score_rationale_preserves_three_sentences(self):
+        from grading_agent.reporting.rationale import compact_rationale
+        rationale = "The parser reads the required integer. The loop accumulates values in a 64-bit sum. The final division preserves fractional output."
+        self.assertEqual(len(compact_rationale(rationale).split(". ")), 3)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from grading_agent.reporting.rationale import compact_rationale
+from grading_agent.reporting.rationale import compact_rationale, evidence_summary, score_source_label
 
 
 def _as_text(item: Any) -> str:
@@ -50,8 +50,8 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         f"Source SHA-256: {report.get('source_sha256', 'unknown')}",
     ]
     rsi_summary = report.get("llm_rsi_evaluation", {})
-    if isinstance(rsi_summary, dict) and str(rsi_summary.get("overall_assessment", "")).strip():
-        lines.extend(["", "EXECUTIVE ASSESSMENT", "-" * 72, str(rsi_summary["overall_assessment"]).replace("\n", " ")])
+    if isinstance(rsi_summary, dict) and rsi_summary:
+        lines.extend(["", "EVIDENCE SUMMARY", "-" * 72, evidence_summary(report)])
     lines.extend(["", "METRIC RESULTS", "-" * 72])
 
     provenance = report.get("rules_provenance", {})
@@ -86,9 +86,10 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         status = result.get("status", "completed" if score is not None else "inconclusive")
         score_text = f"{float(score):.2f}/100" if isinstance(score, (int, float)) else "N/A"
         lines.append(f"{name:22s} weight={metric['weight']:.3f}  score={score_text:12s} status={status}")
-        rationale = compact_rationale(result.get("score_rationale", ""), max_words=18, max_chars=120)
+        rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  Assessment: {rationale}")
+        lines.append(f"  Score source: {score_source_label(result.get('score_origin'))}")
         if name == "correctness":
             tests_total = result.get("tests_total", 0)
             if tests_total:
@@ -120,7 +121,8 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                 f"  {item['metric']}: {item['score']:.2f} × {item['weight']:.3f} = {item['contribution']:.2f}"
             )
     else:
-        lines.append(f"Final grade: {float(scoring.get('score', 0.0)):.2f}/100")
+        final_score = scoring.get("score")
+        lines.append(f"Final grade: {float(final_score):.2f}/100" if isinstance(final_score, (int, float)) else "Final grade: N/A — required grading evidence is incomplete.")
     for warning in scoring.get("warnings", []):
         lines.append(f"  Note: {warning}")
 
@@ -230,6 +232,18 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
             finding_note = "RSI findings unavailable: no whole-program review pass returned a valid response. This does not mean the source is defect-free."
         lines.extend(["", "WHOLE-PROGRAM RSI FINDINGS", "-" * 72, finding_note])
 
+    rejected_findings = report.get("llm_rsi_rejected_findings", [])
+    if isinstance(rejected_findings, list) and rejected_findings:
+        lines.extend(["", "EXCLUDED RSI CANDIDATES (NOT USED FOR SCORING)", "-" * 72])
+        for item in rejected_findings[:20]:
+            if not isinstance(item, dict):
+                continue
+            location = f"line {item.get('line_start')}" if item.get("line_start") is not None else "location unresolved"
+            lines.append(
+                f"[{item.get('metric', 'unmapped')}] {item.get('title', 'Candidate')} ({location}): "
+                f"{str(item.get('reason', 'Not retained after validation.'))[:500]}"
+            )
+
     timings = report.get("timings", {})
     if isinstance(timings, dict) and timings:
         lines.extend(["", "EXECUTION TIMINGS", "-" * 72])
@@ -252,8 +266,8 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         if rsi.get("llm_calls") is not None:
             lines.append(
                 f"LLM calls: {rsi.get('llm_calls')} "
-                "(program understanding + sequential RSI passes + separate metric scoring; "
-                "one request per stage, no repair retries)"
+                "(program understanding + sequential RSI + post-RSI finding validation + separate metric scoring; "
+                "structured requests may use bounded repair retries)"
             )
         latency = rsi.get("latency_seconds", {})
         if isinstance(latency, dict):
@@ -262,6 +276,9 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
             for index, duration in enumerate(latency.get("rsi_requests", []), start=1):
                 if isinstance(duration, (int, float)):
                     lines.append(f"RSI pass {index}: {duration:.3f} s")
+            for index, duration in enumerate(latency.get("finding_validation_requests", []), start=1):
+                if isinstance(duration, (int, float)):
+                    lines.append(f"Post-RSI finding validation {index}: {duration:.3f} s")
             for index, duration in enumerate(latency.get("metric_scoring_requests", []), start=1):
                 if isinstance(duration, (int, float)):
                     lines.append(f"Metric-scoring request {index}: {duration:.3f} s")

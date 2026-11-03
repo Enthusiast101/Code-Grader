@@ -7,8 +7,8 @@ The C-assignment grading path follows this sequence:
 3. RSI pass 1 identifies whole-program defects grounded in the source and evidence ledger.
 4. RSI pass 2 receives pass 1's complete response and rechecks it for missed defects, false positives, unsupported claims, and incorrect source locations.
 5. RSI pass 3 repeats the recheck using pass 2's complete response. RSI passes are findings-only.
-6. One separate LLM scoring request evaluates every enabled metric from the assignment, rubric, actual source, validated findings, and analyzer evidence. It returns a score and a concise rationale for each metric.
-7. Python validates score ranges and applies rubric weights. The LLM's valid metric scores are authoritative; a completed deterministic analyzer is only a fallback when the LLM score is unavailable.
+6. One separate LLM scoring request evaluates metrics not defined by executed tests, using the assignment, rubric, actual source, validated findings, and analyzer evidence.
+7. Executed correctness/logical tests determine those metric scores by pass rate. Python validates the remaining LLM scores and applies rubric weights; completed deterministic analyzers are fallbacks when an LLM score is unavailable.
 
 Each grading stage makes one request. There are no repair/retry generations. Structured stages send an explicit llama.cpp GBNF grammar, activated after `</think>` when reasoning is enabled. This constrains the final response to syntactically valid JSON while allowing bounded model thinking. If the local server is unavailable or rejects a request, the pipeline retains a clearly labelled evidence-based fallback rather than issuing another generation.
 
@@ -23,7 +23,7 @@ Each grading stage makes one request. There are no repair/retry generations. Str
 
 The Gradio and text reports show each metric score with a model-authored or fallback explanation limited to 24 words and 160 characters. They omit generic RSI boilerplate and score-basis labels. Successful compiler diagnostics are not reported as syntax defects.
 
-A valid LLM score of zero is retained as the model's decision; Python does not silently replace it. When the LLM score is unavailable, a completed analyzer score may be used as a fallback. If neither source measured the metric, the report labels a neutral provisional score rather than inventing a zero.
+Correctness and logical scores equal the observed pass rate for completed configured tests; any LLM proposal is retained only as audit context. Other metrics use validated LLM scores, with completed analyzer results as fallback. Missing evidence remains unmeasured; the grader does not insert a neutral provisional score.
 
 The FormAI benchmark path remains separate from ordinary assignment grading.
 

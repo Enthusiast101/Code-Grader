@@ -18,7 +18,7 @@ from grading_agent.benchmark.formai_predict import run as run_formai_prediction
 from grading_agent.benchmark.formai_manifest import validate_benchmark_split, read_source_manifest
 from grading_agent.main import PROJECT_ROOT, grade_with_rules_file
 from grading_agent.config import settings
-from grading_agent.reporting.rationale import compact_rationale
+from grading_agent.reporting.rationale import compact_rationale, evidence_summary, score_source_label
 
 logger = logging.getLogger("grading_agent.ui")
 
@@ -87,7 +87,9 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
     scoring = report.get("scoring", {})
     scoring = scoring if isinstance(scoring, dict) else {}
     lines = ["## Final grading result"]
-    lines.append(f"**Overall grade: {number(scoring.get('score')):.2f}/100**")
+    final_score = scoring.get("score")
+    grade_label = f"{number(final_score):.2f}/100" if isinstance(final_score, (int, float)) else "N/A — insufficient grading evidence"
+    lines.append(f"**Overall grade: {grade_label}**")
     lines.append(f"**Status:** `{scoring.get('status', 'completed_with_warnings')}`")
     active_problem = report.get("problem")
     if isinstance(active_problem, str) and active_problem.strip():
@@ -103,9 +105,10 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
             lines.append("**Rules note:** The uploaded file changed after the editor was populated; the newer uploaded file was used to avoid stale assignment rules.")
     rsi_overview = report.get("llm_rsi_evaluation", {})
     rsi_overview = rsi_overview if isinstance(rsi_overview, dict) else {}
-    if rsi_overview.get("overall_assessment"):
+    summary = evidence_summary(report)
+    if summary:
         lines.append("\n### Executive assessment")
-        lines.append(str(rsi_overview["overall_assessment"]).replace("\n", " "))
+        lines.append(summary)
     lines.append("\n### Metric scores")
     configuration = report.get("configuration", {})
     configuration = configuration if isinstance(configuration, dict) else {}
@@ -117,10 +120,24 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
         name = str(metric.get("name", "unknown"))
         result = report.get(name, {})
         result = result if isinstance(result, dict) else {}
-        lines.append(f"- **{name}: {number(result.get('score')):.2f}/100**")
-        rationale = compact_rationale(result.get("score_rationale", ""), max_words=18, max_chars=120)
+        metric_score = result.get("score")
+        metric_score_label = f"{number(metric_score):.2f}/100" if isinstance(metric_score, (int, float)) else "N/A"
+        source_label = score_source_label(result.get("score_origin"))
+        lines.append(f"- **{name}: {metric_score_label}** _(source: {source_label})_")
+        rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  - Assessment: {rationale}")
+        if name in {"correctness", "logical"}:
+            rows = result.get("results", [])
+            valid_rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get("passed"), bool)] if isinstance(rows, list) else []
+            if valid_rows:
+                passed = sum(row["passed"] for row in valid_rows)
+                lines.append(f"  - Tests: {passed}/{len(valid_rows)} passed")
+                for row in [item for item in valid_rows if item.get("passed") is False][:3]:
+                    lines.append(
+                        f"  - Failed case {row.get('test_id', '?')}: input {row.get('input', '')!r}; "
+                        f"expected {row.get('expected', '')!r}, got {row.get('actual', row.get('output', ''))!r}."
+                    )
 
     understanding = report.get("program_understanding", {})
     if isinstance(understanding, dict) and (understanding.get("program_purpose") or understanding.get("actual_behavior")):
@@ -159,6 +176,18 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
         else:
             lines.append("No concrete, supported issues were retained by the successfully completed RSI review sequence.")
 
+    rejected_findings = report.get("llm_rsi_rejected_findings", [])
+    if isinstance(rejected_findings, list) and rejected_findings:
+        lines.append("\n### Excluded RSI candidates (not used for scoring)")
+        for item in rejected_findings[:12]:
+            if not isinstance(item, dict):
+                continue
+            location = f"line {item.get('line_start')}" if item.get("line_start") is not None else "location unresolved"
+            lines.append(
+                f"- **{item.get('metric', 'unmapped')} — {item.get('title', 'Candidate')}** ({location}): "
+                f"{str(item.get('reason', 'Not retained after validation.'))[:350]}"
+            )
+
     rsi = report.get("llm_rsi_evaluation", {})
     rsi = rsi if isinstance(rsi, dict) else {}
     lines.append("\n### Program understanding + sequential whole-program RSI")
@@ -173,6 +202,8 @@ def _metric_summary_impl(report: dict[str, Any]) -> str:
             lines.append(f"  Program understanding: {number(latency.get('program_understanding')):.2f} seconds")
         for index, duration in enumerate(latency.get("rsi_requests", []) if isinstance(latency.get("rsi_requests"), list) else [], start=1):
             lines.append(f"  RSI request {index}: {number(duration):.2f} seconds")
+        for index, duration in enumerate(latency.get("finding_validation_requests", []) if isinstance(latency.get("finding_validation_requests"), list) else [], start=1):
+            lines.append(f"  Post-RSI validation {index}: {number(duration):.2f} seconds")
     if rsi.get("error"):
         lines.append(f"LLM note: {str(rsi.get('error')).replace(chr(10), ' ')[:1200]}")
     for diagnostic in rsi.get("diagnostics", [])[:4] if isinstance(rsi.get("diagnostics"), list) else []:

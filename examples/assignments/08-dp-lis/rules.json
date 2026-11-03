@@ -1,5 +1,12 @@
 {
-  "problem": "08_dp_lis",
+  "problem": "Read n (1 <= n <= 20000), followed by n signed 32-bit integers. Print the length of the longest strictly increasing subsequence followed by a newline. A subsequence preserves input order but need not be contiguous; equal values cannot extend it. Use O(n log n) time and O(n) auxiliary memory.",
+  "problem_contract": {
+    "description": "Return the length of the longest strictly increasing subsequence. Equal adjacent or earlier values cannot extend a strictly increasing subsequence. n is as large as 20,000, so O(n log n) time is required.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "sum_type": "signed 64-bit integer where applicable",
+    "input_range": "1 <= n <= 20000; each array value is a signed 32-bit integer.",
+    "output_rule": "One integer: length of the longest strictly increasing subsequence; newline terminated."
+  },
   "time_limit_s": 5,
   "memory_limit_mb": 256,
   "submission": {
@@ -10,7 +17,7 @@
     {
       "name": "correctness",
       "analyzer": "io_tests",
-      "weight": 0.25,
+      "weight": 0.22,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/08-dp-lis/testcases.json"
@@ -19,21 +26,51 @@
     {
       "name": "syntax",
       "analyzer": "compiler_diagnostics",
-      "weight": 0.1,
+      "weight": 0.08,
       "enabled": true,
-      "params": {}
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      }
     },
     {
       "name": "structure",
       "analyzer": "static_analysis",
-      "weight": 0.1,
+      "weight": 0.12,
       "enabled": true,
-      "params": {}
+      "params": {
+        "timeout_s": 15
+      }
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      }
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.08,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      }
     },
     {
       "name": "logical",
       "analyzer": "edge_case_runner",
-      "weight": 0.15,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/08-dp-lis/edge_cases.json"
@@ -42,7 +79,7 @@
     {
       "name": "runtime_efficiency",
       "analyzer": "runtime_profile",
-      "weight": 0.15,
+      "weight": 0.05,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/08-dp-lis/runtime_cases.json",
@@ -53,7 +90,7 @@
     {
       "name": "memory_safety",
       "analyzer": "memory_safety",
-      "weight": 0.1,
+      "weight": 0.17,
       "enabled": true,
       "params": {
         "testset_path": "examples/assignments/08-dp-lis/memory_cases.json",
@@ -63,21 +100,23 @@
     {
       "name": "readability",
       "analyzer": "readability",
-      "weight": 0.15,
+      "weight": 0.1,
       "enabled": true,
       "params": {
         "max_line_length": 100
       }
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.05,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      }
     }
-  ],
-  "llm_review": {
-    "max_iterations": 3
-  },
-  "problem_contract": {
-    "description": "Return the length of the longest strictly increasing subsequence. Equal adjacent or earlier values cannot extend a strictly increasing subsequence. n is as large as 20,000, so O(n log n) time is required.",
-    "operand_type": "signed 64-bit integers where applicable",
-    "sum_type": "signed 64-bit integer where applicable",
-    "input_range": "1 <= n <= 20000; each array value is a signed 32-bit integer.",
-    "output_rule": "One integer: length of the longest strictly increasing subsequence; newline terminated."
-  }
+  ]
 }

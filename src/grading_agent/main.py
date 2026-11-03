@@ -214,13 +214,75 @@ def run_configured_analyzers(
             "compile_failed", "compile_timeout", "timeout", "runtime_failure"
         }
 
+        # Generate a reproducible assignment-level suite from the natural-language
+        # problem statement before running execution analyzers. The student source
+        # is never included in test-generation prompts.
+        report["test_generation"] = {"status": "not_required"}
+        testing_cfg = rules.get("test_generation", {})
+        if sandbox is not None and isinstance(testing_cfg, dict) and testing_cfg.get("enabled", True):
+            execution_metrics_present = any(
+                item.get("enabled", True) and item.get("analyzer") in
+                {"io_tests", "edge_case_runner", "memory_safety", "runtime_profile"}
+                for item in enabled_metrics
+            )
+            if execution_metrics_present:
+                generation_process = None
+                try:
+                    from grading_agent.testing.test_generation import prepare_assignment_test_suite
+                    from grading_agent.llm.reviewer import _request_json
+                    if not _is_llm_server_ready():
+                        generation_process = initiate_server()
+
+                    def _test_generation_request(messages, schema, stage_name):
+                        parsed, _raw = _request_json(
+                            messages,
+                            max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
+                            enable_thinking=None,
+                            response_schema=schema,
+                            schema_name=stage_name,
+                        )
+                        return parsed
+
+                    report["test_generation"] = prepare_assignment_test_suite(
+                        rules, sandbox=sandbox, request_json=_test_generation_request,
+                        project_root=Path(rules.get("project_root") or Path(rules["rules_path"]).resolve().parent),
+                        model_id=str(settings.runtime_value("MODEL")),
+                        generation_seed=settings.SEED,
+                        temperature=float(settings.runtime_value("TEMPERATURE")),
+                    )
+                except Exception as exc:
+                    report["test_generation"] = {
+                        "status": "unavailable",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                    logger.warning("Assignment test generation unavailable; existing instructor testsets remain in use: %s", exc)
+                finally:
+                    _stop_llm_server(generation_process)
+        elif docker_needed and sandbox is None:
+            report["test_generation"] = {"status": "unavailable", "reason": sandbox_error or "Docker sandbox unavailable."}
+
         for metric in enabled_metrics:
             metric_name = metric["name"]
             analyzer_name = metric["analyzer"]
+            params = metric.get("params", {})
+            missing_testset = (
+                analyzer_name in EXECUTION_ANALYZERS
+                and not params.get("resolved_testset_path")
+            )
             metric_started = time.perf_counter()
             logger.info("Running metric '%s' using analyzer '%s'.", metric_name, analyzer_name)
 
-            if analyzer_name in DOCKER_ANALYZERS and sandbox is None:
+            if missing_testset:
+                result = _unavailable_metric(
+                    "No instructor testset was supplied and automatic test generation did not produce an executable suite. "
+                    "This metric is left unscored; provide a valid assignment contract and retry with the local model and Docker available."
+                )
+                result.update({
+                    "status": "inconclusive",
+                    "requires_executed_testset": True,
+                    "test_generation_status": report.get("test_generation", {}).get("status"),
+                })
+            elif analyzer_name in DOCKER_ANALYZERS and sandbox is None:
                 result = _unavailable_metric(
                     f"Docker-dependent analyzer '{analyzer_name}' unavailable: {sandbox_error or 'sandbox not initialized'}.",
                 )
@@ -363,12 +425,21 @@ def _grade_with_rules_file_impl(
     report["scoring"] = calculate_overall_score(rules["metrics"], report)
     llm_result = report.get("llm_rsi_evaluation", {})
     if isinstance(llm_result, dict) and llm_result.get("status") != "completed":
-        report["scoring"]["status"] = "completed_with_warnings"
-        report["scoring"].setdefault("warnings", []).append(
-            "One or more LLM stages used a validated deterministic fallback. Every enabled metric "
-            "has a finite score; fallback-derived scores are explicitly labelled and are not "
-            "presented as successful LLM scores."
-        )
+        # Preserve an incomplete status when any required metric remains
+        # unmeasured; warnings must not turn a missing grade into a completed one.
+        if report["scoring"].get("score") is None:
+            report["scoring"]["status"] = "failed_incomplete"
+            warning = (
+                "One or more grading stages could not establish sufficient evidence for a complete grade. "
+                "Unmeasured metrics remain unscored; no neutral or zero value was fabricated."
+            )
+        else:
+            report["scoring"]["status"] = "completed_with_warnings"
+            warning = (
+                "One or more LLM stages used a validated fallback or rejected unsupported RSI candidates. "
+                "Fallback-derived scores are labelled and are not presented as successful LLM scores."
+            )
+        report["scoring"].setdefault("warnings", []).append(warning)
     report["timings"] = {
         "analyzer_pipeline_seconds": report.get("analyzer_pipeline_elapsed_seconds"),
         "analyzer_metric_seconds": report.get("analyzer_metric_elapsed_seconds", {}),

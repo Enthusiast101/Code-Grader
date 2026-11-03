@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "scale": {"minimum": 0, "maximum": 100, "step": 5, "bands": "0-5, 5-10, ..., 95-100", "llm_value": "primary_when_validated_except_test_defined_metrics", "final_grade_authority": "executed_correctness_logical_tests_then_validated_llm_then_completed_analyzer_fallback"},
+  "metrics": {
+    "correctness": "Score the executed configured assignment tests as passed cases divided by executed valid cases. Never count unexecuted tests as passes or failures. Failed cases must show input, oracle expected output, actual output and exit/timeout state. Use source findings to explain failures, not to replace the observed pass rate. If no tests ran, assess from the actionable assignment contract and validated evidence; otherwise leave unmeasured.",
+    "logical": "Score executed assignment-specific invariant and edge/property tests as passed cases divided by executed valid cases. Explain the invariant each case targets; do not double-count correctness cases unless the instructor separates these metrics. Use source findings to explain failures, not to replace the observed pass rate. If no tests ran, assess only from explicit requirements and validated evidence; otherwise leave unmeasured.",
+    "syntax": "Use the pinned compiler, language standard and exact flags. Compile errors fail; warnings follow explicit configured deductions. Never infer compilation from source inspection.",
+    "structure": "Use pinned static-analysis diagnostics and explicit instructor thresholds, with source locations and severities.",
+    "modularity": "Apply only the instructor's decomposition contract. Do not assume helper functions are mandatory unless the task/rubric says so.",
+    "complexity": "Assess asymptotic time and space against the required bound using algorithm and input constraints. Cyclomatic complexity and function length are not Big-O. Return inconclusive if the bound cannot be established from source and task constraints.",
+    "memory_safety": "Every enabled check must complete. Distinguish actual defects from tool failures and incomplete executions. Tool failure is unmeasured, not clean.",
+    "readability": "Use explicit criteria for names, comments where useful, formatting, decomposition and maintainability. Avoid personal style penalties without instructor criteria.",
+    "originality": "Token and structural similarity are review signals, not proof of plagiarism. No punitive deduction without explicit instructor policy and human review."
+  }
+}
