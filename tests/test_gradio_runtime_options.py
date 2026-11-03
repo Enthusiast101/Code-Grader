@@ -38,6 +38,45 @@ def test_rules_upload_populates_editor_and_limits(tmp_path):
     assert source_hash == ui_app._sha256_text(content)
 
 
+def test_legacy_rules_upload_migrates_old_weights_and_removes_runtime_metric(tmp_path, monkeypatch):
+    names_and_caps = [
+        ("correctness", 20), ("syntax", 10), ("structure", 10),
+        ("modularity", 10), ("complexity", 10), ("logical", 10),
+        ("memory_safety", 10), ("readability", 10), ("originality", 10),
+    ]
+    canonical_metrics = [
+        {"name": name, "analyzer": "source", "weight": cap / 100, "max_points": cap,
+         "enabled": True, "params": {}}
+        for name, cap in names_and_caps
+    ]
+    (tmp_path / "rules.json").write_text(json.dumps({"metrics": canonical_metrics}), encoding="utf-8")
+    old_metrics = [
+        {"name": name, "analyzer": "source", "weight": 0.1, "enabled": True, "params": {}}
+        for name, _ in names_and_caps[:-1]
+    ]
+    old_metrics.append({
+        "name": "runtime_efficiency", "analyzer": "runtime_profile", "weight": 0.05,
+        "enabled": True, "params": {"testset_path": None},
+    })
+    old_rules_path = tmp_path / "old_rules.json"
+    old_text = json.dumps({
+        "problem": "task", "submission": {"language": "c", "source_file": "submission.c"},
+        "metrics": old_metrics, "rubric": {"metrics": {"runtime_efficiency": "old rubric"}},
+    })
+    old_rules_path.write_text(old_text, encoding="utf-8")
+    monkeypatch.setattr(ui_app, "PROJECT_ROOT", tmp_path)
+
+    editor_text, _, _, status, source_hash = ui_app.load_rules_editor_from_upload(str(old_rules_path))
+    migrated = json.loads(editor_text)
+
+    assert [metric["name"] for metric in migrated["metrics"]] == [name for name, _ in names_and_caps]
+    assert [metric["max_points"] for metric in migrated["metrics"]] == [cap for _, cap in names_and_caps]
+    assert sum(metric["weight"] for metric in migrated["metrics"]) == 1.0
+    assert "rubric" not in migrated
+    assert "runtime_efficiency removed" in status
+    assert source_hash == ui_app._sha256_text(old_text)
+
+
 def test_gradio_grading_applies_run_controls_without_mutating_uploaded_rules(tmp_path, monkeypatch):
     source_path = tmp_path / "student.c"
     source_path.write_text("int main(void) { return 0; }\n", encoding="utf-8")

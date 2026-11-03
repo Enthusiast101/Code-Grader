@@ -39,6 +39,63 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _normalize_legacy_metric_profile(rules: dict[str, Any]) -> dict[str, Any] | None:
+    """Migrate the old weighted metric set to the current nine-metric profile."""
+    supplied = rules.get("metrics")
+    if not isinstance(supplied, list):
+        return None
+    supplied_by_name = {
+        str(item.get("name")): item for item in supplied
+        if isinstance(item, dict) and item.get("name")
+    }
+    legacy_names = {
+        "correctness", "syntax", "structure", "modularity", "complexity",
+        "logical", "runtime_efficiency", "memory_safety", "readability", "originality",
+    }
+    # Only migrate this application's known legacy metric profile. Arbitrary
+    # instructor metric sets remain fully configurable.
+    if "runtime_efficiency" not in supplied_by_name or not set(supplied_by_name).issubset(legacy_names):
+        return None
+
+    canonical_path = PROJECT_ROOT / "rules.json"
+    try:
+        canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
+        canonical_metrics = canonical.get("metrics")
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(canonical_metrics, list):
+        return None
+
+    migrated: list[dict[str, Any]] = []
+    for template in canonical_metrics:
+        if not isinstance(template, dict):
+            continue
+        name = str(template.get("name", ""))
+        old = supplied_by_name.get(name, {})
+        normalized = json.loads(json.dumps(template))
+        params = dict(normalized.get("params", {}))
+        if isinstance(old.get("params"), dict):
+            params.update(old["params"])
+        normalized["params"] = params
+        migrated.append(normalized)
+
+    if not migrated:
+        return None
+    removed = sorted(set(supplied_by_name) - {metric["name"] for metric in migrated})
+    added = sorted({metric["name"] for metric in migrated} - set(supplied_by_name))
+    rules["metrics"] = migrated
+    # This project uses the packaged default metric guidance. Assignment-side
+    # rubric overrides from the old editor must not resurrect the old profile.
+    rules.pop("rubric", None)
+    rules.pop("rubrics", None)
+    return {
+        "applied": True,
+        "profile": "current_nine_metric_point_caps",
+        "removed_metrics": removed,
+        "added_metrics": added,
+    }
+
+
 def _write_source_sample(inputs_path: Path, output_path: Path, sample_count: int, seed: int) -> list[str]:
     """Write a reproducible source-only sample without reading label classes."""
     all_names = read_source_manifest(inputs_path)
@@ -308,10 +365,15 @@ def load_rules_editor_from_upload(rules_upload: Any):
         parsed = json.loads(content)
         if not isinstance(parsed, dict):
             raise ValueError("Rules JSON root must be an object.")
+        migration = _normalize_legacy_metric_profile(parsed)
         time_limit = float(parsed.get("time_limit_s", default_time))
         memory_limit = int(parsed.get("memory_limit_mb", default_memory))
         digest = _sha256_text(content)
-        return content, time_limit, memory_limit, f"Loaded {path.name}; edit the JSON or use the controls below.", digest
+        editor_content = json.dumps(parsed, indent=2) if migration else content
+        status = f"Loaded {path.name}; edit the JSON or use the controls below."
+        if migration:
+            status += " Legacy metrics updated to the current nine-metric profile; runtime_efficiency removed."
+        return editor_content, time_limit, memory_limit, status, digest
     except Exception as exc:
         logger.warning("Could not load rules into Gradio editor: %s", exc)
         return "", default_time, default_memory, f"Could not load rules: {type(exc).__name__}: {exc}", ""
@@ -378,6 +440,7 @@ def grade_uploaded_submission(
         rules = json.loads(raw_rules)
         if not isinstance(rules, dict) or not isinstance(rules.get("submission"), dict):
             raise ValueError("The rules JSON must contain a submission object.")
+        metric_profile_migration = _normalize_legacy_metric_profile(rules)
         selected_rules_hash = _sha256_text(raw_rules)
         rules["_run_metadata"] = {
             "selection": {
@@ -391,7 +454,8 @@ def grade_uploaded_submission(
                     and rules_editor_source_hash
                     and rules_editor_source_hash != uploaded_hash
                 ),
-            }
+            },
+            "metric_profile_migration": metric_profile_migration,
         }
 
         # The compact controls intentionally override just the corresponding
