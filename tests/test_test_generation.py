@@ -161,7 +161,7 @@ def test_invalid_generated_input_is_rejected_without_discarding_valid_cases(bad_
         payload = json.loads(messages[1]["content"])
         # Only the surviving, well-formed case reaches independent verification.
         assert payload["test_inputs_to_solve"] == [
-            {"id": "negative", "input": "-4 7\\n"}
+            {"id": "negative", "input": "-4 7\n"}
         ]
         return verifier_response(payload["test_inputs_to_solve"])
 
