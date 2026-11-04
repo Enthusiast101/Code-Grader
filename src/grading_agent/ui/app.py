@@ -492,12 +492,12 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
         rejected_candidates = int(generation.get("rejected_generated_test_count", 0) or 0)
         if rejected_candidates:
             summary.append(
-                f"**Generation note:** {rejected_candidates} invalid LLM candidate(s) were rejected and replaced."
+                f"**Generation note:** {rejected_candidates} invalid LLM candidate(s) were discarded."
             )
         ambiguities = generation.get("unresolved_ambiguities", [])
         if isinstance(ambiguities, list) and ambiguities:
             summary.append(
-                "**Oracle note:** expected outputs use the trusted instructor reference. "
+                "**Expected-output note:** generated pairs were rechecked independently against the assignment specification. "
                 + "; ".join(str(item) for item in ambiguities[:2])[:300]
             )
     else:
