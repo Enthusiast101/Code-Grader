@@ -83,6 +83,51 @@ def test_grading_request_uses_chat_completions_json_schema_once(monkeypatch):
     assert body["reasoning_effort"] == "none"
 
 
+def test_schema_aware_json_extractor_skips_leading_nonmatching_object():
+    content = (
+        '{"stage":"verifier","status":"working"}\n'
+        '{"verifications":[{"id":"case-1","input":"","input_is_valid":true,'
+        '"expected_output":"READY\\n","reason":"No stdin required."}]}'
+    )
+    parsed = reviewer._extract_json_object(
+        content,
+        required_keys={"verifications"},
+    )
+    assert parsed is not None
+    assert "stage" not in parsed
+    assert parsed["verifications"][0]["id"] == "case-1"
+
+
+def test_structured_request_selects_json_object_matching_response_schema(monkeypatch):
+    raw = '{"stage":"verifier","status":"working"}\n{"ok":true}'
+
+    def fake_post(url, *, json, timeout):
+        return _FakeResponse({
+            "choices": [{
+                "message": {"content": raw},
+                "finish_reason": "stop",
+            }]
+        })
+
+    monkeypatch.setattr(reviewer.requests, "post", fake_post)
+    monkeypatch.setattr(
+        reviewer,
+        "_fit_grading_messages",
+        lambda messages, requested: (messages, requested, {}),
+    )
+    parsed, _ = reviewer._request_json(
+        [{"role": "system", "content": "Return JSON."}],
+        max_tokens=256,
+        enable_thinking=False,
+        response_schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        },
+    )
+    assert parsed == {"ok": True}
+
+
 def test_compression_uses_same_model_native_schema_and_one_request(monkeypatch):
     sent = []
 

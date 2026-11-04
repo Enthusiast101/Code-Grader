@@ -178,36 +178,47 @@ def _compact_review(review: dict[str, Any] | None) -> dict[str, Any]:
     return compact
 
 
-def _extract_json_object(content: str) -> dict[str, Any] | None:
-    """Parse a JSON object from the final assistant content.
+def _extract_json_object(
+    content: str,
+    *,
+    required_keys: set[str] | None = None,
+) -> dict[str, Any] | None:
+    """Extract a JSON object, preferring one that matches the requested schema.
 
-    Qwen3 reasoning is returned separately by llama.cpp when the server uses
-    ``--reasoning-format deepseek``. The user-facing ``content`` should contain
-    the final answer. This helper also tolerates a Markdown fence or a short
-    explanatory prefix/suffix without ever parsing ``reasoning_content``.
+    Some compatible model servers prepend a small JSON status/metadata object
+    before the final structured answer. When a response schema is supplied, do
+    not blindly return that first object if a later top-level object satisfies
+    the required keys. Exact single-object JSON remains the fast path.
     """
     text = (content or "").strip().lstrip("\ufeff")
     if not text:
         return None
 
-    if text.startswith("```"):
+    if text.startswith(chr(96) * 3):
         text = re.sub(
-            r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE
+            r"^\x60{3}(?:json)?\s*|\s*\x60{3}$", "", text, flags=re.IGNORECASE
         ).strip()
 
     try:
         parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else None
+        if isinstance(parsed, dict):
+            # Return a schema mismatch as-is for useful caller diagnostics;
+            # there cannot be another top-level object in valid JSON text.
+            return parsed
+        return None
     except json.JSONDecodeError:
         pass
 
-    # Locate the first balanced JSON object. Braces inside quoted strings are
-    # ignored, so descriptions such as "expected {x}" do not break extraction.
-    start = text.find("{")
-    while start >= 0:
+    objects: list[dict[str, Any]] = []
+    cursor = 0
+    while True:
+        start = text.find("{", cursor)
+        if start < 0:
+            break
         depth = 0
         in_string = False
         escaped = False
+        completed = False
         for index in range(start, len(text)):
             char = text[index]
             if in_string:
@@ -229,10 +240,29 @@ def _extract_json_object(content: str) -> dict[str, Any] | None:
                     try:
                         parsed = json.loads(candidate)
                     except json.JSONDecodeError:
-                        break
-                    return parsed if isinstance(parsed, dict) else None
-        start = text.find("{", start + 1)
-    return None
+                        cursor = start + 1
+                    else:
+                        if isinstance(parsed, dict):
+                            objects.append(parsed)
+                        cursor = index + 1
+                    completed = True
+                    break
+        if not completed:
+            cursor = start + 1
+
+    if not objects:
+        return None
+    if required_keys:
+        matching = [item for item in objects if required_keys.issubset(item)]
+        if len(matching) == 1:
+            return matching[0]
+        if len(matching) > 1:
+            # Multiple plausible schema-shaped objects are ambiguous; let the
+            # caller report invalid JSON and request a clean structured answer.
+            return None
+    # Preserve the historical first-object behavior when no object matches,
+    # so the stage validator can report which keys were actually returned.
+    return objects[0]
 
 
 
@@ -877,7 +907,13 @@ def _request_json(
     else:
         content = ""
 
-    parsed = _extract_json_object(content)
+    required_keys = (
+        set(response_schema.get("required", []))
+        if isinstance(response_schema, dict)
+        and isinstance(response_schema.get("required"), list)
+        else None
+    )
+    parsed = _extract_json_object(content, required_keys=required_keys)
     if parsed is not None:
         return parsed, content
 
