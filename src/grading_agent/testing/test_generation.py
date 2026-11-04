@@ -373,8 +373,9 @@ def _verify_expected_outputs(
         "instruction": (
             "Independently solve every supplied test input using only the assignment and problem_contract. "
             "The instructor examples are hints for input conventions, output formatting, and known examples; "
-            "they are not an exhaustive list of requirements. Do not infer answers from student code "
-            "or from any prior model output. For every id, state whether the input is valid and unambiguous "
+            "they are not an exhaustive list of requirements. Treat inferred_contract only as a provisional "
+            "restatement: if it conflicts with assignment or problem_contract, follow the latter and flag uncertainty. "
+            "Do not infer answers from student code or from any prior model output. For every id, state whether the input is valid and unambiguous "
             "under the assignment, and provide the exact expected stdout for a correct solution, including "
             "required spaces and line breaks. If the specification does not determine a unique answer, "
             "set input_is_valid=false and explain briefly. Return exactly one verification for every id."
@@ -861,7 +862,7 @@ def write_frozen_suite(
         "problem_contract": problem_contract or {},
         "oracle_caveat": (
             "Generated expected outputs were independently rechecked by a second LLM call against the assignment specification. "
-            "Instructor-provided examples were used as conventions and hints; they are not an exhaustive oracle."
+            "When available, instructor-provided examples guided input and output conventions; they are not an exhaustive oracle."
         ),
     }
     encoded = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
@@ -1168,7 +1169,7 @@ def prepare_assignment_test_suite(
         "inferred_contract": frozen.get("inferred_contract", {}),
         "spec_summary": frozen.get("spec_summary", ""),
         "oracle_kind": frozen.get("oracle_kind", "two-pass-llm-verified-expected-outputs"),
-        "oracle_caveat": frozen.get("oracle_caveat", "Expected outputs were independently checked by a second LLM call."),
+        "oracle_caveat": frozen.get("oracle_caveat", "Expected outputs were independently checked by a second LLM call against the assignment specification."),
         "expected_output_verification": verification_summary,
         "unresolved_ambiguities": frozen.get("generation_ambiguities", []),
     }
