@@ -93,10 +93,10 @@ def test_missing_model_reference_uses_one_reference_only_recovery_request():
     initial = sample_response()
     initial.pop("reference_solution_c")
     reference = (
-        '#include <stdio.h>\\n'
+        '#include <stdio.h>\n'
         'int main(void) { long long a, b; '
         'if (scanf("%lld%lld", &a, &b) != 2) return 1; '
-        'printf("%lld\\\\n", a + b); return 0; }\\n'
+        'printf("%lld\\n", a + b); return 0; }\n'
     )
     calls = []
 
