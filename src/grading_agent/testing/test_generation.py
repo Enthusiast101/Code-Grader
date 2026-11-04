@@ -792,7 +792,8 @@ def materialize_test_cases(
     for index, case in enumerate(instructor_cases or [], 1):
         if not isinstance(case, dict) or not isinstance(case.get("input"), str) or not isinstance(case.get("expected"), str):
             raise TestGenerationError("invalid_instructor_test", f"Instructor test {index} is malformed.")
-        test_input, expected = case["input"], case["expected"]
+        test_input = case["input"]
+        expected = case["expected"].replace("\r\n", "\n").replace("\r", "\n")
         if test_input in seen_inputs:
             if not _outputs_match(seen_inputs[test_input], expected):
                 raise TestGenerationError("conflicting_instructor_tests", f"Instructor examples disagree about expected output for case {case.get('id', index)}.")
