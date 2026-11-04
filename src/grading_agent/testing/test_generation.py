@@ -923,7 +923,7 @@ def load_frozen_suite(path: Path, expected_fingerprint: str) -> list[dict[str, A
 def prepare_assignment_test_suite(
     rules: dict[str, Any],
     *,
-    sandbox: Any,
+    sandbox: Any = None,
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
     project_root: Path,
     model_id: str,
