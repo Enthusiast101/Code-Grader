@@ -131,9 +131,14 @@ def _validate_candidate(
     if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
         raise TestGenerationError("invalid_test_count", f"Generation response {pass_number} must return 1..{MAX_GENERATED_CASES} input/output pairs.")
     cleaned, seen_ids, seen_inputs = [], set(), set()
+    rejected_cases: list[dict[str, str]] = []
     for index, item in enumerate(cases, 1):
         if not isinstance(item, dict):
-            raise TestGenerationError("invalid_test", f"Generated test {index} must contain input and expected_output strings.")
+            rejected_cases.append({
+                "id": f"generated-{index}",
+                "reason": "candidate was not an object containing input and expected_output",
+            })
+            continue
         case_id = item.get("id")
         if not isinstance(case_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", case_id):
             case_id = f"generated-{index}"
@@ -141,8 +146,15 @@ def _validate_candidate(
             raise TestGenerationError("duplicate_test_id", f"Duplicate generated test ID: {case_id}.")
         test_input = item.get("input", item.get("stdin"))
         expected_output = item.get("expected_output", item.get("expected"))
-        if not isinstance(test_input, str) or not test_input.strip() or len(test_input) > MAX_INPUT_CHARS:
-            raise TestGenerationError("invalid_test_input", f"Generated test {case_id} has invalid input.")
+        if not isinstance(test_input, str):
+            rejected_cases.append({"id": case_id, "reason": "input is missing or is not text"})
+            continue
+        if not test_input.strip():
+            rejected_cases.append({"id": case_id, "reason": "input is empty or whitespace-only"})
+            continue
+        if len(test_input) > MAX_INPUT_CHARS:
+            rejected_cases.append({"id": case_id, "reason": f"input exceeds {MAX_INPUT_CHARS} characters"})
+            continue
         if not isinstance(expected_output, str) or len(expected_output) > MAX_INPUT_CHARS:
             raise TestGenerationError("invalid_expected_output", f"Generated test {case_id} must include a bounded expected_output string.")
         tags = item.get("tags", [])
@@ -164,7 +176,14 @@ def _validate_candidate(
             "description": rationale.strip()[:240],
         })
     if not cleaned:
-        raise TestGenerationError("empty_after_deduplication", "All generated inputs were duplicates.")
+        preview = "; ".join(
+            f"{item['id']}: {item['reason']}" for item in rejected_cases[:5]
+        )
+        raise TestGenerationError(
+            "no_valid_generated_candidates",
+            "The LLM returned no usable input/output pairs. "
+            + (preview or "All generated inputs were duplicates."),
+        )
     return {
         "spec_summary": summary.strip()[:2_000],
         "spec_summary_source": "assignment_statement" if value.get("spec_summary") != summary else "model",
@@ -178,6 +197,7 @@ def _validate_candidate(
             "formatting": [item.strip()[:400] for item in inferred["formatting"][:25]],
         },
         "test_inputs": cleaned,
+        "rejected_generated_cases": rejected_cases,
     }
 
 def _assignment_statement_is_actionable(problem: str, problem_contract: dict[str, Any]) -> bool:
@@ -340,7 +360,7 @@ def _verify_expected_outputs(
                     "type": "object",
                     "properties": {
                         "id": {"type": "string"},
-                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS},
+                        "input": {"type": "string", "minLength": 1, "maxLength": MAX_INPUT_CHARS},
                         "input_is_valid": {"type": "boolean"},
                         "expected_output": {"type": "string"},
                         "reason": {"type": "string", "maxLength": 240},
@@ -572,7 +592,7 @@ def generate_assignment_test_spec(
                     "type": "object",
                     "properties": {
                         "id": {"type": "string"},
-                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS},
+                        "input": {"type": "string", "minLength": 1, "maxLength": MAX_INPUT_CHARS},
                         "expected_output": {"type": "string", "maxLength": MAX_INPUT_CHARS},
                         "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
                     },
@@ -598,8 +618,10 @@ def generate_assignment_test_spec(
         base,
         instruction=(
             f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
-            "id, input, expected_output, and up to three short tags. Derive expected_output from the "
-            "assignment contract, not from the submitted code. Follow the style shown by instructor "
+            "id, input, expected_output, and up to three short tags. The input must be a non-empty "
+            "string containing the exact stdin text for one test (not a label such as 'normal' or 'edge'). "
+            "Derive expected_output from the assignment contract, not from the submitted code. "
+            "Follow the style shown by instructor "
             "examples while exploring new inputs. Do not repeat instructor inputs. Do not include "
             "C source, coverage narration, or long rationales."
         ),
@@ -620,7 +642,7 @@ def generate_assignment_test_spec(
         fallback_contract=fallback_contract,
     )
 
-    rejected: list[dict[str, str]] = []
+    rejected: list[dict[str, str]] = list(candidate.get("rejected_generated_cases", []))
     contract_valid_cases: list[dict[str, Any]] = []
     instructor_inputs = {
         case["input"] for case in (instructor_examples or [])
@@ -637,7 +659,8 @@ def generate_assignment_test_spec(
     if not contract_valid_cases:
         raise TestGenerationError(
             "no_valid_generated_inputs",
-            "The generator did not produce any distinct inputs that passed deterministic contract validation.",
+            "The generator did not produce any distinct inputs that passed deterministic contract validation. "
+            + "; ".join(f"{item['id']}: {item['reason']}" for item in rejected[:5]),,
         )
 
     verified_cases, verification_rejections, verification_summary = _verify_expected_outputs(
