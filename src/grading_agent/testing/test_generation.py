@@ -602,7 +602,7 @@ def generate_assignment_test_spec(
             },
             "test_inputs": {
                 "type": "array",
-                "minItems": 1,
+                "minItems": 0,
                 "maxItems": max_cases,
                 "items": {
                     "type": "object",
@@ -763,6 +763,7 @@ def generate_assignment_test_spec(
             ),
         )
         repair_schema = json.loads(json.dumps(generation_schema))
+        repair_schema["properties"]["test_inputs"]["minItems"] = 1
         repair_schema["properties"]["test_inputs"]["maxItems"] = missing_count
         repair_messages = [
             {

@@ -160,6 +160,7 @@ def test_malformed_candidates_are_rejected_without_discarding_valid_cases(
         if stage == "assignment_test_generation_single_pass":
             input_schema = schema["properties"]["test_inputs"]["items"]["properties"]["input"]
             assert "minLength" not in input_schema
+            assert schema["properties"]["test_inputs"]["minItems"] == 0
             return generated
         payload = json.loads(messages[1]["content"])
         assert payload["test_inputs_to_solve"] == [
@@ -309,6 +310,54 @@ def test_all_invalid_candidates_get_one_bounded_refill_then_independent_verifica
     assert spec["generation_response_count"] == 2
     assert spec["verification_response_count"] == 2
     assert len(history) == 2
+
+
+def test_empty_generation_batch_gets_one_bounded_replacement():
+    calls = []
+
+    def request(messages, schema, stage):
+        calls.append(stage)
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_test_generation_single_pass":
+            assert schema["properties"]["test_inputs"]["minItems"] == 0
+            return {
+                "spec_summary": "Read two integers and print their sum.",
+                "ambiguities": [],
+                "inferred_contract": sample_response()["inferred_contract"],
+                "test_inputs": [],
+            }
+        if stage == "assignment_test_generation_repair":
+            assert schema["properties"]["test_inputs"]["minItems"] == 1
+            assert payload["requested_replacement_count"] == 1
+            return {
+                "spec_summary": "Read two integers and print their sum.",
+                "ambiguities": [],
+                "inferred_contract": sample_response()["inferred_contract"],
+                "test_inputs": [{
+                    "id": "replacement",
+                    "input": "2 3\n",
+                    "expected_output": "5\n",
+                    "tags": ["normal"],
+                }],
+            }
+        if stage == "assignment_expected_output_verification_single_pass":
+            return verifier_response(payload["test_inputs_to_solve"])
+        raise AssertionError(f"Unexpected stage: {stage}")
+
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=1,
+    )
+
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_test_generation_repair",
+        "assignment_expected_output_verification_single_pass",
+    ]
+    assert spec["test_inputs"][0]["input"] == "2 3\n"
+    assert spec["test_inputs"][0]["expected_output"] == "5\n"
 
 
 def test_refill_failure_is_reported_with_diagnostics():
