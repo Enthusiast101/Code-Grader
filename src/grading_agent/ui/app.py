@@ -820,6 +820,12 @@ def generate_test_cases_for_submission(
             "oracle_caveat": result.get("oracle_caveat"),
             "source_analysis": submission_analysis,
         }
+        if manifest["generated_test_count"] == 0 and manifest["requested_generated_test_count"] > 0:
+            raise ValueError(
+                "The LLM did not produce any valid additional test cases. Instructor cases are preserved, "
+                "but grading was not enabled for this generation request. Check the generation diagnostics "
+                "and try again with a smaller generated-case target."
+            )
         if manifest["generated_test_count"] == 0 and manifest["instructor_test_count"] == 0:
             raise ValueError("No valid instructor or generated test cases remained after validation.")
 
@@ -849,7 +855,7 @@ def generate_test_cases_for_submission(
             f"{manifest['rejected_generated_test_count']} invalid generated candidates were discarded.\n\n"
             "### What the LLM understood from the submitted C code\n\n"
             f"{implementation_summary}\n\n"
-            f"**Potential weaknesses targeted:**\n{weak_point_text}\n\n"
+            f"**Potential weaknesses suggested by source analysis (verify against the code):**\n{weak_point_text}\n\n"
             "Expected outputs were produced by the reference solution. Review the combined suite below, "
             "then click **Grade Submission**."
         )

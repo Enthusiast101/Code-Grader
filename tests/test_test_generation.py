@@ -134,6 +134,25 @@ def test_trusted_reference_generation_uses_one_call_and_filters_invalid_candidat
     assert history[0]["test_count"] == 2
 
 
+@pytest.mark.parametrize(
+    "response, expected_code",
+    [
+        ({"ambiguities": []}, "missing_generated_test_inputs"),
+        ({"ambiguities": [], "test_inputs": []}, "empty_generated_test_inputs"),
+    ],
+)
+def test_trusted_reference_generation_rejects_missing_or_empty_test_inputs(response, expected_code):
+    with pytest.raises(TestGenerationError) as error:
+        generate_assignment_test_spec(
+            problem="Read a sequence of integers and print their average.",
+            problem_contract={"input_format": "N followed by N signed integers."},
+            request_json=lambda *_: response,
+            max_cases=6,
+            trusted_reference_solution="int main(void) { return 0; }",
+        )
+    assert error.value.code == expected_code
+
+
 def test_generation_fails_closed_on_ambiguous_contract():
     response = sample_response()
     response["ambiguities"] = ["The assignment does not define overflow behavior."]

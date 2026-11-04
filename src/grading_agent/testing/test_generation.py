@@ -263,7 +263,12 @@ def analyze_submission_for_test_generation(
                 "distinct, actionable observations over exhaustive narration. The assignment and "
                 "instructor contract are authoritative: do not reinterpret requirements to match "
                 "the student's implementation. Do not execute the source, produce expected outputs, "
-                "or treat the source's behavior as correct. Return JSON only."
+                "or treat the source's behavior as correct. Do not produce a generic weakness checklist. "
+                "Before claiming a validation is missing, inspect the relevant source path and check whether "
+                "that guard is actually present (for example, a bounds comparison or scanf return-value check). "
+                "The likely_weak_points list must not contradict checks you identified in the other fields. "
+                "Only report concrete uncovered paths supported by the source; if unsure, omit the weakness. "
+                "Return JSON only."
             ),
         },
         {
@@ -450,8 +455,10 @@ def generate_assignment_test_spec(
         "consistent with the assignment and never let it override or extend the task requirements. "
         + contract_instructions
         + reference_instructions
-        + "Generate exactly requested_case_count "
-        "distinct valid test inputs unless the assignment has fewer valid inputs. Cover valid normal cases, "
+        + "Generate up to requested_case_count distinct valid test inputs, and return at least one "
+        "additional valid input whenever the assignment permits one not already covered by instructor examples. "
+        "Prefer approaching the requested count without sacrificing validity. Never return an empty test_inputs "
+        "array merely to avoid a difficult case. Cover valid normal cases, "
         "minimum and maximum constraints, empty/singleton cases where valid, duplicates, "
         "negative/zero values, numeric boundaries, overflow boundaries and task-specific "
         "adversarial cases. Do not invent requirements. Put every ambiguity in ambiguities "
@@ -528,7 +535,18 @@ def generate_assignment_test_spec(
             coverage = []
         raw_cases = result.get("test_inputs")
         if not isinstance(raw_cases, list):
-            raw_cases = []
+            returned_keys = sorted(str(key) for key in result.keys())
+            raise TestGenerationError(
+                "missing_generated_test_inputs",
+                "The model response omitted the required test_inputs array "
+                f"(returned fields: {returned_keys[:12]}). No additional cases were generated.",
+            )
+        if not raw_cases:
+            raise TestGenerationError(
+                "empty_generated_test_inputs",
+                "The model returned an empty test_inputs array. At least one additional "
+                "valid input is required when test generation is requested.",
+            )
 
         accepted_cases: list[dict[str, Any]] = []
         rejected_cases: list[dict[str, str]] = []
@@ -1083,7 +1101,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":single-pass-valid-only-v11",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":single-pass-valid-only-v12-require-generated-cases",
         rsi_passes=1, max_cases=int(max_cases), temperature=float(temperature),
         additional_focus=additional_focus,
         submission_source_sha256=submission_source_sha256,
@@ -1175,8 +1193,23 @@ def prepare_assignment_test_suite(
         )
         instructor_suite = [case for case in all_cases if case.get("origin") == "instructor"]
         generated_suite = [case for case in all_cases if case.get("origin") == "llm_generated_reference_oracle"]
-        # Invalid candidates are discarded. Freeze only contract-valid cases
-        # that also completed successfully against the trusted reference oracle.
+        # A requested generation run is not complete merely because instructor
+        # examples exist. At least one additional case must pass both candidate
+        # validation and trusted-reference execution before the suite is frozen.
+        if requested_generated_count > 0 and not generated_suite:
+            rejection_preview = [
+                f"{item.get('id', 'candidate')}: {item.get('reason', 'rejected')}"
+                for item in rejected_generated_cases[:5]
+                if isinstance(item, dict)
+            ]
+            detail = "; ".join(rejection_preview) or "the model returned no usable additional candidates"
+            raise TestGenerationError(
+                "no_generated_cases_survived",
+                f"Requested {requested_generated_count} additional test cases, but none passed "
+                f"candidate validation and reference-oracle execution. {detail}",
+            )
+        # Freeze only contract-valid cases that also completed successfully
+        # against the trusted reference oracle.
         all_cases = instructor_suite + generated_suite[:requested_generated_count]
         spec["rejected_generated_cases"] = rejected_generated_cases
         oracle_kind = "instructor-reference" if reference_path_value else "LLM-generated-reference-executed-in-sandbox"
