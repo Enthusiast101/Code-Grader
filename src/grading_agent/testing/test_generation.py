@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 MAX_GENERATED_CASES = 80
 MAX_INPUT_CHARS = 20_000
-MAX_REFERENCE_SOURCE_CHARS = 100_000
+MAX_SUBMISSION_SOURCE_BYTES = 100_000
 
 
 def _project_relative_path(project_root: Path, value: Any, field_name: str) -> Path:
@@ -211,10 +211,10 @@ def analyze_submission_for_test_generation(
     """Understand the submitted C implementation with exactly one LLM call."""
     if not isinstance(submission_source, str) or not submission_source.strip():
         raise TestGenerationError("missing_submission_source", "A non-empty C submission is required before generating tests.")
-    if len(submission_source.encode("utf-8")) > MAX_REFERENCE_SOURCE_CHARS:
+    if len(submission_source.encode("utf-8")) > MAX_SUBMISSION_SOURCE_BYTES:
         raise TestGenerationError(
             "submission_source_too_large",
-            f"The C source is too large for the test-design stage (limit: {MAX_REFERENCE_SOURCE_CHARS} bytes).",
+            f"The C source is too large for the test-design stage (limit: {MAX_SUBMISSION_SOURCE_BYTES} bytes).",
         )
     schema = {
         "type": "object",
@@ -340,11 +340,12 @@ def _verify_expected_outputs(
                     "type": "object",
                     "properties": {
                         "id": {"type": "string"},
+                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS},
                         "input_is_valid": {"type": "boolean"},
                         "expected_output": {"type": "string"},
                         "reason": {"type": "string", "maxLength": 240},
                     },
-                    "required": ["id", "input_is_valid", "expected_output", "reason"],
+                    "required": ["id", "input", "input_is_valid", "expected_output", "reason"],
                 },
             },
         },
@@ -440,6 +441,11 @@ def _verify_expected_outputs(
             raise TestGenerationError(
                 "expected_output_verification_failed",
                 f"The independent verifier omitted test {case_id}. No generated outputs were accepted.",
+            )
+        if check.get("input") != case["input"]:
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"The independent verifier associated an output with the wrong input for test {case_id}.",
             )
         if check.get("input_is_valid") is not True:
             reason = check.get("reason")
