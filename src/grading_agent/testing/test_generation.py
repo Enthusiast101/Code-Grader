@@ -660,7 +660,7 @@ def generate_assignment_test_spec(
         raise TestGenerationError(
             "no_valid_generated_inputs",
             "The generator did not produce any distinct inputs that passed deterministic contract validation. "
-            + "; ".join(f"{item['id']}: {item['reason']}" for item in rejected[:5]),,
+            + "; ".join(f"{item['id']}: {item['reason']}" for item in rejected[:5]),
         )
 
     verified_cases, verification_rejections, verification_summary = _verify_expected_outputs(
