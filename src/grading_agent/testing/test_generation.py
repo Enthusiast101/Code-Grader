@@ -1,10 +1,10 @@
-"""Source-aware test generation with a sequential RSI review.
+"""Single-pass, source-aware test generation with deterministic candidate validation.
 
-The LLM first studies the submitted implementation to identify its input paths,
-assumptions, and likely weak points. It then generates contract-compliant test
-inputs. Expected outputs are never taken from the submission: they are obtained
-by running a trusted or independently generated reference solution in the
-restricted sandbox. The resulting suite is frozen by a source-aware fingerprint.
+The LLM first studies the submitted implementation once, then proposes test
+inputs once. Invalid or duplicate candidates are discarded; accepted inputs
+must also execute successfully against a trusted or independent reference
+solution in the restricted sandbox. The resulting suite is frozen by a
+source-aware fingerprint.
 """
 from __future__ import annotations
 
@@ -18,8 +18,6 @@ from typing import Any, Callable
 MAX_GENERATED_CASES = 80
 MAX_INPUT_CHARS = 20_000
 MAX_REFERENCE_SOURCE_CHARS = 100_000
-MAX_TEST_INPUTS_PER_LLM_BATCH = 4
-MAX_TEST_INPUT_BATCH_ATTEMPTS = 3
 
 
 def _project_relative_path(project_root: Path, value: Any, field_name: str) -> Path:
@@ -84,7 +82,7 @@ def _validate_candidate(
     fallback_reference_solution: str = "",
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise TestGenerationError("invalid_response", f"RSI pass {pass_number} did not return an object.")
+        raise TestGenerationError("invalid_response", f"Generation response {pass_number} did not return an object.")
     summary = value.get("spec_summary", value.get("summary"))
     ambiguity = value.get("ambiguities", value.get("unresolved_ambiguities", []))
     reference = value.get("reference_solution_c", value.get("reference_solution"))
@@ -99,9 +97,9 @@ def _validate_candidate(
         # otherwise valid tests because the model omitted optional prose.
         summary = fallback_summary.strip()
         if not summary:
-            raise TestGenerationError("missing_spec", f"RSI pass {pass_number} omitted the formal task summary.")
+            raise TestGenerationError("missing_spec", f"Generation response {pass_number} omitted the formal task summary.")
     if not isinstance(ambiguity, list) or not all(isinstance(x, str) for x in ambiguity):
-        raise TestGenerationError("invalid_ambiguities", f"RSI pass {pass_number} returned malformed ambiguity details.")
+        raise TestGenerationError("invalid_ambiguities", f"Generation response {pass_number} returned malformed ambiguity details.")
     if ambiguity and not allow_ambiguities:
         raise TestGenerationError("ambiguous_assignment", "Unresolved assignment ambiguities: " + "; ".join(ambiguity[:5]))
     inferred = value.get("inferred_contract", value.get("io_contract"))
@@ -111,14 +109,14 @@ def _validate_candidate(
         inferred = dict(fallback_contract)
         contract_source = "assignment_and_instructor_contract"
         if not inferred:
-            raise TestGenerationError("missing_inferred_contract", f"RSI pass {pass_number} omitted the assignment-derived I/O contract.")
+            raise TestGenerationError("missing_inferred_contract", f"Generation response {pass_number} omitted the assignment-derived I/O contract.")
     else:
         inferred = dict(inferred)
         for field in ("input_format", "output_format"):
             if not isinstance(inferred.get(field), str) or len(inferred[field].strip()) < 8:
                 fallback_value = fallback_contract.get(field)
                 if not isinstance(fallback_value, str) or len(fallback_value.strip()) < 8:
-                    raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must infer a meaningful {field}.")
+                    raise TestGenerationError("invalid_inferred_contract", f"Generation response {pass_number} must infer a meaningful {field}.")
                 inferred[field] = fallback_value
                 contract_source = "assignment_and_instructor_contract"
         for field in ("constraints", "semantics", "formatting"):
@@ -126,18 +124,18 @@ def _validate_candidate(
             if not isinstance(entries, list) or not all(isinstance(item, str) and item.strip() for item in entries):
                 fallback_entries = fallback_contract.get(field)
                 if not isinstance(fallback_entries, list):
-                    raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} returned invalid inferred_contract.{field}.")
+                    raise TestGenerationError("invalid_inferred_contract", f"Generation response {pass_number} returned invalid inferred_contract.{field}.")
                 inferred[field] = fallback_entries
                 contract_source = "assignment_and_instructor_contract"
         if not inferred["semantics"]:
             inferred["semantics"] = fallback_contract.get("semantics", [])
             contract_source = "assignment_and_instructor_contract"
             if not inferred["semantics"]:
-                raise TestGenerationError("invalid_inferred_contract", f"RSI pass {pass_number} must identify at least one task semantic.")
+                raise TestGenerationError("invalid_inferred_contract", f"Generation response {pass_number} must identify at least one task semantic.")
     if not isinstance(reference, str) or not reference.strip() or len(reference) > MAX_REFERENCE_SOURCE_CHARS:
-        raise TestGenerationError("missing_reference", f"RSI pass {pass_number} omitted a bounded C reference solution.")
+        raise TestGenerationError("missing_reference", f"Generation response {pass_number} omitted a bounded C reference solution.")
     if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
-        raise TestGenerationError("invalid_test_count", f"RSI pass {pass_number} must return 1..{MAX_GENERATED_CASES} test inputs.")
+        raise TestGenerationError("invalid_test_count", f"Generation response {pass_number} must return 1..{MAX_GENERATED_CASES} test inputs.")
 
     cleaned, seen_ids, seen_inputs = [], set(), set()
     for index, item in enumerate(cases, 1):
@@ -217,12 +215,7 @@ def analyze_submission_for_test_generation(
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
     submission_filename: str = "submission.c",
 ) -> dict[str, Any]:
-    """Have the LLM understand the submitted C implementation before test design.
-
-    This stage identifies code paths and likely weaknesses only. The assignment
-    remains authoritative, and expected outputs are always computed by the
-    reference oracle in the sandbox, never from the student submission.
-    """
+    """Understand the submitted C implementation with exactly one LLM call."""
     if not isinstance(submission_source, str) or not submission_source.strip():
         raise TestGenerationError("missing_submission_source", "A non-empty C submission is required before generating tests.")
     if len(submission_source.encode("utf-8")) > MAX_REFERENCE_SOURCE_CHARS:
@@ -230,7 +223,6 @@ def analyze_submission_for_test_generation(
             "submission_source_too_large",
             f"The C source is too large for the test-design stage (limit: {MAX_REFERENCE_SOURCE_CHARS} bytes).",
         )
-
     schema = {
         "type": "object",
         "properties": {
@@ -268,9 +260,9 @@ def analyze_submission_for_test_generation(
                     "submission_filename": submission_filename,
                     "submission_source": submission_source,
                     "instruction": (
-                        "Understand this exact implementation first. Identify likely edge cases "
-                        "and missing checks that a separate test-generation stage should probe. "
-                        "Do not supply test inputs or expected outputs in this stage."
+                        "Understand this exact implementation in one pass. Identify likely edge "
+                        "cases and missing checks that a separate test-generation call should probe. "
+                        "Do not supply test inputs or expected outputs."
                     ),
                 },
                 sort_keys=True,
@@ -278,37 +270,33 @@ def analyze_submission_for_test_generation(
             ),
         },
     ]
-    last_error = "The model did not return a valid implementation analysis."
-    for attempt in range(1, 4):
-        result = request_json(messages, schema, f"assignment_submission_understanding_attempt_{attempt}")
-        if isinstance(result, dict):
-            summary = result.get("implementation_summary")
-            list_fields = (
-                "input_parsing_and_validation", "control_flow_and_data_types",
-                "likely_weak_points", "recommended_test_dimensions",
-            )
-            if isinstance(summary, str) and summary.strip() and all(
-                isinstance(result.get(field), list)
-                and all(isinstance(item, str) for item in result[field])
-                for field in list_fields
-            ):
-                return {
-                    "implementation_summary": summary.strip()[:4000],
-                    **{
-                        field: [item.strip()[:500] for item in result[field] if item.strip()][:20]
-                        for field in list_fields
-                    },
-                }
-            last_error = "The model's implementation analysis omitted required fields or returned malformed lists."
-        else:
-            last_error = "The model did not return an object for implementation analysis."
-        if attempt < 3:
-            messages = [
-                *messages,
-                {"role": "assistant", "content": json.dumps(result, ensure_ascii=False) if result is not None else "null"},
-                {"role": "user", "content": f"Repair the response. Return all required JSON fields. {last_error}"},
-            ]
-    raise TestGenerationError("submission_understanding_failed", last_error)
+    result = request_json(messages, schema, "assignment_submission_understanding_single_pass")
+    if not isinstance(result, dict):
+        raise TestGenerationError(
+            "submission_understanding_failed",
+            "The single implementation-understanding response was not a JSON object; no retry was performed.",
+        )
+    summary = result.get("implementation_summary")
+    list_fields = (
+        "input_parsing_and_validation", "control_flow_and_data_types",
+        "likely_weak_points", "recommended_test_dimensions",
+    )
+    if not isinstance(summary, str) or not summary.strip() or any(
+        not isinstance(result.get(field), list)
+        or not all(isinstance(item, str) for item in result[field])
+        for field in list_fields
+    ):
+        raise TestGenerationError(
+            "submission_understanding_failed",
+            "The single implementation-understanding response omitted required fields or returned malformed lists; no retry was performed.",
+        )
+    return {
+        "implementation_summary": summary.strip()[:4000],
+        **{
+            field: [item.strip()[:500] for item in result[field] if item.strip()][:20]
+            for field in list_fields
+        },
+    }
 
 
 def generate_assignment_test_spec(
@@ -320,12 +308,11 @@ def generate_assignment_test_spec(
     trusted_reference_solution: str | None = None,
     submission_analysis: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Generate a reference solution and test inputs, then sequentially RSI-recheck.
+    """Generate a reference solution and test inputs in one LLM call.
 
-    request_json(messages, schema, stage_name) performs one structured model
-    call. Without a trusted oracle, each RSI pass returns one complete
-    replacement object. With a trusted instructor oracle, each pass is assembled
-    from small batches so a large suite cannot be lost to one truncated response.
+    The passes parameter is retained for API compatibility; testcase generation
+    now always uses one pass. Candidate validation and reference execution are
+    deterministic and do not trigger additional LLM generation calls.
     """
     if not isinstance(problem, str) or not problem.strip():
         raise TestGenerationError("missing_assignment", "A complete assignment statement is required.")
@@ -463,25 +450,18 @@ def generate_assignment_test_spec(
         if isinstance(case, dict) and isinstance(case.get("input"), str)
     }
 
-    # When an instructor reference solution is available, the model only has
-    # to produce stdin cases. Asking a small local model for 12-80 complete
-    # cases in one JSON response is prone to truncation / invalid structured
-    # output; the grader then silently falls back to the instructor cases.
-    # Generate and RSI-review the suite in small, schema-constrained batches
-    # instead. Every pass still replaces the complete candidate suite, while
-    # each individual response contains at most four inputs.
+    # One testcase-generation call follows the single source-understanding call.
+    # Candidate review is deterministic and never starts an RSI/regeneration loop.
     if trusted_reference_solution:
-        accepted: dict[str, Any] | None = None
-        history: list[dict[str, Any]] = []
-        prior: dict[str, Any] | None = None
-
-        batch_schema = {
+        generation_schema = {
             "type": "object",
             "properties": {
                 "ambiguities": {"type": "array", "items": {"type": "string"}},
                 "coverage_claims": {"type": "array", "items": {"type": "string"}},
                 "test_inputs": {
                     "type": "array",
+                    "minItems": 1,
+                    "maxItems": max_cases,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -496,230 +476,271 @@ def generate_assignment_test_spec(
             },
             "required": ["test_inputs"],
         }
-
-        for pass_number in range(1, passes + 1):
-            if pass_number == 1:
-                pass_instruction = (
-                    "Generate a complete diverse set of additional valid test inputs for the assignment. "
-                    "The trusted instructor reference solution supplies expected outputs."
-                )
-            else:
-                pass_instruction = (
-                    f"RSI pass {pass_number}: independently review the preceding complete candidate suite "
-                    "for invalid inputs, duplicate cases, missing boundary coverage, and unsupported assumptions. "
-                    "Replace it with a complete improved suite. Generate the replacement suite in chunks; "
-                    "this request is for only the next chunk. Preserve the stated assignment contract."
-                )
-
-            pass_cases: list[dict[str, Any]] = []
-            pass_ambiguities: list[str] = []
-            pass_coverage: list[str] = []
-            batch_number = 0
-
-            while len(pass_cases) < max_cases:
-                batch_number += 1
-                batch_size = min(MAX_TEST_INPUTS_PER_LLM_BATCH, max_cases - len(pass_cases))
-                accepted_batch = False
-                last_error = "The model did not return enough distinct valid inputs."
-
-                for attempt in range(1, MAX_TEST_INPUT_BATCH_ATTEMPTS + 1):
-                    payload = dict(
-                        base,
-                        maximum_cases=max_cases,
-                        requested_case_count=batch_size,
-                        instruction=(
-                            f"{pass_instruction} Return exactly {batch_size} new, distinct valid test inputs "
-                            "for this batch. Do not include expected outputs or reference code. Do not repeat "
-                            "instructor examples or any input in excluded_inputs. If a case's expected behavior "
-                            "is ambiguous under the assignment contract, do not generate it. "
-                            f"Batch {batch_number}; attempt {attempt}."
-                        ),
-                        excluded_inputs=[case["input"] for case in pass_cases[-20:]],
-                    )
-                    if prior is not None:
-                        preceding = dict(prior)
-                        preceding.pop("reference_solution_c", None)
-                        payload["preceding_complete_response"] = preceding
-
-                    result = request_json(
-                        [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
-                        ],
-                        {
-                            **batch_schema,
-                            "properties": {
-                                **batch_schema["properties"],
-                                "test_inputs": {
-                                    **batch_schema["properties"]["test_inputs"],
-                                    "minItems": batch_size,
-                                    "maxItems": batch_size,
-                                },
-                            },
-                        },
-                        f"assignment_test_generation_rsi_{pass_number}_batch_{batch_number}_attempt_{attempt}",
-                    )
-                    try:
-                        candidate = _validate_candidate(
-                            result,
-                            pass_number,
-                            allow_ambiguities=True,
-                            fallback_summary=problem,
-                            fallback_contract=instructor_contract_fallback,
-                            fallback_reference_solution=trusted_reference_solution,
-                        )
-                    except TestGenerationError as exc:
-                        last_error = exc.message
-                        continue
-
-                    existing_inputs = {case["input"] for case in pass_cases}
-                    new_cases = [
-                        case for case in candidate["test_inputs"]
-                        if case["input"] not in instructor_inputs
-                        and case["input"] not in existing_inputs
-                    ]
-                    if not new_cases:
-                        last_error = "The batch contained only instructor duplicates or previously generated inputs."
-                        continue
-
-                    for case in new_cases:
-                        # Generated IDs from separate calls often restart at
-                        # generated-1; namespace them by pass and batch.
-                        case["id"] = f"p{pass_number}b{batch_number}-{case['id']}"[:64]
-                        pass_cases.append(case)
-                        if len(pass_cases) == max_cases:
-                            break
-                    pass_ambiguities.extend(candidate.get("ambiguities", []))
-                    pass_coverage.extend(candidate.get("coverage_claims", []))
-                    accepted_batch = True
-                    break
-
-                if not accepted_batch:
-                    raise TestGenerationError(
-                        "test_input_batch_failed",
-                        f"Could not generate batch {batch_number} in RSI pass {pass_number}: {last_error}",
-                    )
-
-            accepted = {
-                "spec_summary": problem.strip()[:2_000],
-                "spec_summary_source": "assignment_statement",
-                "inferred_contract_source": "assignment_and_instructor_contract",
-                "reference_solution_source": "trusted_instructor_reference",
-                "ambiguities": list(dict.fromkeys(pass_ambiguities))[:10],
-                "inferred_contract": {
-                    "input_format": instructor_contract_fallback["input_format"],
-                    "output_format": instructor_contract_fallback["output_format"],
-                    "constraints": instructor_contract_fallback["constraints"],
-                    "semantics": instructor_contract_fallback["semantics"],
-                    "formatting": instructor_contract_fallback["formatting"],
-                },
-                "reference_solution_c": trusted_reference_solution,
-                "test_inputs": pass_cases,
-                "coverage_claims": list(dict.fromkeys(pass_coverage))[:30],
-                "case_count_shortfall": max(0, max_cases - len(pass_cases)),
-            }
-            history.append({
-                "pass": pass_number,
-                "status": "completed",
-                "test_count": len(pass_cases),
-                "requested_test_count": max_cases,
-                "test_count_shortfall": accepted["case_count_shortfall"],
-                "batch_count": batch_number,
-                "ambiguities_reported": len(accepted["ambiguities"]),
-                "reference_source_sha256": hashlib.sha256(trusted_reference_solution.encode()).hexdigest(),
-                "coverage_claims": accepted["coverage_claims"],
-            })
-            prior = accepted
-
-        if accepted is None:
-            raise TestGenerationError("no_generation", "No valid generated test suite was produced.")
-        if accepted["case_count_shortfall"]:
-            raise TestGenerationError(
-                "generated_test_count_shortfall",
-                f"The LLM produced {len(accepted['test_inputs'])} distinct additional cases; {max_cases} were requested.",
-            )
-        accepted["test_generation_rsi"] = history
-        return accepted, history
-
-    accepted, prior, history = None, None, []
-    for index in range(1, passes + 1):
-        if index == 1 and trusted_reference_solution:
-            instruction = (
-                "PASS 1: generate the requested number of diverse valid test inputs for the stated contract. "
-                "The trusted instructor oracle supplies all expected outputs."
-            )
-        elif index == 1:
-            instruction = (
-                "PASS 1: formalize the contract, independently derive a correct reference C11 "
-                "solution, and generate broad test inputs."
-            )
-        elif trusted_reference_solution:
-            instruction = (
-                f"PASS {index}: recheck the complete previous test-input set for validity, coverage, "
-                "duplicates, and unsupported assumptions. The trusted instructor oracle supplies "
-                "expected outputs; do not generate or modify a reference solution. Resolve details "
-                "only from the assignment, contract, or instructor examples. Return a complete "
-                "replacement test-input set."
-            )
-        else:
-            instruction = (
-                f"PASS {index}: RSI recheck the complete previous specification, C solution and test set. "
-                "Actively find misread requirements, omitted boundary cases, undefined behavior, parsing "
-                "errors, reference implementation bugs, unsupported assumptions, duplicate/invalid tests, "
-                "and mismatched expected semantics. Resolve each prior ambiguity only from the assignment, "
-                "contract, or authoritative instructor examples. If a detail remains unresolved, avoid "
-                "cases whose expected behavior depends on it and keep the ambiguity explicit. Return a "
-                "complete corrected replacement object, not a patch."
-            )
-        if prior is not None and prior.get("case_count_shortfall", 0):
-            instruction += (
-                f" The previous response supplied only {len(prior['test_inputs'])} distinct cases; "
-                f"add valid, non-duplicate cases to reach the requested count of {max_cases}."
-            )
-        payload = dict(base, instruction=instruction)
-        if prior is not None:
-            preceding = dict(prior)
-            if trusted_reference_solution:
-                preceding.pop("reference_solution_c", None)
-            payload["preceding_complete_response"] = preceding
+        payload = dict(
+            base,
+            instruction=(
+                f"Generate up to {max_cases} additional test inputs in this one generation pass. "
+                "The submitted C implementation has already been analyzed; use that analysis to "
+                "target its actual parsing, type, branch, and boundary weaknesses. The assignment "
+                "and instructor contract remain authoritative. Examine every proposed case against "
+                "the full contract before returning it. Return only inputs that are valid, well-defined, "
+                "distinct, and within all stated constraints. Exclude malformed, out-of-range, ambiguous, "
+                "and duplicate inputs. Do not provide expected outputs; the trusted instructor reference "
+                "solution is the only expected-output oracle. The application applies deterministic "
+                "contract validation and reference execution, discarding candidates that fail."
+            ),
+        )
         result = request_json(
-            [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)}],
-            schema, f"assignment_test_generation_rsi_{index}",
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
+            ],
+            generation_schema,
+            "assignment_test_generation_single_pass",
         )
-        accepted = _validate_candidate(
-            result,
-            index,
-            allow_ambiguities=index < passes or bool(trusted_reference_solution),
-            fallback_summary=problem,
-            fallback_contract=instructor_contract_fallback,
-            fallback_reference_solution=trusted_reference_solution or "",
-        )
-        # Instructor cases are already retained in the final suite. Exclude
-        # them from the generated target so materialization cannot silently
-        # reduce the number of additional cases requested by the UI.
-        accepted["test_inputs"] = [
-            case for case in accepted["test_inputs"]
-            if case["input"] not in instructor_inputs
-        ]
-        accepted["case_count_shortfall"] = max(0, max_cases - len(accepted["test_inputs"]))
-        history.append({
-            "pass": index, "status": "completed", "test_count": len(accepted["test_inputs"]),
-            "ambiguities_reported": len(accepted["ambiguities"]),
+        if not isinstance(result, dict):
+            raise TestGenerationError(
+                "invalid_generation_response",
+                "The single test-generation response was not a JSON object. No retry was performed.",
+            )
+        ambiguities = result.get("ambiguities", [])
+        if not isinstance(ambiguities, list) or not all(isinstance(x, str) for x in ambiguities):
+            ambiguities = ["Malformed ambiguity metadata returned by generator."]
+        ambiguities = [x.strip() for x in ambiguities if x.strip()]
+        coverage = result.get("coverage_claims", [])
+        if not isinstance(coverage, list) or not all(isinstance(x, str) for x in coverage):
+            coverage = []
+        raw_cases = result.get("test_inputs")
+        if not isinstance(raw_cases, list):
+            raw_cases = []
+
+        accepted_cases: list[dict[str, Any]] = []
+        rejected_cases: list[dict[str, str]] = []
+        seen_inputs = set(instructor_inputs)
+        seen_ids: set[str] = set()
+        for index, item in enumerate(raw_cases, 1):
+            candidate_id = (
+                str(item.get("id", f"generated-{index}"))
+                if isinstance(item, dict) else f"generated-{index}"
+            )
+            reason = "generator reported unresolved assignment ambiguities" if ambiguities else None
+            if reason is None and not isinstance(item, dict):
+                reason = "candidate is not a JSON object"
+            if reason is None:
+                test_input = item.get("input", item.get("stdin"))
+                if not isinstance(test_input, str) or not test_input.strip():
+                    reason = "input must be a non-empty string"
+                elif len(test_input) > MAX_INPUT_CHARS:
+                    reason = "input exceeds the maximum size"
+                elif test_input in seen_inputs:
+                    reason = "duplicate of instructor or generated input"
+                elif "\x00" in test_input or any(
+                    ord(ch) < 32 and ch not in "\r\n\t" for ch in test_input
+                ):
+                    reason = "input contains a forbidden control character"
+                tags = item.get("tags", [])
+                if reason is None and (
+                    not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags)
+                ):
+                    reason = "tags must be a list of strings"
+                rationale = item.get("rationale", item.get("description", ""))
+                if reason is None and not isinstance(rationale, str):
+                    reason = "rationale must be text"
+            if reason is None:
+                candidate_id = (
+                    candidate_id if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", candidate_id)
+                    else f"generated-{index}"
+                )
+                if candidate_id in seen_ids:
+                    reason = "duplicate generated case ID"
+            if reason is None:
+                reason = _validate_input_against_contract(test_input, problem_contract)
+            if reason:
+                rejected_cases.append({"id": candidate_id, "reason": reason})
+                continue
+            seen_inputs.add(test_input)
+            seen_ids.add(candidate_id)
+            accepted_cases.append({
+                "id": candidate_id,
+                "input": test_input,
+                "tags": sorted(set(tag.strip() for tag in tags if tag.strip())) or ["generated"],
+                "description": rationale.strip()[:240],
+            })
+
+        spec = {
+            "spec_summary": problem.strip()[:2000],
+            "spec_summary_source": "assignment_statement",
+            "inferred_contract_source": "assignment_and_instructor_contract",
+            "reference_solution_source": "trusted_instructor_reference",
+            "ambiguities": ambiguities[:10],
+            "inferred_contract": instructor_contract_fallback,
+            "reference_solution_c": trusted_reference_solution,
+            "test_inputs": accepted_cases,
+            "coverage_claims": coverage[:30],
+            "rejected_generated_cases": rejected_cases,
+            "generation_mode": "single_pass",
+            "generation_response_count": 1,
+        }
+        history = [{
+            "pass": 1,
+            "status": "completed",
+            "mode": "single_pass",
+            "test_count": len(accepted_cases),
             "requested_test_count": max_cases,
-            "test_count_shortfall": accepted["case_count_shortfall"],
-            "reference_source_sha256": hashlib.sha256(accepted["reference_solution_c"].encode()).hexdigest(),
-            "coverage_claims": accepted["coverage_claims"],
-        })
-        prior = accepted
-    if accepted is None:
-        raise TestGenerationError("no_generation", "No valid generated test suite was produced.")
-    if accepted["case_count_shortfall"]:
-        raise TestGenerationError(
-            "generated_test_count_shortfall",
-            f"The LLM produced {len(accepted['test_inputs'])} distinct additional cases; {max_cases} were requested.",
-        )
-    accepted["test_generation_rsi"] = history
-    return accepted, history
+            "rejected_test_count": len(rejected_cases),
+            "ambiguities_reported": len(ambiguities),
+            "coverage_claims": spec["coverage_claims"],
+        }]
+        spec["generation_passes"] = history
+        return spec, history
+
+    # Without a configured instructor reference, the same single response
+    # also provides an independent reference C program for sandbox execution.
+    generation_schema = dict(schema)
+    generation_schema["properties"]["test_inputs"] = dict(
+        generation_schema["properties"]["test_inputs"],
+        minItems=1,
+        maxItems=max_cases,
+    )
+    result = request_json(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(base, sort_keys=True, ensure_ascii=False)},
+        ],
+        generation_schema,
+        "assignment_test_generation_single_pass",
+    )
+    candidate = _validate_candidate(
+        result,
+        1,
+        allow_ambiguities=False,
+        fallback_summary=problem,
+        fallback_contract=instructor_contract_fallback,
+    )
+    filtered, rejected = [], []
+    for case in candidate["test_inputs"]:
+        reason = _validate_input_against_contract(case["input"], problem_contract)
+        if reason:
+            rejected.append({"id": case["id"], "reason": reason})
+        else:
+            filtered.append(case)
+    candidate["test_inputs"] = filtered
+    candidate["generation_mode"] = "single_pass"
+    candidate["generation_response_count"] = 1
+    candidate["rejected_generated_cases"] = rejected
+    history = [{
+        "pass": 1,
+        "status": "completed",
+        "mode": "single_pass",
+        "test_count": len(filtered),
+        "requested_test_count": max_cases,
+        "rejected_test_count": len(rejected),
+        "ambiguities_reported": len(candidate["ambiguities"]),
+        "coverage_claims": candidate["coverage_claims"][:30],
+    }]
+    candidate["generation_passes"] = history
+    return candidate, history
+
+
+
+def _validate_input_against_contract(test_input: str, problem_contract: dict[str, Any]) -> str | None:
+    """Validate stdin against explicit, machine-readable instructor constraints.
+
+    Free-form prose cannot be interpreted as a formal grammar. Strict structural
+    validation is available through input_schema/input_fields token descriptors.
+    """
+    if not isinstance(test_input, str) or not test_input.strip():
+        return "input must be a non-empty string"
+    if len(test_input) > MAX_INPUT_CHARS:
+        return "input exceeds the maximum size"
+    if "\x00" in test_input or any(ord(ch) < 32 and ch not in "\r\n\t" for ch in test_input):
+        return "input contains a forbidden control character"
+    if not isinstance(problem_contract, dict):
+        return None
+
+    lines = test_input.splitlines()
+    for key, actual in (("input_lines_min", len(lines)), ("input_lines_max", len(lines))):
+        limit = problem_contract.get(key)
+        if isinstance(limit, int) and not isinstance(limit, bool):
+            if key.endswith("_min") and actual < limit:
+                return f"input has fewer than {limit} required lines"
+            if key.endswith("_max") and actual > limit:
+                return f"input has more than {limit} allowed lines"
+
+    tokens = test_input.split()
+    exact_count = problem_contract.get("input_token_count", problem_contract.get("expected_token_count"))
+    min_count = problem_contract.get("min_input_tokens")
+    max_count = problem_contract.get("max_input_tokens")
+    if isinstance(exact_count, int) and not isinstance(exact_count, bool) and len(tokens) != exact_count:
+        return f"expected exactly {exact_count} whitespace-delimited input tokens"
+    if isinstance(min_count, int) and len(tokens) < min_count:
+        return f"expected at least {min_count} whitespace-delimited input tokens"
+    if isinstance(max_count, int) and len(tokens) > max_count:
+        return f"expected at most {max_count} whitespace-delimited input tokens"
+
+    schema = problem_contract.get("input_schema", problem_contract.get("input_fields"))
+    if schema is None:
+        return None
+    allow_extra = False
+    fields = schema
+    if isinstance(schema, dict):
+        fields = schema.get("fields", schema.get("tokens"))
+        allow_extra = bool(schema.get("allow_extra", False))
+    if not isinstance(fields, list) or not all(isinstance(field, dict) for field in fields):
+        return "input_schema must contain a fields list"
+    cursor = 0
+    for field_index, field in enumerate(fields, 1):
+        name = str(field.get("name", f"field_{field_index}"))
+        count = field.get("count", 1)
+        optional = bool(field.get("optional", False))
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return f"input_schema count for {name} must be a non-negative integer"
+        remaining = len(tokens) - cursor
+        if remaining < count and not optional:
+            return f"input is missing required field {name}"
+        values = tokens[cursor:cursor + min(count, max(0, remaining))]
+        cursor += len(values)
+        kind = str(field.get("type", "string")).casefold()
+        for token in values:
+            number = None
+            if kind in {"int", "integer", "signed_integer", "long", "long_long"}:
+                if not re.fullmatch(r"[+-]?\d+", token):
+                    return f"field {name} must be an integer"
+                number = int(token)
+            elif kind in {"uint", "unsigned", "unsigned_integer", "natural"}:
+                if not re.fullmatch(r"\+?\d+", token):
+                    return f"field {name} must be a non-negative integer"
+                number = int(token)
+            elif kind in {"float", "double", "number"}:
+                try:
+                    number = float(token)
+                except ValueError:
+                    return f"field {name} must be numeric"
+                if not math.isfinite(number):
+                    return f"field {name} must be finite"
+            if number is not None:
+                lower = field.get(
+                    "min", field.get(
+                        "minimum",
+                        0 if kind in {"uint", "unsigned", "unsigned_integer", "natural"} else None,
+                    ),
+                )
+                upper = field.get("max", field.get("maximum"))
+                if lower is not None and number < lower:
+                    return f"field {name} is below its minimum"
+                if upper is not None and number > upper:
+                    return f"field {name} exceeds its maximum"
+            allowed = field.get("enum", field.get("allowed_values"))
+            if isinstance(allowed, list) and token not in {str(value) for value in allowed}:
+                return f"field {name} is not one of its allowed values"
+            min_length, max_length = field.get("min_length"), field.get("max_length")
+            if isinstance(min_length, int) and len(token) < min_length:
+                return f"field {name} is shorter than its minimum length"
+            if isinstance(max_length, int) and len(token) > max_length:
+                return f"field {name} exceeds its maximum length"
+    if not allow_extra and cursor != len(tokens):
+        return f"input contains {len(tokens) - cursor} unexpected token(s)"
+    return None
 
 
 def materialize_test_cases(
@@ -821,7 +842,7 @@ def write_frozen_suite(
     payload = {
         "schema_version": 2, "assignment_fingerprint": fingerprint,
         "model_id": model_id, "test_cases": cases,
-        "test_generation_rsi": generated_spec.get("test_generation_rsi", []),
+        "generation_passes": generated_spec.get("generation_passes", generated_spec.get("test_generation_rsi", [])),
         "rejected_generated_cases": generated_spec.get("rejected_generated_cases", []),
         "generation_ambiguities": generated_spec.get("ambiguities", []),
         "spec_summary": generated_spec.get("spec_summary", ""),
@@ -1031,7 +1052,6 @@ def prepare_assignment_test_suite(
         reference_hash = hashlib.sha256(reference_source.encode("utf-8")).hexdigest()
 
     seed = int(generation_seed)
-    passes = testing_cfg.get("rsi_passes", 3)
     max_cases = testing_cfg.get("max_cases", 12)
     additional_focus = testing_cfg.get("additional_focus", "")
     if not isinstance(additional_focus, str) or len(additional_focus) > 500:
@@ -1047,8 +1067,8 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":source-aware-contract-v10",
-        rsi_passes=int(passes), max_cases=int(max_cases), temperature=float(temperature),
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":single-pass-valid-only-v11",
+        rsi_passes=1, max_cases=int(max_cases), temperature=float(temperature),
         additional_focus=additional_focus,
         submission_source_sha256=submission_source_sha256,
     )
@@ -1096,7 +1116,7 @@ def prepare_assignment_test_suite(
         cached_reference_hash = hashlib.sha256(str(cached_reference or "").encode("utf-8")).hexdigest()
         if not isinstance(cached_reference, str) or not cached_reference.strip() or cached_reference_hash != frozen.get("reference_solution_sha256"):
             raise TestGenerationError("frozen_reference_corrupt", "Frozen test suite has a missing or mismatched reference-solution hash.")
-        generation_history = frozen.get("test_generation_rsi", [])
+        generation_history = frozen.get("generation_passes", frozen.get("test_generation_rsi", []))
         suite_source = "frozen_cache"
         reference_hash = cached_reference_hash
         reference_source = cached_reference
@@ -1112,16 +1132,11 @@ def prepare_assignment_test_suite(
                 request_json=request_json,
             )
         requested_generated_count = int(max_cases)
-        replacement_reserve = min(
-            MAX_GENERATED_CASES - requested_generated_count,
-            max(3, math.ceil(requested_generated_count * 0.25)),
-        )
-        candidate_generated_count = requested_generated_count + replacement_reserve
         spec, generation_history = generate_assignment_test_spec(
             problem=str(rules.get("problem", "")),
             problem_contract=rules.get("problem_contract", {}),
             request_json=request_json,
-            passes=int(passes), generation_seed=int(seed), max_cases=candidate_generated_count,
+            passes=1, generation_seed=int(seed), max_cases=requested_generated_count,
             additional_focus=additional_focus,
             instructor_examples=instructor_cases,
             trusted_reference_solution=reference_source,
@@ -1137,23 +1152,15 @@ def prepare_assignment_test_suite(
             timeout_s=float(testing_cfg.get("compile_timeout_s", 10.0)),
             run_timeout_s=float(rules.get("time_limit_s", 2.0)),
         )
-        rejected_generated_cases: list[dict[str, str]] = []
+        rejected_generated_cases: list[dict[str, str]] = list(spec.get("rejected_generated_cases", []))
         all_cases = materialize_test_cases(
             spec, run_reference=run_reference, instructor_cases=instructor_cases,
             rejected_generated_cases=rejected_generated_cases,
         )
         instructor_suite = [case for case in all_cases if case.get("origin") == "instructor"]
         generated_suite = [case for case in all_cases if case.get("origin") == "llm_generated_reference_oracle"]
-        if len(generated_suite) < requested_generated_count:
-            rejected_ids = ", ".join(item["id"] for item in rejected_generated_cases[:5])
-            detail = f" Rejected candidates: {rejected_ids}." if rejected_ids else ""
-            raise TestGenerationError(
-                "generated_test_count_shortfall",
-                f"Only {len(generated_suite)} valid generated cases remained after oracle checks; "
-                f"{requested_generated_count} were requested.{detail}",
-            )
-        # The reserve is only for replacing malformed inputs. Keep the final
-        # grading suite at the exact count selected in the UI.
+        # Invalid candidates are discarded. Freeze only contract-valid cases
+        # that also completed successfully against the trusted reference oracle.
         all_cases = instructor_suite + generated_suite[:requested_generated_count]
         spec["rejected_generated_cases"] = rejected_generated_cases
         oracle_kind = "instructor-reference" if reference_path_value else "LLM-generated-reference-executed-in-sandbox"
@@ -1230,7 +1237,7 @@ def prepare_assignment_test_suite(
         ),
         "rejected_generated_test_count": len(frozen.get("rejected_generated_cases", [])),
         "edge_test_count": len(edge_cases),
-        "rsi_passes": generation_history,
+        "generation_passes": generation_history,
         "metric_testset_paths": metric_bindings,
         "all_testset_path": str(all_path),
         "edge_testset_path": str(edge_path),

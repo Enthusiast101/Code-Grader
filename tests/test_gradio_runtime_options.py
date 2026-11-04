@@ -588,10 +588,7 @@ def test_generate_button_analyzes_submission_then_saves_cases_without_grading(tm
         "recommended_test_dimensions": ["Large magnitudes and mixed signs."],
     }
     stages = []
-    batch_index = 0
-
     def fake_request_json(messages, *, max_tokens, enable_thinking, response_schema, schema_name):
-        nonlocal batch_index
         stages.append(schema_name)
         payload = json.loads(messages[1]["content"])
         if schema_name.startswith("assignment_submission_understanding"):
@@ -600,14 +597,14 @@ def test_generate_button_analyzes_submission_then_saves_cases_without_grading(tm
             return analysis, json.dumps(analysis)
 
         assert payload["submitted_implementation_analysis"] == analysis
-        batch_index += 1
+        assert schema_name == "assignment_test_generation_single_pass"
         requested = response_schema["properties"]["test_inputs"]["maxItems"]
-        batch_number = int(schema_name.split("_batch_")[1].split("_")[0])
         return ({
+            "ambiguities": [],
             "test_inputs": [
                 {
                     "id": f"case-{index}",
-                    "input": f"{batch_number * 10 + index + 10} {index + 1}\n",
+                    "input": f"{index + 10} {index + 1}\n",
                     "tags": ["boundary"],
                     "rationale": "Distinct generated input targeting integer addition.",
                 }
@@ -634,7 +631,7 @@ def test_generate_button_analyzes_submission_then_saves_cases_without_grading(tm
     assert len(preview_rows) == 3
     assert preview_rows[0][1] == "Instructor"
     assert sum(row[1] == "LLM-generated" for row in preview_rows) == 2
-    assert stages[0] == "assignment_submission_understanding_attempt_1"
-    assert all(stage.startswith("assignment_test_generation_rsi_1_batch_") for stage in stages[1:])
+    assert stages[0] == "assignment_submission_understanding_single_pass"
+    assert stages[1:] == ["assignment_test_generation_single_pass"]
     assert Path(generated_state["suite_path"]).is_file()
     assert grade_button_update["interactive"] is True

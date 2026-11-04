@@ -65,74 +65,70 @@ def test_submission_understanding_stage_reads_source_before_test_design():
         submission_filename="student.c",
     )
 
-    assert calls[0][2] == "assignment_submission_understanding_attempt_1"
+    assert len(calls) == 1
+    assert calls[0][2] == "assignment_submission_understanding_single_pass"
     assert analysis["likely_weak_points"] == ["Malformed input is not rejected."]
 
 
-def test_generation_runs_three_sequential_passes_and_rechecks_prior_response():
+def test_generation_uses_one_pass_and_does_not_recheck_prior_response():
     calls = []
     def request(messages, schema, stage):
         calls.append((messages, schema, stage))
-        payload = json.loads(messages[1]["content"])
-        if len(calls) > 1:
-            assert "preceding_complete_response" in payload
-            assert payload["preceding_complete_response"]["spec_summary"] == "Read two integers and print their sum."
         return sample_response()
     spec, history = generate_assignment_test_spec(
         problem="Read two integers and print their sum.", problem_contract={"sum_type": "int64"},
         request_json=request, max_cases=2,
     )
-    assert len(calls) == 3
-    assert [x["pass"] for x in history] == [1, 2, 3]
+    assert len(calls) == 1
+    assert [x["pass"] for x in history] == [1]
+    assert spec["generation_response_count"] == 1
     assert len(spec["test_inputs"]) == 2
 
 
-def test_trusted_reference_generation_builds_requested_suite_in_small_batches():
-    from grading_agent.testing.test_generation import generate_assignment_test_spec
-
+def test_trusted_reference_generation_uses_one_call_and_filters_invalid_candidates():
     calls = []
 
     def request(messages, schema, stage):
         payload = json.loads(messages[1]["content"])
-        requested = schema["properties"]["test_inputs"]["minItems"]
-        assert schema["properties"]["test_inputs"]["maxItems"] == requested
-        assert requested <= 4
-        calls.append((payload, stage, requested))
-        batch_number = len(calls)
+        cases_schema = schema["properties"]["test_inputs"]
+        assert cases_schema["minItems"] == 1
+        assert cases_schema["maxItems"] == 5
+        assert stage == "assignment_test_generation_single_pass"
+        assert "submitted_implementation_analysis" in payload
+        calls.append(stage)
         return {
+            "ambiguities": [],
             "test_inputs": [
-                {
-                    "id": f"case-{batch_number}-{index}",
-                    "input": f"{batch_number * 10 + index} 1\n",
-                    "tags": ["generated"],
-                    "rationale": "Distinct valid input.",
-                }
-                for index in range(requested)
-            ]
+                {"id": "case-a", "input": "10 1\n", "tags": ["generated"], "rationale": "Distinct input."},
+                {"id": "case-b", "input": "11 1\n", "tags": ["generated"], "rationale": "Another input."},
+                {"id": "case-c", "input": "11 1\n", "tags": ["duplicate"], "rationale": "Duplicate input."},
+                {"id": "case-d", "input": "1 2\n", "tags": ["duplicate"], "rationale": "Instructor duplicate."},
+                {"id": "case-e", "input": "   ", "tags": ["invalid"], "rationale": "Empty input."},
+            ],
         }
 
-    trusted_reference = (
-        '#include <stdio.h>\n'
-        'int main(void) { int a, b; if (scanf("%d%d", &a, &b) != 2) return 1; '
-        'printf("%d\\n", a + b); return 0; }\n'
-    )
+    trusted_reference = "/* trusted test oracle source */"
+    analysis = {
+        "implementation_summary": "Scans two integers and adds them.",
+        "likely_weak_points": ["Unchecked input parsing."],
+    }
     spec, history = generate_assignment_test_spec(
         problem="Read two integers and print their sum.",
         problem_contract={"sum_type": "int32"},
         request_json=request,
-        passes=3,
+        passes=4,
         max_cases=5,
         trusted_reference_solution=trusted_reference,
         instructor_examples=[{"id": "teacher", "input": "1 2\n", "expected": "3\n"}],
+        submission_analysis=analysis,
     )
 
-    assert len(spec["test_inputs"]) == 5
-    assert all(case["input"] != "1 2\n" for case in spec["test_inputs"])
-    assert len({case["input"] for case in spec["test_inputs"]}) == 5
-    assert spec["reference_solution_c"] == trusted_reference
-    assert [item["test_count"] for item in history] == [5, 5, 5]
-    assert len(calls) == 6  # two small batches in each of three RSI passes
-    assert all("preceding_complete_response" in payload for payload, _, _ in calls[2:])
+    assert len(calls) == 1
+    assert len(spec["test_inputs"]) == 2
+    assert spec["generation_response_count"] == 1
+    assert len(spec["rejected_generated_cases"]) == 3
+    assert history[0]["mode"] == "single_pass"
+    assert history[0]["test_count"] == 2
 
 
 def test_generation_fails_closed_on_ambiguous_contract():
@@ -143,6 +139,25 @@ def test_generation_fails_closed_on_ambiguous_contract():
             problem="Read two integers from input and print their arithmetic sum.", problem_contract={},
             request_json=lambda *_: response,
         )
+
+
+
+def test_explicit_input_schema_filters_out_of_range_and_malformed_cases():
+    from grading_agent.testing.test_generation import _validate_input_against_contract
+
+    contract = {
+        "input_schema": {
+            "fields": [
+                {"name": "count", "type": "integer", "min": 1, "max": 10},
+                {"name": "mode", "type": "string", "enum": ["fast", "slow"]},
+            ]
+        }
+    }
+    assert _validate_input_against_contract("5 fast\n", contract) is None
+    assert "minimum" in _validate_input_against_contract("0 fast\n", contract)
+    assert "integer" in _validate_input_against_contract("five fast\n", contract)
+    assert "allowed values" in _validate_input_against_contract("5 invalid\n", contract)
+    assert "unexpected token" in _validate_input_against_contract("5 fast extra\n", contract)
 
 
 def test_generation_refuses_a_title_without_an_assignment_contract():
@@ -246,7 +261,7 @@ def test_prepare_suite_generates_once_then_reuses_frozen_artifact(tmp_path):
     assert first["source"] == "generated_and_frozen"
     assert first["total_test_count"] == 10
     assert first["edge_test_count"] == 1
-    assert len(calls) == 3
+    assert len(calls) == 1
     assert all(Path(v).is_file() for v in first["metric_testset_paths"].values())
 
     second = prepare_assignment_test_suite(
@@ -339,8 +354,8 @@ def test_prepare_suite_understands_submission_before_generating_additional_cases
     )
 
     assert result["status"] == "completed"
-    assert stages[0] == "assignment_submission_understanding_attempt_1"
-    assert all(stage.startswith("assignment_test_generation_rsi_1_batch_") for stage in stages[1:])
+    assert stages[0] == "assignment_submission_understanding_single_pass"
+    assert stages[1:] == ["assignment_test_generation_single_pass"]
     assert result["submission_analysis"] == analysis
     assert result["generated_test_count"] == 2
     assert result["instructor_test_count"] == 1
@@ -418,7 +433,7 @@ def test_prepare_suite_binds_all_instructor_and_generated_cases_to_correctness(t
     def request(messages, schema, stage):
         nonlocal request_number
         request_number += 1
-        requested = schema["properties"]["test_inputs"]["minItems"]
+        requested = schema["properties"]["test_inputs"]["maxItems"]
         return {
             "test_inputs": [
                 {

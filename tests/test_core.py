@@ -10,7 +10,7 @@ from grader.analyzers import analyze_source, originality_similarity, score_struc
 from grader.grading import _calculate_grade, _compile_failure_result, _run_cases, _score_band, _syntax_result, run_rsi_review, grade
 from grader.llm import _extract_json, extract_c_code, LLMError
 from grader.rules import RulesError, _normalize_metrics, load_rules
-from grader.suite import _clean_tests, _compare, _generate_test_inputs, prepare_suite
+from grader.suite import SuiteError, _clean_tests, _compare, _generate_test_inputs, prepare_suite
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -249,7 +249,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(suite["reference_origin"], "instructor_expected_outputs")
             self.assertTrue(suite["generation_warnings"])
 
-    def test_test_generation_retries_schema_failure_before_failing(self):
+    def test_test_generation_fails_closed_on_invalid_single_generation_response(self):
         rules = {
             "problem": "Read one integer and print it.",
             "problem_contract": {"input_format": "one integer", "output_format": "same integer"},
@@ -257,13 +257,10 @@ class CoreTests(unittest.TestCase):
         }
         llm = FakeLLM([
             {"tests": [{"id": "bad", "input": "", "tags": ["core"]}]},
-            {"inferred_contract": {"input_format": "one integer", "output_format": "same integer", "semantics": "identity"},
-             "tests": [{"id": "good", "input": "17\n", "tags": ["core"], "rationale": "valid input"}]},
         ])
-        cases, history, meta = _generate_test_inputs(llm, rules)
-        self.assertEqual(llm.calls, 2)
-        self.assertEqual(cases[0]["input"], "17\n")
-        self.assertEqual(history[0]["status"], "completed")
+        with self.assertRaisesRegex(SuiteError, "omitted required inferred_contract fields"):
+            _generate_test_inputs(llm, rules)
+        self.assertEqual(llm.calls, 1)
 
 
     def test_test_generation_infers_io_contract_without_contract_fields(self):
@@ -320,7 +317,7 @@ class CoreTests(unittest.TestCase):
             for item in result["compressed_chunks"]
         ))
 
-    def test_test_generator_does_not_require_reference_in_each_rsi_response(self):
+    def test_cleaned_generated_cases_do_not_include_reference_solution(self):
         cases = _clean_tests({"tests": [
             {"id": "normal", "input": "2 3\n", "tags": ["core"], "rationale": "normal input"},
             {"id": "boundary", "input": "0 0\n", "tags": ["boundary"], "rationale": "zero boundary"},
@@ -546,9 +543,9 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(report1["scoring"]["status"], "completed")
             self.assertEqual(report1["scoring"]["score"], 50.0)
             self.assertEqual(report1["metrics"]["correctness"]["score"], 0.0)
-            self.assertEqual(report1["test_suite"]["test_count"], 4)
+            self.assertEqual(report1["test_suite"]["test_count"], 3)
             inputs = [case["input"] for case in report1["test_suite"]["test_cases"]]
-            self.assertEqual(len(inputs), len(set(inputs)), "RSI passes must not duplicate input cases")
+            self.assertEqual(len(inputs), len(set(inputs)), "Single-pass generation must not duplicate input cases")
             self.assertEqual(first_llm.text_calls, 1)
             second_llm = FakeFullLLM()
             with patch("grader.grading.DockerSandbox", FakeDockerSandbox), patch("grader.grading.LLMClient", return_value=second_llm):

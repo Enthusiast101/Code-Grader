@@ -732,11 +732,9 @@ def generate_test_cases_for_submission(
             if not _generation_server_is_ready():
                 generation_process = initiate_server()
             requested_cases = int(max_generated_cases)
-            replacement_reserve = min(max(0, 80 - requested_cases), max(3, (requested_cases + 3) // 4))
-            candidate_count = requested_cases + replacement_reserve
             generation_token_budget = max(
                 int(settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS") or 0),
-                min(settings.LLAMA_CONTEXT_SIZE, 2048 + candidate_count * 192),
+                min(settings.LLAMA_CONTEXT_SIZE, 2048 + requested_cases * 192),
             )
 
             def generation_request(messages, schema, stage_name):
@@ -798,16 +796,14 @@ def generate_test_cases_for_submission(
             "generated_test_count": int(result.get("generated_test_count", 0)),
             "total_test_count": int(result.get("total_test_count", len(cases))),
             "edge_test_count": int(result.get("edge_test_count", 0)),
+            "rejected_generated_test_count": int(result.get("rejected_generated_test_count", 0)),
             "reference_solution_source": result.get("reference_solution_source"),
             "oracle_kind": result.get("oracle_kind"),
             "oracle_caveat": result.get("oracle_caveat"),
             "source_analysis": submission_analysis,
         }
-        if manifest["generated_test_count"] != int(max_generated_cases):
-            raise ValueError(
-                f"The LLM generated {manifest['generated_test_count']} additional cases, "
-                f"but {int(max_generated_cases)} were requested. Please generate again."
-            )
+        if manifest["generated_test_count"] == 0 and manifest["instructor_test_count"] == 0:
+            raise ValueError("No valid instructor or generated test cases remained after validation.")
 
         preview_rows = []
         for index, case in enumerate(cases, 1):
@@ -829,9 +825,10 @@ def generate_test_cases_for_submission(
         ) or "- No specific weakness was identified by the analysis stage."
         status = (
             f"## Test cases generated successfully\n\n"
-            f"**{manifest['generated_test_count']} additional LLM-generated cases** + "
+            f"**{manifest['generated_test_count']} valid LLM-generated cases** + "
             f"**{manifest['instructor_test_count']} unique instructor cases** = "
-            f"**{manifest['total_test_count']} cases ready for grading.**\n\n"
+            f"**{manifest['total_test_count']} cases ready for grading.** "
+            f"{manifest['rejected_generated_test_count']} invalid generated candidates were discarded.\n\n"
             "### What the LLM understood from the submitted C code\n\n"
             f"{implementation_summary}\n\n"
             f"**Potential weaknesses targeted:**\n{weak_point_text}\n\n"
@@ -1354,7 +1351,7 @@ def build_app() -> gr.Blocks:
             with gr.Row():
                 max_generated_cases = gr.Slider(
                     0, 60, value=0, step=1, label="Generated test case target",
-                    info="Requests this many additional LLM-generated cases. Existing instructor cases are kept and included too.",
+                    info="Requests up to this many additional LLM-generated cases. Invalid candidates are discarded; existing instructor cases are kept and included too.",
                 )
                 additional_test_focus = gr.Textbox(
                     label="Test variation focus (optional)",

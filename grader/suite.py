@@ -11,7 +11,7 @@ from typing import Any
 from .llm import LLMClient, LLMError, extract_c_code
 from .sandbox import DockerSandbox, SandboxError
 
-GENERATOR_VERSION = "4.0"
+GENERATOR_VERSION = "5.0"
 EDGE_WORDS = {"edge", "boundary", "adversarial", "corner", "overflow", "negative", "zero", "minimum", "maximum", "large", "limit", "extreme"}
 
 
@@ -35,7 +35,7 @@ def _clean_tests(value: Any, *, max_cases: int, pass_number: int) -> list[dict[s
     else:
         raw = value
     if not isinstance(raw, list):
-        raise SuiteError(f"RSI test-generation pass {pass_number} did not return a tests array.")
+        raise SuiteError(f"Test-generation response {pass_number} did not return a tests array.")
 
     cleaned: list[dict[str, Any]] = []
     seen_inputs: set[str] = set()
@@ -59,7 +59,7 @@ def _clean_tests(value: Any, *, max_cases: int, pass_number: int) -> list[dict[s
             tags = sorted(set(tags) | {"edge"})
         case_id = item.get("id")
         if not isinstance(case_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", case_id):
-            case_id = f"rsi{pass_number}_{index:02d}"
+            case_id = f"generated{pass_number}_{index:02d}"
         seen_inputs.add(test_input)
         cleaned.append({"id": case_id, "input": test_input, "tags": tags, "description": rationale.strip()[:240]})
         if len(cleaned) >= max_cases:
@@ -133,7 +133,7 @@ def _fingerprint(rules: dict[str, Any], model: str, sandbox_image_id: str | None
         "llm_seed": int(llm_seed if llm_seed is not None else rules["llm"].get("seed", cfg["seed"])),
         "seed": cfg["seed"],
         "temperature": cfg["temperature"],
-        "rsi_passes": cfg["rsi_passes"],
+        "rsi_passes": 1,
         "max_cases": cfg["max_cases"],
         "generation_enabled": cfg["enabled"],
         "comparison_mode": rules["output_comparison"],
@@ -144,153 +144,159 @@ def _fingerprint(rules: dict[str, Any], model: str, sandbox_image_id: str | None
     return _digest(payload)
 
 
+def _validate_test_input_contract(test_input: str, contract: dict[str, Any]) -> str | None:
+    """Reject candidates that violate explicit structured assignment constraints."""
+    if not isinstance(test_input, str) or not test_input.strip():
+        return "input must be a non-empty string"
+    if len(test_input) > 20000:
+        return "input exceeds the 20000-character limit"
+    if "\x00" in test_input or any(ord(ch) < 32 and ch not in "\r\n\t" for ch in test_input):
+        return "input contains a forbidden control character"
+    if not isinstance(contract, dict):
+        return None
+
+    tokens = test_input.split()
+    exact = contract.get("input_token_count", contract.get("expected_token_count"))
+    min_tokens, max_tokens = contract.get("min_input_tokens"), contract.get("max_input_tokens")
+    if isinstance(exact, int) and not isinstance(exact, bool) and len(tokens) != exact:
+        return f"expected exactly {exact} input tokens"
+    if isinstance(min_tokens, int) and len(tokens) < min_tokens:
+        return f"expected at least {min_tokens} input tokens"
+    if isinstance(max_tokens, int) and len(tokens) > max_tokens:
+        return f"expected at most {max_tokens} input tokens"
+
+    schema = contract.get("input_schema", contract.get("input_fields"))
+    if schema is None:
+        return None
+    allow_extra = False
+    fields = schema
+    if isinstance(schema, dict):
+        fields = schema.get("fields", schema.get("tokens"))
+        allow_extra = bool(schema.get("allow_extra", False))
+    if not isinstance(fields, list) or not all(isinstance(field, dict) for field in fields):
+        return "input_schema must contain a fields list"
+
+    cursor = 0
+    for field_index, field in enumerate(fields, 1):
+        name = str(field.get("name", f"field_{field_index}"))
+        count = field.get("count", 1)
+        optional = bool(field.get("optional", False))
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return f"input_schema count for {name} must be a non-negative integer"
+        remaining = len(tokens) - cursor
+        if remaining < count and not optional:
+            return f"input is missing required field {name}"
+        values = tokens[cursor:cursor + min(count, max(0, remaining))]
+        cursor += len(values)
+        kind = str(field.get("type", "string")).casefold()
+        for token in values:
+            number = None
+            if kind in {"int", "integer", "signed_integer", "long", "long_long"}:
+                if not re.fullmatch(r"[+-]?\d+", token):
+                    return f"field {name} must be an integer"
+                number = int(token)
+            elif kind in {"uint", "unsigned", "unsigned_integer", "natural"}:
+                if not re.fullmatch(r"\+?\d+", token):
+                    return f"field {name} must be a non-negative integer"
+                number = int(token)
+            elif kind in {"float", "double", "number"}:
+                try:
+                    number = float(token)
+                except ValueError:
+                    return f"field {name} must be numeric"
+                if not __import__("math").isfinite(number):
+                    return f"field {name} must be finite"
+            if number is not None:
+                lower = field.get("min", field.get("minimum", 0 if kind in {"uint", "unsigned", "unsigned_integer", "natural"} else None))
+                upper = field.get("max", field.get("maximum"))
+                if lower is not None and number < lower:
+                    return f"field {name} is below its minimum"
+                if upper is not None and number > upper:
+                    return f"field {name} exceeds its maximum"
+            allowed = field.get("enum", field.get("allowed_values"))
+            if isinstance(allowed, list) and token not in {str(value) for value in allowed}:
+                return f"field {name} is not one of its allowed values"
+    if not allow_extra and cursor != len(tokens):
+        return f"input contains {len(tokens) - cursor} unexpected token(s)"
+    return None
+
+
 def _generate_test_inputs(llm: LLMClient, rules: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Generate one candidate suite; validation never re-enters the LLM."""
     cfg = rules["test_generation"]
     max_cases = int(cfg["max_cases"])
-    rsi_passes = int(cfg["rsi_passes"])
-    suite: list[dict[str, Any]] = []
-    history: list[dict[str, Any]] = []
-    generation_warnings: list[str] = []
-    prior_review_summary: list[dict[str, Any]] = []
-    inferred_contract: dict[str, Any] = {}
-
     system = (
         "You are a careful test designer for an automated C-program grader. "
-        "Use the instructor assignment only. Do not inspect or infer from a student submission. "
+        "Use only the instructor assignment. Do not inspect or infer from a student submission. "
         "Infer the complete input grammar, output grammar, constraints, valid-domain semantics, and formatting rules "
         "directly from the natural-language assignment statement. The instructor will NOT provide separate input/output "
         "format fields. Do not ask for them. If wording is ambiguous, record the ambiguity and choose the narrowest "
         "reasonable interpretation supported by the statement; do not invent constraints. "
         "Generate valid stdin inputs only; invalid input is included only if the statement explicitly defines it. "
         "Return JSON only. Every input must be self-contained. Tag each case as core or edge/boundary/adversarial. "
-        "Do not output expected answers."
+        "Examine every proposed input against the full assignment contract before returning it. Do not output expected answers."
     )
-    for iteration in range(1, rsi_passes + 1):
-        if iteration == 1:
-            user = {
-                "task": rules["problem"],
-                "instructor_contract": rules["problem_contract"],
-                "instruction": (
-                    f"First infer the input/output contract from the assignment text itself; no separate format "
-                    f"specification will be supplied. Then create up to {max_cases} high-value valid stdin cases. "
-                    "Cover ordinary behavior, each explicit constraint boundary, whitespace variations, numeric "
-                    "extremes, empty/minimal structures and task-specific adversarial cases where valid. "
-                    "Return JSON with inferred_contract (input_format, output_format, constraints, semantics, "
-                    "formatting, ambiguities), tests, and review_summary. Each test has id, input, tags, rationale. "
-                    "Do not include expected outputs. Include at least 4 tests when the task permits."
-                ),
-                "seed": cfg["seed"],
-            }
+    user = {
+        "task": rules["problem"],
+        "instructor_contract": rules["problem_contract"],
+        "instruction": (
+            f"In this single test-generation pass, infer the complete input/output contract and create up to "
+            f"{max_cases} high-value valid stdin cases. Cover ordinary behavior, explicit constraint boundaries, "
+            "whitespace variations, numeric extremes, minimal structures and task-specific adversarial cases where valid. "
+            "Return JSON with inferred_contract (input_format, output_format, constraints, semantics, formatting, "
+            "ambiguities), tests, and review_summary. Each test has id, input, tags, rationale. "
+            "Return only distinct cases that satisfy all stated constraints. Do not include expected outputs."
+        ),
+        "seed": cfg["seed"],
+    }
+    try:
+        answer = llm.json(
+            system,
+            json.dumps(user, ensure_ascii=False, sort_keys=True),
+            max_tokens=min(4096, llm.max_tokens),
+        )
+    except (LLMError, ValueError, TypeError) as exc:
+        raise SuiteError(f"Single test-generation request failed: {exc}") from exc
+    if not isinstance(answer, dict):
+        raise SuiteError("The single test-generation response was not a JSON object.")
+    inferred = answer.get("inferred_contract")
+    required_contract_fields = ("input_format", "output_format", "semantics")
+    if not isinstance(inferred, dict) or any(
+        not isinstance(inferred.get(key), (str, list)) or not inferred.get(key)
+        for key in required_contract_fields
+    ):
+        raise SuiteError("The single test-generation response omitted required inferred_contract fields.")
+    inferred_contract = {
+        key: value for key, value in inferred.items()
+        if key in {"input_format", "output_format", "constraints", "semantics", "formatting", "ambiguities"}
+    }
+    proposed_cases = _clean_tests(answer, max_cases=max_cases, pass_number=1)
+    accepted_cases, rejected_cases = [], []
+    for case in proposed_cases:
+        reason = _validate_test_input_contract(case["input"], rules.get("problem_contract", {}))
+        if reason:
+            rejected_cases.append({"id": case["id"], "input": case["input"], "reason": reason})
         else:
-            previous_suite = []
-            for case in suite:
-                value = case["input"]
-                preview = value if len(value) <= 320 else value[:160] + "\n... [truncated preview] ...\n" + value[-160:]
-                previous_suite.append({"id": case["id"], "tags": case["tags"], "input_length": len(value), "input_preview": preview})
-            user = {
-                "task": rules["problem"],
-                "instructor_contract": rules["problem_contract"],
-                "inferred_contract": inferred_contract,
-                "previous_suite": previous_suite,
-                "previous_review_history": prior_review_summary,
-                "instruction": (
-                    f"RSI PASS {iteration}: Recheck the complete preceding suite. Try to find missing requirements, "
-                    "corner cases, parsing/formatting cases and assumptions. Do not remove correct previous cases. "
-                    f"Return ONLY additional tests (0 to {max_cases}) plus review_summary and issues_found. "
-                    "If you find no gaps, return an empty additional_tests array. No expected outputs. JSON only."
-                ),
-                "seed": cfg["seed"],
-            }
-        try:
-            answer = None
-            new_cases = []
-            # Schema retry is separate from JSON syntax repair in LLMClient.json.
-            # A malformed first answer must not immediately abort test generation.
-            attempts = 3 if iteration == 1 else 2
-            last_schema_error = None
-            for attempt in range(1, attempts + 1):
-                retry_user = dict(user)
-                if last_schema_error:
-                    retry_user["correction"] = (
-                        "Your previous response did not satisfy the required schema: " + last_schema_error +
-                        ". Return a JSON object with the exact required array key and valid input strings. "
-                        "Do not include expected outputs or prose."
-                    )
-                answer = llm.json(system, json.dumps(retry_user, ensure_ascii=False, sort_keys=True), max_tokens=min(4096, llm.max_tokens))
-                if iteration == 1 and isinstance(answer, dict):
-                    inferred = answer.get("inferred_contract", {})
-                    if isinstance(inferred, dict):
-                        inferred_contract = {
-                            key: value for key, value in inferred.items()
-                            if key in {"input_format", "output_format", "constraints", "semantics", "formatting", "ambiguities"}
-                        }
-                if iteration == 1:
-                    inferred_value = answer.get("inferred_contract") if isinstance(answer, dict) else None
-                    required_contract_fields = ("input_format", "output_format", "semantics")
-                    if not isinstance(inferred_value, dict) or any(
-                        not isinstance(inferred_value.get(key), (str, list)) or not inferred_value.get(key)
-                        for key in required_contract_fields
-                    ):
-                        last_schema_error = (
-                            "inferred_contract must describe input_format, output_format, and semantics "
-                            "from the natural-language assignment"
-                        )
-                        continue
-                    new_cases = _clean_tests(answer, max_cases=max_cases, pass_number=iteration)
-                    if new_cases:
-                        break
-                    last_schema_error = "tests array contained no valid test inputs"
-                else:
-                    additions = answer.get("additional_tests", answer.get("tests", []))
-                    if additions is None:
-                        additions = []
-                    if not isinstance(additions, list):
-                        last_schema_error = "additional_tests must be an array"
-                        continue
-                    new_cases = _clean_tests(additions, max_cases=max_cases, pass_number=iteration) if additions else []
-                    break
-            if answer is None:
-                raise SuiteError("The LLM did not return a test-generation response.")
-            if iteration == 1:
-                if not new_cases:
-                    raise SuiteError("The first RSI pass returned no valid test inputs after schema retries: " + str(last_schema_error))
-                suite = new_cases
-            else:
-                additions = answer.get("additional_tests", answer.get("tests", []))
-                if additions is None:
-                    additions = []
-                if not isinstance(additions, list):
-                    raise SuiteError(f"RSI pass {iteration} did not return an additional_tests array.")
-                new_cases = _clean_tests(additions, max_cases=max_cases, pass_number=iteration) if additions else []
-                seen = {item["input"] for item in suite}
-                for item in new_cases:
-                    if item["input"] not in seen and len(suite) < max_cases:
-                        suite.append(item)
-                        seen.add(item["input"])
-            summary = answer.get("review_summary", "")
-            issues = answer.get("issues_found", [])
-            history.append({
-                "pass": iteration,
-                "status": "completed",
-                "tests_added": len(new_cases),
-                "total_tests": len(suite),
-                "review_summary": summary[:500] if isinstance(summary, str) else "",
-                "issues_found": issues[:12] if isinstance(issues, list) else [],
-            })
-            prior_review_summary.append({
-                "pass": iteration,
-                "review_summary": summary[:500] if isinstance(summary, str) else "",
-                "issues_found": issues[:12] if isinstance(issues, list) else [],
-                "total_tests_after_pass": len(suite),
-            })
-        except (LLMError, SuiteError, ValueError, TypeError) as exc:
-            if iteration == 1:
-                raise SuiteError(f"RSI pass 1 could not create a valid test suite: {exc}") from exc
-            generation_warnings.append(f"RSI pass {iteration} failed; the last valid suite was retained: {exc}")
-            history.append({"pass": iteration, "status": "failed_retained_previous", "error": str(exc), "total_tests": len(suite)})
-    if not suite:
-        raise SuiteError("No valid test inputs were generated.")
-    return suite, history, {"warnings": generation_warnings, "inferred_contract": inferred_contract}
+            accepted_cases.append(case)
+    if not accepted_cases:
+        detail = "; ".join(item["reason"] for item in rejected_cases[:5])
+        raise SuiteError("The single test-generation response contained no valid test inputs after contract validation. " + detail)
+    issues = answer.get("issues_found", [])
+    history = [{
+        "pass": 1,
+        "status": "completed",
+        "mode": "single_pass",
+        "tests_added": len(accepted_cases),
+        "rejected_tests": len(rejected_cases),
+        "total_tests": len(accepted_cases),
+        "review_summary": answer.get("review_summary", "")[:500] if isinstance(answer.get("review_summary"), str) else "",
+        "issues_found": issues[:12] if isinstance(issues, list) else [],
+    }]
+    return accepted_cases, history, {
+        "warnings": [f"Rejected candidate {item['id']}: {item['reason']}" for item in rejected_cases],
+        "inferred_contract": inferred_contract,
+        "rejected_generated_cases": rejected_cases,
+    }
 
 
 def _reference_source(llm: LLMClient, rules: dict[str, Any]) -> tuple[str, str]:
@@ -447,7 +453,7 @@ def prepare_suite(rules: dict[str, Any], sandbox: DockerSandbox, llm: LLMClient,
 
     reference_source, reference_origin = "", "instructor_expected_outputs"
     oracle_verified = False
-    rejected_generated: list[dict[str, Any]] = []
+    rejected_generated: list[dict[str, Any]] = list(generation_meta.get("rejected_generated_cases", []))
     if generated:
         try:
             oracle_rules = dict(rules)
@@ -474,7 +480,8 @@ def prepare_suite(rules: dict[str, Any], sandbox: DockerSandbox, llm: LLMClient,
                 except LLMError as exc:
                     raise SuiteError(f"Reference repair request failed after compile error: {exc}") from exc
                 _compile_reference(sandbox, reference_source, rules)
-            cases, oracle_verified, rejected_generated = _materialize_cases(sandbox, generated, instructor_cases, rules)
+            cases, oracle_verified, oracle_rejected = _materialize_cases(sandbox, generated, instructor_cases, rules)
+            rejected_generated.extend(oracle_rejected)
         except SuiteError as exc:
             if not instructor_cases:
                 raise
