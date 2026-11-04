@@ -425,7 +425,7 @@ def test_prepare_suite_uses_instructor_cases_as_hints_for_all_metrics(tmp_path):
         calls.append(stage)
         payload = json.loads(messages[1]["content"])
         if stage == "assignment_test_generation_single_pass":
-            assert len(payload["instructor_examples_as_hints"]) == 4
+            assert len(payload["instructor_examples_as_hints"]) == 3
             assert payload["instructor_examples_as_hints"][0]["expected_output"] == "3\n"
             return {
                 "spec_summary": "Read two integers and print their sum.",
@@ -437,7 +437,7 @@ def test_prepare_suite_uses_instructor_cases_as_hints_for_all_metrics(tmp_path):
                 ],
             }
         assert stage == "assignment_expected_output_verification_single_pass"
-        assert len(payload["instructor_examples_as_format_and_behavior_hints"]) == 4
+        assert len(payload["instructor_examples_as_format_and_behavior_hints"]) == 3
         return verifier_response(payload["test_inputs_to_solve"])
 
     result = prepare_assignment_test_suite(
