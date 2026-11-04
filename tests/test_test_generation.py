@@ -454,11 +454,11 @@ def test_prepare_suite_uses_instructor_cases_as_hints_for_all_metrics(tmp_path):
     ]
     correctness_path = Path(result["metric_testset_paths"]["correctness"])
     correctness_cases = json.loads(correctness_path.read_text(encoding="utf-8"))
-    assert result["instructor_test_count"] == 4
+    assert result["instructor_test_count"] == 3  # teacher, edge, and memory inputs are deduplicated
     assert result["generated_test_count"] == 2
-    assert result["total_test_count"] == 6
-    assert len(correctness_cases) == 6
-    assert sum(case["origin"] == "instructor" for case in correctness_cases) == 4
+    assert result["total_test_count"] == 5
+    assert len(correctness_cases) == 5
+    assert sum(case["origin"] == "instructor" for case in correctness_cases) == 3
     assert sum(case["origin"] == "llm_generated_independently_verified" for case in correctness_cases) == 2
     assert rules["metrics"][0]["params"]["resolved_testset_path"] == str(correctness_path)
 
