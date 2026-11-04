@@ -12,8 +12,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from grading_agent.testing.test_generation import (
-    TestGenerationError, assignment_fingerprint, generate_assignment_test_spec,
-    materialize_test_cases, write_frozen_suite, load_frozen_suite,
+    TestGenerationError,
+    assignment_fingerprint,
+    generate_assignment_test_spec,
+    analyze_submission_for_test_generation,
+    materialize_test_cases,
+    write_frozen_suite,
+    load_frozen_suite,
 )
 
 
@@ -28,18 +33,27 @@ def sample_response():
             "semantics": ["Compute the mathematical sum of the two input integers."],
             "formatting": ["One integer result per output line."],
         },
-        "reference_solution_c": "#include <stdio.h>\nint main(void){long long a,b;if(scanf(\"%lld%lld\",&a,&b)!=2)return 1;printf(\"%lld\\n\",a+b);return 0;}\n",
         "test_inputs": [
-            {"id": "basic", "input": "2 3\n", "tags": ["normal"], "rationale": "Ordinary positive operands."},
-            {"id": "negative", "input": "-4 7\n", "tags": ["negative"], "rationale": "Mixed-sign operands."},
+            {"id": "basic", "input": "2 3\n", "expected_output": "5\n", "tags": ["normal"]},
+            {"id": "negative", "input": "-4 7\n", "expected_output": "3\n", "tags": ["negative", "edge"]},
         ],
-        "coverage_claims": ["normal", "mixed_sign"],
     }
 
 
-def test_submission_understanding_stage_reads_source_before_test_design():
-    from grading_agent.testing.test_generation import analyze_submission_for_test_generation
+def verifier_response(cases):
+    verifications = []
+    for case in cases:
+        values = [int(token) for token in case["input"].split()]
+        verifications.append({
+            "id": case["id"],
+            "input_is_valid": True,
+            "expected_output": f"{sum(values)}\n",
+            "reason": "",
+        })
+    return {"verifications": verifications}
 
+
+def test_submission_understanding_stage_reads_source_before_test_design():
     source = '#include <stdio.h>\nint main(void) { int n; scanf("%d", &n); printf("%d\\n", n); }\n'
     calls = []
 
@@ -73,138 +87,125 @@ def test_submission_understanding_stage_reads_source_before_test_design():
     assert analysis["likely_weak_points"] == ["Malformed input is not rejected."]
 
 
-def test_generation_uses_one_pass_and_does_not_recheck_prior_response():
+def test_generation_proposes_pairs_then_second_llm_independently_verifies_them():
     calls = []
-    def request(messages, schema, stage):
-        calls.append((messages, schema, stage))
-        return sample_response()
-    spec, history = generate_assignment_test_spec(
-        problem="Read two integers and print their sum.", problem_contract={"sum_type": "int64"},
-        request_json=request, max_cases=2,
-    )
-    assert len(calls) == 1
-    assert [x["pass"] for x in history] == [1]
-    assert spec["generation_response_count"] == 1
-    assert len(spec["test_inputs"]) == 2
-
-
-
-def test_missing_model_reference_uses_one_reference_only_recovery_request():
-    initial = sample_response()
-    initial.pop("reference_solution_c")
-    reference = (
-        '#include <stdio.h>\n'
-        'int main(void) { long long a, b; '
-        'if (scanf("%lld%lld", &a, &b) != 2) return 1; '
-        'printf("%lld\\n", a + b); return 0; }\n'
-    )
-    calls = []
+    teacher = {"id": "teacher-example", "input": "1 2\n", "expected": "3\n"}
+    response = sample_response()
 
     def request(messages, schema, stage):
+        payload = json.loads(messages[1]["content"])
         calls.append(stage)
         if stage == "assignment_test_generation_single_pass":
-            assert "reference_solution_c" in schema["properties"]
-            return initial
-        assert stage == "assignment_reference_solution_recovery_single_pass"
-        assert set(schema["properties"]) == {"reference_solution_c"}
-        payload = json.loads(messages[1]["content"])
-        assert payload["assignment"] == "Read two integers and print their sum."
-        assert "submission_source" not in payload
+            assert "expected_output" in schema["properties"]["test_inputs"]["items"]["properties"]
+            assert payload["instructor_examples_as_hints"] == [{
+                "id": "teacher-example", "input": "1 2\n", "expected_output": "3\n"
+            }]
+            assert "Do not write, propose, or return C code" in messages[0]["content"]
+            return response
+        assert stage == "assignment_expected_output_verification_single_pass"
+        assert payload["instructor_examples_as_format_and_behavior_hints"][0]["expected_output"] == "3\n"
+        assert payload["test_inputs_to_solve"] == [
+            {"id": "basic", "input": "2 3\n"},
+            {"id": "negative", "input": "-4 7\n"},
+        ]
+        # The verifier must not see the first model's expected outputs or student code.
+        assert "expected_output" not in json.dumps(payload["test_inputs_to_solve"])
         assert "submitted_implementation_analysis" not in payload
-        return {"reference_solution_c": reference}
+        assert "submission_source" not in payload
+        return verifier_response(payload["test_inputs_to_solve"])
 
+    analysis = {
+        "implementation_summary": "Reads two integers and prints their sum.",
+        "likely_weak_points": ["May mishandle negative numbers."],
+    }
     spec, history = generate_assignment_test_spec(
         problem="Read two integers and print their sum.",
         problem_contract={"sum_type": "int64"},
         request_json=request,
         max_cases=2,
+        instructor_examples=[teacher],
+        submission_analysis=analysis,
     )
 
     assert calls == [
         "assignment_test_generation_single_pass",
-        "assignment_reference_solution_recovery_single_pass",
+        "assignment_expected_output_verification_single_pass",
     ]
-    assert spec["reference_solution_c"].strip() == reference.strip()
-    assert spec["reference_solution_source"] == "model_reference_recovery"
-    assert spec["reference_recovery_count"] == 1
-    assert history[0]["reference_recovery_used"] is True
-    assert len(spec["test_inputs"]) == 2
+    assert [case["expected_output"] for case in spec["test_inputs"]] == ["5\n", "3\n"]
+    assert spec["generation_mode"] == "generate_then_independently_verify"
+    assert spec["verification_summary"]["verified"] == 2
+    assert spec["verification_response_count"] == 1
+    assert history[0]["verification"]["method"] == "independent_second_llm_call"
 
 
-def test_trusted_reference_generation_uses_one_call_and_filters_invalid_candidates():
+def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
+    generated = sample_response()
+    generated["test_inputs"].append({
+        "id": "ambiguous", "input": "not-a-number\n",
+        "expected_output": "0\n", "tags": ["invalid"],
+    })
     calls = []
 
     def request(messages, schema, stage):
-        payload = json.loads(messages[1]["content"])
-        cases_schema = schema["properties"]["test_inputs"]
-        assert cases_schema["minItems"] == 1
-        assert cases_schema["maxItems"] == 5
-        assert stage == "assignment_test_generation_single_pass"
-        assert "submitted_implementation_analysis" in payload
         calls.append(stage)
+        if stage == "assignment_test_generation_single_pass":
+            return generated
+        payload = json.loads(messages[1]["content"])
         return {
-            "ambiguities": [],
-            "test_inputs": [
-                {"id": "case-a", "input": "10 1\n", "tags": ["generated"], "rationale": "Distinct input."},
-                {"id": "case-b", "input": "11 1\n", "tags": ["generated"], "rationale": "Another input."},
-                {"id": "case-c", "input": "11 1\n", "tags": ["duplicate"], "rationale": "Duplicate input."},
-                {"id": "case-d", "input": "1 2\n", "tags": ["duplicate"], "rationale": "Instructor duplicate."},
-                {"id": "case-e", "input": "   ", "tags": ["invalid"], "rationale": "Empty input."},
-            ],
+            "verifications": [
+                {"id": "basic", "input_is_valid": True, "expected_output": "5\n", "reason": ""},
+                {"id": "negative", "input_is_valid": True, "expected_output": "999\n", "reason": ""},
+                {"id": "ambiguous", "input_is_valid": False, "expected_output": "", "reason": "Input is not valid under the assignment."},
+            ]
         }
 
-    trusted_reference = "/* trusted test oracle source */"
-    analysis = {
-        "implementation_summary": "Scans two integers and adds them.",
-        "likely_weak_points": ["Unchecked input parsing."],
-    }
-    spec, history = generate_assignment_test_spec(
+    spec, _ = generate_assignment_test_spec(
         problem="Read two integers and print their sum.",
-        problem_contract={"sum_type": "int32"},
+        problem_contract={},
         request_json=request,
-        passes=4,
-        max_cases=5,
-        trusted_reference_solution=trusted_reference,
-        instructor_examples=[{"id": "teacher", "input": "1 2\n", "expected": "3\n"}],
-        submission_analysis=analysis,
+        max_cases=3,
     )
 
-    assert len(calls) == 1
-    assert len(spec["test_inputs"]) == 2
-    assert spec["generation_response_count"] == 1
-    assert len(spec["rejected_generated_cases"]) == 3
-    assert history[0]["mode"] == "single_pass"
-    assert history[0]["test_count"] == 2
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+    ]
+    assert [case["id"] for case in spec["test_inputs"]] == ["basic"]
+    reasons = {item["id"]: item["reason"] for item in spec["rejected_generated_cases"]}
+    assert "disagreed" in reasons["negative"]
+    assert "invalid or ambiguous" in reasons["ambiguous"]
 
 
-@pytest.mark.parametrize(
-    "response, expected_code",
-    [
-        ({"ambiguities": []}, "missing_generated_test_inputs"),
-        ({"ambiguities": [], "test_inputs": []}, "empty_generated_test_inputs"),
-    ],
-)
-def test_trusted_reference_generation_rejects_missing_or_empty_test_inputs(response, expected_code):
-    with pytest.raises(TestGenerationError) as error:
+def test_missing_verifier_result_fails_closed():
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            return sample_response()
+        return {"verifications": [
+            {"id": "basic", "input_is_valid": True, "expected_output": "5\n", "reason": ""}
+        ]}
+
+    with pytest.raises(TestGenerationError, match="omitted test negative"):
         generate_assignment_test_spec(
-            problem="Read a sequence of integers and print their average.",
-            problem_contract={"input_format": "N followed by N signed integers."},
-            request_json=lambda *_: response,
-            max_cases=6,
-            trusted_reference_solution="int main(void) { return 0; }",
+            problem="Read two integers and print their sum.",
+            problem_contract={},
+            request_json=request,
+            max_cases=2,
         )
-    assert error.value.code == expected_code
 
 
 def test_generation_fails_closed_on_ambiguous_contract():
     response = sample_response()
     response["ambiguities"] = ["The assignment does not define overflow behavior."]
+
+    def request(messages, schema, stage):
+        return response
+
     with pytest.raises(TestGenerationError, match="Unresolved assignment ambiguities"):
         generate_assignment_test_spec(
-            problem="Read two integers from input and print their arithmetic sum.", problem_contract={},
-            request_json=lambda *_: response,
+            problem="Read two integers from input and print their arithmetic sum.",
+            problem_contract={},
+            request_json=request,
         )
-
 
 
 def test_explicit_input_schema_filters_out_of_range_and_malformed_cases():
@@ -228,223 +229,161 @@ def test_explicit_input_schema_filters_out_of_range_and_malformed_cases():
 def test_generation_refuses_a_title_without_an_assignment_contract():
     with pytest.raises(TestGenerationError, match="only a title"):
         generate_assignment_test_spec(
-            problem="grading", problem_contract={}, request_json=lambda *_: sample_response(),
+            problem="grading",
+            problem_contract={},
+            request_json=lambda *_: sample_response(),
         )
 
 
-def test_instructor_cases_are_preserved_and_generated_outputs_use_oracle():
+def test_materialize_merges_instructor_hints_and_verified_pairs_without_running_c_code():
     spec = sample_response()
     merged = materialize_test_cases(
         spec,
-        instructor_cases=[{"id": "teacher-1", "input": "2 3\n", "expected": "5\n"}],
-        run_reference=lambda source, stdin: {"stdout": "3\n" if stdin.startswith("-4") else "5\n", "exit_code": 0, "timed_out": False},
+        instructor_cases=[{"id": "teacher-1", "input": "1 2\n", "expected": "3\n"}],
     )
-    assert len(merged) == 2  # duplicate generated input did not replace instructor case
+    assert len(merged) == 3
     assert merged[0]["origin"] == "instructor"
-    assert merged[1]["origin"] == "llm_generated_reference_oracle"
-    assert merged[1]["expected"] == "3\n"
+    assert merged[1]["origin"] == "llm_generated_independently_verified"
+    assert merged[1]["expected"] == "5\n"
+    assert merged[2]["expected"] == "3\n"
 
 
-def test_generated_oracle_must_agree_with_instructor_expected_output():
-    with pytest.raises(TestGenerationError, match="disagrees with instructor"):
+def test_generated_pair_cannot_disagree_with_an_instructor_example():
+    spec = {
+        "test_inputs": [
+            {"id": "case", "input": "1 2\n", "expected_output": "999\n", "tags": []}
+        ]
+    }
+    with pytest.raises(TestGenerationError, match="disagrees with an instructor example"):
         materialize_test_cases(
-            sample_response(),
-            instructor_cases=[{"id": "teacher", "input": "2 3\n", "expected": "6\n"}],
-            run_reference=lambda source, stdin: {"stdout": "5\n", "exit_code": 0, "timed_out": False},
+            spec,
+            instructor_cases=[{"id": "teacher", "input": "1 2\n", "expected": "3\n"}],
         )
 
 
-def test_reference_oracle_failure_is_not_treated_as_expected_output():
-    with pytest.raises(TestGenerationError, match="expected output is untrusted"):
+def test_conflicting_instructor_examples_are_rejected():
+    with pytest.raises(TestGenerationError, match="Instructor examples disagree"):
         materialize_test_cases(
-            sample_response(),
-            run_reference=lambda *_: {"stdout": "", "exit_code": 1, "timed_out": False},
+            {"test_inputs": []},
+            instructor_cases=[
+                {"id": "a", "input": "1 2\n", "expected": "3\n"},
+                {"id": "b", "input": "1 2\n", "expected": "4\n"},
+            ],
         )
 
 
 def test_assignment_fingerprint_and_frozen_suite_are_stable(tmp_path):
     fingerprint = assignment_fingerprint(
-        problem="Add two numbers", problem_contract={"type": "int"}, model_id="Qwen3.5-2B-Q4_K_M"
+        problem="Add two numbers",
+        problem_contract={"type": "int"},
+        model_id="Qwen-test",
     )
     cases = [{"id": "t1", "input": "1 2\n", "expected": "3\n"}]
     spec = sample_response()
-    path = write_frozen_suite(tmp_path, fingerprint=fingerprint, cases=cases, generated_spec=spec, model_id="Qwen3.5-2B-Q4_K_M")
+    spec["verification_summary"] = {"method": "independent_second_llm_call", "verified": 2}
+    path = write_frozen_suite(
+        tmp_path,
+        fingerprint=fingerprint,
+        cases=cases,
+        generated_spec=spec,
+        model_id="Qwen-test",
+        oracle_kind="two-pass-llm-verified-expected-outputs",
+    )
+    frozen = json.loads(path.read_text(encoding="utf-8"))
+    assert frozen["schema_version"] == 3
+    assert frozen["expected_output_verification"]["verified"] == 2
+    assert "reference_solution_c" not in frozen
     assert load_frozen_suite(path, fingerprint) == cases
     with pytest.raises(TestGenerationError, match="does not match"):
         load_frozen_suite(path, "different-fingerprint")
     with pytest.raises(TestGenerationError, match="differs"):
-        write_frozen_suite(tmp_path, fingerprint=fingerprint, cases=[], generated_spec=spec, model_id="Qwen3.5-2B-Q4_K_M")
+        write_frozen_suite(
+            tmp_path,
+            fingerprint=fingerprint,
+            cases=[],
+            generated_spec=spec,
+            model_id="Qwen-test",
+        )
 
 
-def test_prepare_suite_generates_once_then_reuses_frozen_artifact(tmp_path):
+def test_prepare_suite_uses_two_llm_output_calls_and_never_compiles_a_reference(tmp_path):
     from grading_agent.testing.test_generation import prepare_assignment_test_suite
 
-    class FakeSandbox:
-        def __init__(self):
-            self.source = ""
-        def write_file(self, filename, content):
-            self.source = content
-        def run(self, command, timeout_s, stdin=None):
-            if command[0] == "gcc":
-                return {"output": "", "exit_code": 0, "timed_out": False}
-            numbers = [int(value) for value in stdin.split()]
-            output = f"{sum(numbers)}\n"
-            return {"output": output, "exit_code": 0, "timed_out": False, "output_may_be_truncated": False}
+    class NoReferenceSandbox:
+        def write_file(self, *args, **kwargs):
+            raise AssertionError("test-suite generation must not write a generated C reference file")
+
+        def run(self, *args, **kwargs):
+            raise AssertionError("test-suite generation must not compile or execute a reference program")
+
+    source = '#include <stdio.h>\nint main(void) { int a, b; scanf("%d%d", &a, &b); printf("%d\\n", a + b); }\n'
+    analysis = {
+        "implementation_summary": "Reads two integers and prints their sum.",
+        "input_parsing_and_validation": ["Does not check scanf result."],
+        "control_flow_and_data_types": ["Adds two signed integers."],
+        "likely_weak_points": ["Potential integer overflow."],
+        "recommended_test_dimensions": ["Negative values and numeric limits."],
+    }
+    calls = []
+
+    def request(messages, schema, stage):
+        calls.append(stage)
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_submission_understanding_single_pass":
+            assert payload["submission_source"] == source
+            return analysis
+        if stage == "assignment_test_generation_single_pass":
+            assert payload["submitted_implementation_analysis"] == analysis
+            return sample_response()
+        assert stage == "assignment_expected_output_verification_single_pass"
+        assert "submission_source" not in payload
+        assert "submitted_implementation_analysis" not in payload
+        return verifier_response(payload["test_inputs_to_solve"])
 
     rules = {
         "problem": "Read two integers and print their sum.",
         "problem_contract": {"sum_type": "int64"},
         "project_root": str(tmp_path),
         "time_limit_s": 2,
-        "metrics": [
-            {"name": "correctness", "analyzer": "io_tests", "enabled": True, "params": {}},
-            {"name": "logical", "analyzer": "edge_case_runner", "enabled": True, "params": {}},
-            {"name": "memory_safety", "analyzer": "memory_safety", "enabled": True, "params": {}},
-        ],
-        "test_generation": {"enabled": True, "rsi_passes": 3, "seed": 42, "max_cases": 10},
-    }
-    response = sample_response()
-    calls = []
-    def request(messages, schema, stage):
-        calls.append(stage)
-        requested = schema["properties"]["test_inputs"]["maxItems"]
-        generated = dict(response)
-        generated["test_inputs"] = [
-            {
-                "id": f"sum-{index}",
-                "input": f"{index + 10} {index + 11}\n",
-                "tags": ["edge"] if index == 0 else ["normal"],
-                "rationale": "Unique pair of integers.",
-            }
-            for index in range(requested)
-        ]
-        return generated
-
-    sandbox = FakeSandbox()
-    first = prepare_assignment_test_suite(rules, sandbox=sandbox, request_json=request, project_root=tmp_path, model_id="qwen-test")
-    assert first["status"] == "completed"
-    assert first["source"] == "generated_and_frozen"
-    assert first["total_test_count"] == 10
-    assert first["edge_test_count"] == 1
-    assert len(calls) == 1
-    assert all(Path(v).is_file() for v in first["metric_testset_paths"].values())
-
-    second = prepare_assignment_test_suite(
-        rules, sandbox=sandbox,
-        request_json=lambda *_: (_ for _ in ()).throw(AssertionError("must reuse frozen suite")),
-        project_root=tmp_path, model_id="qwen-test",
-    )
-    assert second["source"] == "frozen_cache"
-    assert second["assignment_fingerprint"] == first["assignment_fingerprint"]
-    assert second["total_test_count"] == 10
-
-
-def test_prepare_suite_understands_submission_before_generating_additional_cases(tmp_path):
-    from grading_agent.testing.test_generation import prepare_assignment_test_suite
-
-    class FakeSandbox:
-        def write_file(self, filename, content):
-            self.source = content
-
-        def run(self, command, timeout_s, stdin=None):
-            if command[0] == "gcc":
-                return {"output": "", "exit_code": 0, "timed_out": False}
-            left, right = (int(value) for value in stdin.split())
-            return {
-                "output": f"{left + right}\n", "exit_code": 0,
-                "timed_out": False, "output_may_be_truncated": False,
-            }
-
-    source = '#include <stdio.h>\nint main(void) { int a, b; scanf("%d%d", &a, &b); printf("%d\\n", a + b); }\n'
-    reference = (
-        '#include <stdio.h>\n'
-        'int main(void) { int a, b; if (scanf("%d%d", &a, &b) != 2) return 1; '
-        'printf("%d\\n", a + b); return 0; }\n'
-    )
-    (tmp_path / "reference.c").write_text(reference, encoding="utf-8")
-    (tmp_path / "instructor.json").write_text(
-        json.dumps([{"id": "teacher", "input": "1 2\n", "expected": "3\n"}]),
-        encoding="utf-8",
-    )
-    rules = {
-        "problem": "Read two integers and print their sum.",
-        "problem_contract": {"input_format": "Two signed integers", "output_rule": "Their sum"},
-        "time_limit_s": 2,
         "metrics": [{
             "name": "correctness", "analyzer": "io_tests", "enabled": True,
-            "params": {"testset_path": "instructor.json", "resolved_testset_path": str(tmp_path / "instructor.json")},
+            "params": {},
         }],
-        "test_generation": {
-            "enabled": True, "rsi_passes": 1, "seed": 42,
-            "max_cases": 2, "reference_solution_path": "reference.c",
-        },
+        "test_generation": {"enabled": True, "seed": 42, "max_cases": 2},
     }
-    analysis = {
-        "implementation_summary": "The submission scans two integers and adds them using int.",
-        "input_parsing_and_validation": ["The scanf result is unchecked."],
-        "control_flow_and_data_types": ["Two signed int values are added."],
-        "likely_weak_points": ["Large values may overflow int."],
-        "recommended_test_dimensions": ["Large positive and negative operands."],
-    }
-    stages = []
-    generation_batch = 0
-
-    def request(messages, schema, stage):
-        nonlocal generation_batch
-        stages.append(stage)
-        payload = json.loads(messages[1]["content"])
-        if stage.startswith("assignment_submission_understanding"):
-            assert payload["submission_source"] == source
-            assert "test_inputs" not in schema["properties"]
-            return analysis
-        assert "submitted_implementation_analysis" in payload
-        assert payload["submitted_implementation_analysis"] == analysis
-        generation_batch += 1
-        requested = schema["properties"]["test_inputs"]["maxItems"]
-        return {
-            "test_inputs": [
-                {
-                    "id": f"generated-{index}",
-                    "input": f"{20 + (generation_batch - 1) * 4 + index} {1 + index}\n",
-                    "tags": ["boundary"],
-                    "rationale": "Additional large-value case.",
-                }
-                for index in range(requested)
-            ]
-        }
-
     result = prepare_assignment_test_suite(
-        rules, sandbox=FakeSandbox(), request_json=request, project_root=tmp_path,
-        model_id="qwen-test", submission_source=source,
+        rules,
+        sandbox=NoReferenceSandbox(),
+        request_json=request,
+        project_root=tmp_path,
+        model_id="qwen-test",
+        submission_source=source,
     )
 
+    assert calls == [
+        "assignment_submission_understanding_single_pass",
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+    ]
     assert result["status"] == "completed"
-    assert stages[0] == "assignment_submission_understanding_single_pass"
-    assert stages[1:] == ["assignment_test_generation_single_pass"]
-    assert result["submission_analysis"] == analysis
     assert result["generated_test_count"] == 2
-    assert result["instructor_test_count"] == 1
+    assert result["expected_output_verification"]["verified"] == 2
     frozen = json.loads(Path(result["suite_path"]).read_text(encoding="utf-8"))
-    assert frozen["submission_analysis"] == analysis
+    assert frozen["schema_version"] == 3
+    assert "reference_solution_c" not in frozen
+    all_cases = json.loads(Path(result["all_testset_path"]).read_text(encoding="utf-8"))
+    assert [case["expected"] for case in all_cases] == ["5\n", "3\n"]
 
 
-def test_prepare_suite_binds_all_instructor_and_generated_cases_to_correctness(tmp_path):
+def test_prepare_suite_uses_instructor_cases_as_hints_for_all_metrics(tmp_path):
     from grading_agent.testing.test_generation import prepare_assignment_test_suite
 
-    class FakeSandbox:
-        def write_file(self, filename, content):
-            self.source = content
+    class NoReferenceSandbox:
+        def write_file(self, *args, **kwargs):
+            raise AssertionError("no C reference should be written")
 
-        def run(self, command, timeout_s, stdin=None):
-            if command[0] == "gcc":
-                return {"output": "", "exit_code": 0, "timed_out": False}
-            numbers = [int(value) for value in stdin.split()]
-            return {
-                "output": f"{sum(numbers)}\n",
-                "exit_code": 0,
-                "timed_out": False,
-                "output_may_be_truncated": False,
-            }
+        def run(self, *args, **kwargs):
+            raise AssertionError("no C reference should be compiled or executed")
 
     teacher_cases = [
         {"id": "teacher-a", "input": "1 2\n", "expected": "3\n"},
@@ -454,30 +393,20 @@ def test_prepare_suite_binds_all_instructor_and_generated_cases_to_correctness(t
         {"id": "edge-a", "input": "1 2\n", "expected": "3\n"},
         {"id": "edge-b", "input": "-3 8\n", "expected": "5\n"},
     ]
-    memory_cases = [
-        {"id": "memory-a", "input": "3 4\n", "expected": "7\n"},
-    ]
+    memory_cases = [{"id": "memory-a", "input": "3 4\n", "expected": "7\n"}]
     for filename, cases in (
         ("correctness.json", teacher_cases),
         ("edge.json", edge_cases),
         ("memory.json", memory_cases),
     ):
         (tmp_path / filename).write_text(json.dumps(cases), encoding="utf-8")
-    reference_path = tmp_path / "reference.c"
-    reference_path.write_text(
-        '#include <stdio.h>\n'
-        'int main(void) { int a, b; if (scanf("%d%d", &a, &b) != 2) return 1; '
-        'printf("%d\\n", a + b); return 0; }\n',
-        encoding="utf-8",
-    )
 
     rules = {
         "problem": "Read two integers and print their sum.",
         "problem_contract": {"sum_type": "int32"},
         "project_root": str(tmp_path),
-        "time_limit_s": 2,
         "metrics": [
-            {"name": "correctness", "analyzer": "io_tests", "enabled": True, "weight": 1.0,
+            {"name": "correctness", "analyzer": "io_tests", "enabled": True,
              "params": {"testset_path": "correctness.json", "resolved_testset_path": str(tmp_path / "correctness.json")}},
             {"name": "logical", "analyzer": "edge_case_runner", "enabled": True,
              "params": {"testset_path": "edge.json", "resolved_testset_path": str(tmp_path / "edge.json")}},
@@ -485,109 +414,102 @@ def test_prepare_suite_binds_all_instructor_and_generated_cases_to_correctness(t
              "params": {"testset_path": "memory.json", "resolved_testset_path": str(tmp_path / "memory.json")}},
         ],
         "test_generation": {
-            "enabled": True,
-            "rsi_passes": 3,
-            "seed": 42,
-            "max_cases": 5,
-            "reference_solution_path": "reference.c",
+            "enabled": True, "seed": 42, "max_cases": 2,
+            # A legacy key must not cause the generator to load or compile C.
+            "reference_solution_path": "this-file-is-intentionally-absent.c",
         },
     }
-
-    request_number = 0
+    calls = []
 
     def request(messages, schema, stage):
-        nonlocal request_number
-        request_number += 1
-        requested = schema["properties"]["test_inputs"]["maxItems"]
-        return {
-            "test_inputs": [
-                {
-                    "id": f"generated-{request_number}-{index}",
-                    "input": f"{request_number * 10 + index} 1\n",
-                    "tags": ["edge"] if index == 0 else ["normal"],
-                    "rationale": "Additional valid input.",
-                }
-                for index in range(requested)
-            ]
-        }
+        calls.append(stage)
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_test_generation_single_pass":
+            assert len(payload["instructor_examples_as_hints"]) == 4
+            assert payload["instructor_examples_as_hints"][0]["expected_output"] == "3\n"
+            return {
+                "spec_summary": "Read two integers and print their sum.",
+                "ambiguities": [],
+                "inferred_contract": sample_response()["inferred_contract"],
+                "test_inputs": [
+                    {"id": "generated-edge", "input": "10 1\n", "expected_output": "11\n", "tags": ["edge", "boundary"]},
+                    {"id": "generated-normal", "input": "20 2\n", "expected_output": "22\n", "tags": ["normal"]},
+                ],
+            }
+        assert stage == "assignment_expected_output_verification_single_pass"
+        assert len(payload["instructor_examples_as_format_and_behavior_hints"]) == 4
+        return verifier_response(payload["test_inputs_to_solve"])
 
     result = prepare_assignment_test_suite(
         rules,
-        sandbox=FakeSandbox(),
+        sandbox=NoReferenceSandbox(),
         request_json=request,
         project_root=tmp_path,
         model_id="qwen-test",
     )
 
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+    ]
     correctness_path = Path(result["metric_testset_paths"]["correctness"])
     correctness_cases = json.loads(correctness_path.read_text(encoding="utf-8"))
-    assert result["status"] == "completed"
-    assert result["instructor_test_count"] == 3  # one duplicate input is merged
-    assert result["generated_test_count"] == 5
-    assert result["total_test_count"] == 8
-    assert len(correctness_cases) == 8
-    assert sum(case["origin"] == "instructor" for case in correctness_cases) == 3
-    assert sum(case["origin"] == "llm_generated_reference_oracle" for case in correctness_cases) == 5
+    assert result["instructor_test_count"] == 4
+    assert result["generated_test_count"] == 2
+    assert result["total_test_count"] == 6
+    assert len(correctness_cases) == 6
+    assert sum(case["origin"] == "instructor" for case in correctness_cases) == 4
+    assert sum(case["origin"] == "llm_generated_independently_verified" for case in correctness_cases) == 2
     assert rules["metrics"][0]["params"]["resolved_testset_path"] == str(correctness_path)
-
-    # Exercise the real correctness analyzer through its registry binding:
-    # it must execute the combined instructor + generated JSON, not just
-    # the original correctness.json file.
-    from grading_agent.analyzers.registry import run_analyzer
-
-    correctness_result = run_analyzer(
-        "io_tests",
-        sandbox=FakeSandbox(),
-        metric=rules["metrics"][0],
-        rules=rules,
-        source_code="int main(void) { return 0; }",
-        source_filename="submission.c",
-    )
-    assert correctness_result["tests_total"] == 8
-    assert correctness_result["tests_passed"] == 8
 
 
 def test_prepare_suite_fails_if_required_logical_cases_are_not_generated(tmp_path):
     from grading_agent.testing.test_generation import prepare_assignment_test_suite
 
-    class FakeSandbox:
-        def write_file(self, filename, content): pass
-        def run(self, command, timeout_s, stdin=None):
-            if command[0] == "gcc":
-                return {"output": "", "exit_code": 0, "timed_out": False}
-            return {"output": "5\n", "exit_code": 0, "timed_out": False, "output_may_be_truncated": False}
+    class NoReferenceSandbox:
+        def write_file(self, *args, **kwargs):
+            raise AssertionError("must not write reference code")
 
-    response = sample_response()
+        def run(self, *args, **kwargs):
+            raise AssertionError("must not run reference code")
+
     rules = {
-        "problem": "Read two integers and print their sum.", "problem_contract": {},
-        "project_root": str(tmp_path), "time_limit_s": 2,
+        "problem": "Read two integers and print their sum.",
+        "problem_contract": {},
+        "project_root": str(tmp_path),
         "metrics": [{"name": "logical", "analyzer": "edge_case_runner", "enabled": True, "params": {}}],
-        "test_generation": {"enabled": True, "rsi_passes": 3, "max_cases": 10},
+        "test_generation": {"enabled": True, "seed": 42, "max_cases": 2},
     }
-    with pytest.raises(TestGenerationError, match="no identifiable edge/boundary"):
-        def request(messages, schema, stage):
-            requested = schema["properties"]["test_inputs"]["maxItems"]
-            generated = dict(response)
-            generated["test_inputs"] = [
-                {"id": f"normal-{index}", "input": f"{index + 1} {index + 2}\n",
-                 "tags": ["normal"], "rationale": "Normal pair."}
-                for index in range(requested)
-            ]
-            return generated
 
-        prepare_assignment_test_suite(rules, sandbox=FakeSandbox(), request_json=request, project_root=tmp_path, model_id="qwen-test")
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            response = sample_response()
+            response["test_inputs"] = [
+                {"id": "normal-a", "input": "1 2\n", "expected_output": "3\n", "tags": ["normal"]},
+                {"id": "normal-b", "input": "3 4\n", "expected_output": "7\n", "tags": ["normal"]},
+            ]
+            return response
+        payload = json.loads(messages[1]["content"])
+        return verifier_response(payload["test_inputs_to_solve"])
+
+    with pytest.raises(TestGenerationError, match="no identifiable edge/boundary"):
+        prepare_assignment_test_suite(
+            rules,
+            sandbox=NoReferenceSandbox(),
+            request_json=request,
+            project_root=tmp_path,
+            model_id="qwen-test",
+        )
 
 
 def test_fingerprint_changes_when_generation_configuration_changes():
     base = assignment_fingerprint(
         problem="Sort integers.", problem_contract={"max_n": 100},
-        model_id="Qwen3.5-2B-Q4_K_M", generation_seed=42,
-        rsi_passes=3, max_cases=60, temperature=0.0,
+        model_id="Qwen-test", generation_seed=42, rsi_passes=3, max_cases=60, temperature=0.0,
     )
     changed = assignment_fingerprint(
         problem="Sort integers.", problem_contract={"max_n": 100},
-        model_id="Qwen3.5-2B-Q4_K_M", generation_seed=42,
-        rsi_passes=2, max_cases=60, temperature=0.0,
+        model_id="Qwen-test", generation_seed=42, rsi_passes=2, max_cases=60, temperature=0.0,
     )
     assert base != changed
 
@@ -596,13 +518,22 @@ def test_strict_mode_refuses_to_regenerate_a_missing_frozen_suite(tmp_path):
     from grading_agent.testing.test_generation import prepare_assignment_test_suite
 
     rules = {
-        "problem": "Read an integer and print it.", "problem_contract": {},
-        "project_root": str(tmp_path), "time_limit_s": 2,
+        "problem": "Read an integer and print it.",
+        "problem_contract": {},
+        "project_root": str(tmp_path),
         "metrics": [{"name": "correctness", "analyzer": "io_tests", "enabled": True, "params": {}}],
-        "test_generation": {"enabled": True, "require_frozen_suite": True, "rsi_passes": 3, "seed": 42, "temperature": 0.0},
+        "test_generation": {
+            "enabled": True, "require_frozen_suite": True,
+            "seed": 42, "temperature": 0.0,
+        },
     }
     with pytest.raises(TestGenerationError, match="requires the pre-generated assignment suite"):
         prepare_assignment_test_suite(
-            rules, sandbox=object(), request_json=lambda *_: pytest.fail("must not regenerate"),
-            project_root=tmp_path, model_id="qwen-test", generation_seed=42, temperature=0.0,
+            rules,
+            sandbox=object(),
+            request_json=lambda *_: pytest.fail("must not regenerate"),
+            project_root=tmp_path,
+            model_id="qwen-test",
+            generation_seed=42,
+            temperature=0.0,
         )
