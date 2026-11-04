@@ -81,23 +81,14 @@ def _validate_candidate(
     allow_ambiguities: bool = False,
     fallback_summary: str = "",
     fallback_contract: dict[str, Any] | None = None,
-    fallback_reference_solution: str = "",
-    allow_missing_reference_solution: bool = False,
 ) -> dict[str, Any]:
+    """Validate generated input/output pairs before independent verification."""
     if not isinstance(value, dict):
         raise TestGenerationError("invalid_response", f"Generation response {pass_number} did not return an object.")
     summary = value.get("spec_summary", value.get("summary"))
     ambiguity = value.get("ambiguities", value.get("unresolved_ambiguities", []))
-    reference = value.get("reference_solution_c", value.get("reference_solution"))
     cases = value.get("test_inputs", value.get("test_cases", value.get("tests")))
-    reference_source = "model"
-    if fallback_reference_solution.strip():
-        reference = fallback_reference_solution
-        reference_source = "trusted_instructor_reference"
     if not isinstance(summary, str) or not summary.strip():
-        # The assignment text is instructor-authored and already passed the
-        # actionable-contract check. Reuse it verbatim rather than discarding
-        # otherwise valid tests because the model omitted optional prose.
         summary = fallback_summary.strip()
         if not summary:
             raise TestGenerationError("missing_spec", f"Generation response {pass_number} omitted the formal task summary.")
@@ -105,6 +96,7 @@ def _validate_candidate(
         raise TestGenerationError("invalid_ambiguities", f"Generation response {pass_number} returned malformed ambiguity details.")
     if ambiguity and not allow_ambiguities:
         raise TestGenerationError("ambiguous_assignment", "Unresolved assignment ambiguities: " + "; ".join(ambiguity[:5]))
+
     inferred = value.get("inferred_contract", value.get("io_contract"))
     fallback_contract = fallback_contract if isinstance(fallback_contract, dict) else {}
     contract_source = "model"
@@ -135,60 +127,48 @@ def _validate_candidate(
             contract_source = "assignment_and_instructor_contract"
             if not inferred["semantics"]:
                 raise TestGenerationError("invalid_inferred_contract", f"Generation response {pass_number} must identify at least one task semantic.")
-    reference_missing = not isinstance(reference, str) or not reference.strip()
-    reference_too_large = isinstance(reference, str) and len(reference) > MAX_REFERENCE_SOURCE_CHARS
-    if reference_missing or reference_too_large:
-        if allow_missing_reference_solution:
-            # Validate the response structure first. A separate, narrowly
-            # scoped request will provide only the independent reference code.
-            reference = ""
-            reference_source = "model_reference_pending"
-        else:
-            reason = "omitted" if reference_missing else "exceeded the configured size limit"
-            raise TestGenerationError(
-                "missing_reference",
-                f"Generation response {pass_number} {reason} a bounded C reference solution.",
-            )
-    if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
-        raise TestGenerationError("invalid_test_count", f"Generation response {pass_number} must return 1..{MAX_GENERATED_CASES} test inputs.")
 
+    if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
+        raise TestGenerationError("invalid_test_count", f"Generation response {pass_number} must return 1..{MAX_GENERATED_CASES} input/output pairs.")
     cleaned, seen_ids, seen_inputs = [], set(), set()
     for index, item in enumerate(cases, 1):
-        if isinstance(item, str):
-            item = {"input": item}
         if not isinstance(item, dict):
-            raise TestGenerationError("invalid_test", f"Generated test {index} must contain an input string.")
+            raise TestGenerationError("invalid_test", f"Generated test {index} must contain input and expected_output strings.")
         case_id = item.get("id")
         if not isinstance(case_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", case_id):
             case_id = f"generated-{index}"
         if case_id in seen_ids:
             raise TestGenerationError("duplicate_test_id", f"Duplicate generated test ID: {case_id}.")
         test_input = item.get("input", item.get("stdin"))
-        if not isinstance(test_input, str) or len(test_input) > MAX_INPUT_CHARS:
+        expected_output = item.get("expected_output", item.get("expected"))
+        if not isinstance(test_input, str) or not test_input.strip() or len(test_input) > MAX_INPUT_CHARS:
             raise TestGenerationError("invalid_test_input", f"Generated test {case_id} has invalid input.")
+        if not isinstance(expected_output, str) or len(expected_output) > MAX_INPUT_CHARS:
+            raise TestGenerationError("invalid_expected_output", f"Generated test {case_id} must include a bounded expected_output string.")
         tags = item.get("tags", [])
         if not isinstance(tags, list) or not all(isinstance(x, str) for x in tags):
             tags = []
-        if not tags:
-            tags = ["generated"]
+        tags = sorted(set(tag.strip()[:24] for tag in tags if tag.strip()))[:3] or ["generated"]
         rationale = item.get("rationale", item.get("description", ""))
-        if not isinstance(rationale, str) or not rationale.strip():
-            rationale = "Generated input; expected output is computed by the configured reference oracle."
+        if not isinstance(rationale, str):
+            rationale = ""
         seen_ids.add(case_id)
         if test_input in seen_inputs:
             continue
         seen_inputs.add(test_input)
-        cleaned.append({"id": case_id, "input": test_input, "tags": sorted(set(tags)), "description": rationale.strip()[:240]})
+        cleaned.append({
+            "id": case_id,
+            "input": test_input,
+            "expected_output": expected_output,
+            "tags": tags,
+            "description": rationale.strip()[:240],
+        })
     if not cleaned:
         raise TestGenerationError("empty_after_deduplication", "All generated inputs were duplicates.")
-    claims = value.get("coverage_claims", [])
-    if not isinstance(claims, list) or not all(isinstance(x, str) for x in claims):
-        claims = []
     return {
         "spec_summary": summary.strip()[:2_000],
         "spec_summary_source": "assignment_statement" if value.get("spec_summary") != summary else "model",
         "inferred_contract_source": contract_source,
-        "reference_solution_source": reference_source,
         "ambiguities": [item.strip()[:500] for item in ambiguity if item.strip()][:10],
         "inferred_contract": {
             "input_format": inferred["input_format"].strip()[:1_000],
@@ -197,10 +177,8 @@ def _validate_candidate(
             "semantics": [item.strip()[:400] for item in inferred["semantics"][:25]],
             "formatting": [item.strip()[:400] for item in inferred["formatting"][:25]],
         },
-        "reference_solution_c": reference, "test_inputs": cleaned,
-        "coverage_claims": claims[:30],
+        "test_inputs": cleaned,
     }
-
 
 def _assignment_statement_is_actionable(problem: str, problem_contract: dict[str, Any]) -> bool:
     """Do not let the model invent a task from a title or from student source."""
@@ -335,31 +313,48 @@ def analyze_submission_for_test_generation(
     }
 
 
-def _recover_reference_solution(
+def _outputs_match(generated: str, verified: str) -> bool:
+    """Use the same whitespace rule as the correctness analyzer."""
+    normalize = lambda value: value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return normalize(generated) == normalize(verified)
+
+
+def _verify_expected_outputs(
     *,
     problem: str,
     problem_contract: dict[str, Any],
     inferred_contract: dict[str, Any],
+    candidate_cases: list[dict[str, Any]],
     instructor_examples: list[dict[str, Any]] | None,
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
-) -> str:
-    """Request only the independent C oracle when the testcase response omitted it."""
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any]]:
+    """Independently solve generated inputs without showing the verifier proposed outputs or student code."""
     schema = {
         "type": "object",
         "properties": {
-            "reference_solution_c": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": MAX_REFERENCE_SOURCE_CHARS,
+            "verifications": {
+                "type": "array",
+                "minItems": len(candidate_cases),
+                "maxItems": len(candidate_cases),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "input_is_valid": {"type": "boolean"},
+                        "expected_output": {"type": "string"},
+                        "reason": {"type": "string", "maxLength": 240},
+                    },
+                    "required": ["id", "input_is_valid", "expected_output", "reason"],
+                },
             },
         },
-        "required": ["reference_solution_c"],
+        "required": ["verifications"],
     }
     examples = [
         {
             "id": str(case.get("id", f"instructor-{index}")),
             "input": case["input"],
-            "expected": case["expected"],
+            "expected_output": case["expected"],
         }
         for index, case in enumerate(instructor_examples or [], 1)
         if isinstance(case, dict)
@@ -370,65 +365,96 @@ def _recover_reference_solution(
         "assignment": problem,
         "problem_contract": problem_contract,
         "inferred_contract": inferred_contract,
-        "authoritative_instructor_examples": examples,
+        "instructor_examples_as_format_and_behavior_hints": examples,
+        "test_inputs_to_solve": [
+            {"id": str(case["id"]), "input": case["input"]}
+            for case in candidate_cases
+        ],
         "instruction": (
-            "Return one complete, self-contained C11 reference solution as reference_solution_c. "
-            "Implement the assignment contract exactly, including its input parsing, output formatting, "
-            "numeric semantics, and stated constraints. The assignment and instructor contract are "
-            "authoritative; use inferred_contract only as a faithful restatement. Instructor examples "
-            "are consistency checks, not permission to change the specification. Do not use or imitate "
-            "any student implementation. Do not include test cases, explanations, markdown fences, or "
-            "expected outputs. Return only the required JSON object."
+            "Independently solve every supplied test input using only the assignment and problem_contract. "
+            "The instructor examples are hints for input conventions, output formatting, and known examples; "
+            "they are not an exhaustive list of requirements. Do not infer answers from student code "
+            "or from any prior model output. For every id, state whether the input is valid and unambiguous "
+            "under the assignment, and provide the exact expected stdout for a correct solution, including "
+            "required spaces and line breaks. If the specification does not determine a unique answer, "
+            "set input_is_valid=false and explain briefly. Return exactly one verification for every id."
         ),
     }
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are producing an independent reference oracle for a C programming assignment. "
-                "Write portable C11 source code that compiles as a standalone program when the assignment "
-                "requires stdin/stdout, or follows the exact required interface when it specifies one. "
-                "The reference must implement the instructor's specification, not a student's approach. "
-                "Return JSON only and include the entire source file in reference_solution_c."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(payload, sort_keys=True, ensure_ascii=False),
-        },
-    ]
-    try:
-        result = request_json(
-            messages,
-            schema,
-            "assignment_reference_solution_recovery_single_pass",
-        )
-    except Exception as exc:
+    result = request_json(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are an independent expected-output verifier for programming tests. "
+                    "You are not reviewing or executing the student's code. Derive each answer from "
+                    "the assignment specification yourself, using instructor examples only to understand "
+                    "the intended conventions. Return JSON only."
+                ),
+            },
+            {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
+        ],
+        schema,
+        "assignment_expected_output_verification_single_pass",
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("verifications"), list):
         raise TestGenerationError(
-            "reference_recovery_failed",
-            f"The focused reference-solution request failed: {exc}",
-        ) from exc
+            "expected_output_verification_failed",
+            "The independent verifier did not return the required verifications array. No generated outputs were accepted.",
+        )
+    checks: dict[str, dict[str, Any]] = {}
+    for item in result["verifications"]:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                "The independent verifier returned a malformed verification item. No generated outputs were accepted.",
+            )
+        case_id = item["id"]
+        if case_id in checks:
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"The independent verifier returned duplicate results for test {case_id}.",
+            )
+        checks[case_id] = item
 
-    if not isinstance(result, dict):
-        raise TestGenerationError(
-            "reference_recovery_failed",
-            "The focused reference-solution request did not return a JSON object.",
-        )
-    reference = result.get("reference_solution_c", result.get("reference_solution"))
-    if (
-        not isinstance(reference, str)
-        or not reference.strip()
-        or len(reference) > MAX_REFERENCE_SOURCE_CHARS
-    ):
-        returned_fields = sorted(str(key) for key in result)
-        raise TestGenerationError(
-            "reference_recovery_failed",
-            "The test-generation response omitted its C reference solution and the focused "
-            "reference-only request did not return a bounded reference_solution_c "
-            f"(returned fields: {returned_fields[:8]}). Configure "
-            "test_generation.reference_solution_path with an instructor oracle for this assignment.",
-        )
-    return reference.strip()
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    for case in candidate_cases:
+        case_id = str(case["id"])
+        check = checks.get(case_id)
+        if check is None:
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"The independent verifier omitted test {case_id}. No generated outputs were accepted.",
+            )
+        if check.get("input_is_valid") is not True:
+            reason = check.get("reason")
+            rejected.append({
+                "id": case_id,
+                "reason": ("independent verifier found an invalid or ambiguous input: " + str(reason))[:300],
+            })
+            continue
+        verified_output = check.get("expected_output")
+        if not isinstance(verified_output, str) or len(verified_output) > MAX_INPUT_CHARS:
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"The independent verifier returned an invalid expected_output for test {case_id}.",
+            )
+        if not _outputs_match(case["expected_output"], verified_output):
+            rejected.append({
+                "id": case_id,
+                "reason": "generated expected_output disagreed with the independent verifier",
+            })
+            continue
+        accepted.append({**case, "expected_output": verified_output})
+
+    summary = {
+        "method": "independent_second_llm_call",
+        "requested": len(candidate_cases),
+        "verified": len(accepted),
+        "rejected": len(rejected),
+        "comparison": "trimmed exact text with normalized line endings",
+    }
+    return accepted, rejected, summary
 
 
 def generate_assignment_test_spec(
@@ -440,12 +466,10 @@ def generate_assignment_test_spec(
     trusted_reference_solution: str | None = None,
     submission_analysis: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Generate test inputs once, with an optional focused reference-only recovery.
+    """Generate input/output pairs once, then independently verify them once.
 
-    The passes parameter is retained for API compatibility; testcase generation
-    now always uses one pass. If that response omits its independent C oracle,
-    one separate request may produce only the oracle, never replacement tests.
-    Candidate validation and reference execution remain deterministic.
+    trusted_reference_solution remains an ignored compatibility argument. No
+    generated or configured C reference source is used by this pipeline.
     """
     if not isinstance(problem, str) or not problem.strip():
         raise TestGenerationError("missing_assignment", "A complete assignment statement is required.")
@@ -463,58 +487,7 @@ def generate_assignment_test_spec(
     if not isinstance(additional_focus, str) or len(additional_focus) > 500:
         raise ValueError("additional_focus must be text of at most 500 characters")
 
-    schema = {
-        "type": "object", "properties": {
-            "spec_summary": {"type": "string"},
-            "ambiguities": {"type": "array", "items": {"type": "string"}},
-            "inferred_contract": {"type": "object", "properties": {
-                "input_format": {"type": "string"},
-                "output_format": {"type": "string"},
-                "constraints": {"type": "array", "items": {"type": "string"}},
-                "semantics": {"type": "array", "items": {"type": "string"}},
-                "formatting": {"type": "array", "items": {"type": "string"}},
-            }, "required": ["input_format", "output_format", "constraints", "semantics", "formatting"]},
-            "reference_solution_c": {"type": "string"},
-            "test_inputs": {"type": "array", "minItems": max_cases, "maxItems": max_cases, "items": {
-                "type": "object", "properties": {
-                    "id": {"type": "string"}, "input": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
-                }, "required": ["id", "input"],
-            }},
-            "coverage_claims": {"type": "array", "items": {"type": "string"}, "maxItems": 0},
-        }, "required": ["spec_summary", "ambiguities", "inferred_contract", "reference_solution_c", "test_inputs", "coverage_claims"],
-    }
-    if trusted_reference_solution:
-        # When the instructor supplies the oracle, keep the model response
-        # focused on test inputs instead of asking a small model to reproduce
-        # the contract, summary, and reference implementation as well.
-        for optional_field in ("spec_summary", "inferred_contract", "reference_solution_c"):
-            schema["properties"].pop(optional_field, None)
-            if optional_field in schema["required"]:
-                schema["required"].remove(optional_field)
-    base = {
-        "assignment": problem, "problem_contract": problem_contract,
-        "generation_seed": generation_seed, "maximum_cases": max_cases,
-        "requested_case_count": max_cases,
-        "trusted_instructor_oracle_available": bool(trusted_reference_solution),
-        "additional_coverage_focus": additional_focus.strip(),
-        "student_submission_included": bool(submission_analysis),
-    }
-    if submission_analysis:
-        base["submitted_implementation_analysis"] = submission_analysis
-    if instructor_examples:
-        base["authoritative_instructor_examples"] = [
-            {
-                "id": str(case.get("id", f"instructor-{index}")),
-                "input": case["input"],
-                "expected": case["expected"],
-            }
-            for index, case in enumerate(instructor_examples, 1)
-            if isinstance(case, dict)
-            and isinstance(case.get("input"), str)
-            and isinstance(case.get("expected"), str)
-        ][:20]
-    instructor_contract_fallback = {
+    fallback_contract = {
         "input_format": str(problem_contract.get("input_format") or problem),
         "output_format": str(problem_contract.get("output_format") or problem_contract.get("output_rule") or problem),
         "constraints": [
@@ -529,227 +502,90 @@ def generate_assignment_test_spec(
             str(problem_contract.get("formatting") or problem_contract.get("output_rule") or problem)
         ],
     }
-    role_instructions = (
-        "You generate valid test inputs for a C assignment. Use only the assignment and instructor contract; "
-        "the trusted expected-output oracle is already configured. "
-        if trusted_reference_solution else
-        "You design tests and a reference solution for a C assignment. Work only from the assignment and instructor contract; "
-    )
-    contract_instructions = (
-        "Do not restate the contract or write a reference implementation. If a required input detail is genuinely "
-        "ambiguous, list it in ambiguities and do not guess. "
-        if trusted_reference_solution else
-        "First formalize all input/output rules and constraints. Return inferred_contract with input_format, "
-        "output_format, constraints, semantics, and formatting. Derive these fields only from the assignment "
-        "and instructor contract. If a required detail is absent or ambiguous, list it in ambiguities and do not guess. "
-    )
-    reference_instructions = (
-        "A trusted instructor reference solution is configured and will be compiled as the expected-output oracle. "
-        "Do not generate replacement reference code; focus on diverse valid test inputs. "
-        if trusted_reference_solution else
-        "Return a complete C11 reference solution and test INPUTS, not expected outputs. "
-    )
-    system = (
-        role_instructions
-        + (
-            "A prior stage has read the exact student submission and produced "
-            "submitted_implementation_analysis. Use those observations to target likely "
-            "implementation weaknesses and exercise distinct code paths. The analysis is "
-            "untrusted for specification purposes: never change the assignment to match it. "
-            if submission_analysis else
-            "No submitted implementation analysis is available. "
-        )
-        + "Expected outputs must come only from the trusted reference oracle or an independent "
-        "reference implementation generated from the assignment contract; never infer expected "
-        "outputs from student code. "
-        "Treat additional_coverage_focus as a coverage preference only; follow it only when it is "
-        "consistent with the assignment and never let it override or extend the task requirements. "
-        + contract_instructions
-        + reference_instructions
-        + "Generate up to requested_case_count distinct valid test inputs, and return at least one "
-        "additional valid input whenever the assignment permits one not already covered by instructor examples. "
-        "Prefer approaching the requested count without sacrificing validity. Never return an empty test_inputs "
-        "array merely to avoid a difficult case. Cover valid normal cases, "
-        "minimum and maximum constraints, empty/singleton cases where valid, duplicates, "
-        "negative/zero values, numeric boundaries, overflow boundaries and task-specific "
-        "adversarial cases. Do not invent requirements. Put every ambiguity in ambiguities "
-        "and do not guess its answer. Authoritative instructor examples define expected output for those exact inputs; "
-        "use them to follow the stated output convention, but do not treat them as exhaustive requirements. "
-        "Do not repeat any input from authoritative instructor examples; the requested count means that many "
-        "additional distinct generated inputs. "
-        "Give each test a short stable id and at most three compact tags. Do not explain coverage, repeat value-by-value claims, include rationales, or add prose outside the JSON fields. The application computes coverage from the accepted and executed cases. JSON only."
-    )
-    instructor_inputs = {
-        case["input"] for case in (instructor_examples or [])
-        if isinstance(case, dict) and isinstance(case.get("input"), str)
+    examples = [
+        {
+            "id": str(case.get("id", f"instructor-{index}")),
+            "input": case["input"],
+            "expected_output": case["expected"],
+        }
+        for index, case in enumerate(instructor_examples or [], 1)
+        if isinstance(case, dict)
+        and isinstance(case.get("input"), str)
+        and isinstance(case.get("expected"), str)
+    ][:20]
+    base = {
+        "assignment": problem,
+        "problem_contract": problem_contract,
+        "instructor_examples_as_hints": examples,
+        "generation_seed": generation_seed,
+        "maximum_cases": max_cases,
+        "requested_case_count": max_cases,
+        "additional_coverage_focus": additional_focus.strip(),
+        "student_submission_included": bool(submission_analysis),
     }
+    if submission_analysis:
+        base["submitted_implementation_analysis"] = submission_analysis
 
-    # One testcase-generation call follows the single source-understanding call.
-    # Candidate review is deterministic and never starts an RSI/regeneration loop.
-    if trusted_reference_solution:
-        generation_schema = {
-            "type": "object",
-            "properties": {
-                "ambiguities": {"type": "array", "items": {"type": "string"}},
-                "coverage_claims": {"type": "array", "items": {"type": "string"}},
-                "test_inputs": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": max_cases,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "input": {"type": "string"},
-                            "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
-                        },
-                        "required": ["id", "input"],
+    generation_schema = {
+        "type": "object",
+        "properties": {
+            "spec_summary": {"type": "string", "maxLength": 2_000},
+            "ambiguities": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+            "inferred_contract": {
+                "type": "object",
+                "properties": {
+                    "input_format": {"type": "string"},
+                    "output_format": {"type": "string"},
+                    "constraints": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                    "semantics": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                    "formatting": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                },
+                "required": ["input_format", "output_format", "constraints", "semantics", "formatting"],
+            },
+            "test_inputs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": max_cases,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS},
+                        "expected_output": {"type": "string", "maxLength": MAX_INPUT_CHARS},
+                        "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
                     },
+                    "required": ["id", "input", "expected_output"],
                 },
             },
-            "required": ["test_inputs"],
-        }
-        payload = dict(
-            base,
-            instruction=(
-                f"Generate up to {max_cases} additional test inputs in this one generation pass. "
-                "The submitted C implementation has already been analyzed; use that analysis to "
-                "target its actual parsing, type, branch, and boundary weaknesses. The assignment "
-                "and instructor contract remain authoritative. Examine every proposed case against "
-                "the full contract before returning it. Return only inputs that are valid, well-defined, "
-                "distinct, and within all stated constraints. Exclude malformed, out-of-range, ambiguous, "
-                "and duplicate inputs. Return only compact test objects with a short id, input, and up to three tags. Do not include coverage claims, rationales, expected outputs, or explanations. The trusted instructor reference "
-                "solution is the only expected-output oracle. The application applies deterministic "
-                "contract validation and reference execution, discarding candidates that fail."
-            ),
-        )
-        result = request_json(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
-            ],
-            generation_schema,
-            "assignment_test_generation_single_pass",
-        )
-        if not isinstance(result, dict):
-            raise TestGenerationError(
-                "invalid_generation_response",
-                "The single test-generation response was not a JSON object. No retry was performed.",
-            )
-        ambiguities = result.get("ambiguities", [])
-        if not isinstance(ambiguities, list) or not all(isinstance(x, str) for x in ambiguities):
-            ambiguities = ["Malformed ambiguity metadata returned by generator."]
-        ambiguities = [x.strip() for x in ambiguities if x.strip()]
-        coverage = result.get("coverage_claims", [])
-        if not isinstance(coverage, list) or not all(isinstance(x, str) for x in coverage):
-            coverage = []
-        raw_cases = result.get("test_inputs")
-        if not isinstance(raw_cases, list):
-            returned_keys = sorted(str(key) for key in result.keys())
-            raise TestGenerationError(
-                "missing_generated_test_inputs",
-                "The model response omitted the required test_inputs array "
-                f"(returned fields: {returned_keys[:12]}). No additional cases were generated.",
-            )
-        if not raw_cases:
-            raise TestGenerationError(
-                "empty_generated_test_inputs",
-                "The model returned an empty test_inputs array. At least one additional "
-                "valid input is required when test generation is requested.",
-            )
-
-        accepted_cases: list[dict[str, Any]] = []
-        rejected_cases: list[dict[str, str]] = []
-        seen_inputs = set(instructor_inputs)
-        seen_ids: set[str] = set()
-        for index, item in enumerate(raw_cases, 1):
-            candidate_id = (
-                str(item.get("id", f"generated-{index}"))
-                if isinstance(item, dict) else f"generated-{index}"
-            )
-            reason = "generator reported unresolved assignment ambiguities" if ambiguities else None
-            if reason is None and not isinstance(item, dict):
-                reason = "candidate is not a JSON object"
-            if reason is None:
-                test_input = item.get("input", item.get("stdin"))
-                if not isinstance(test_input, str) or not test_input.strip():
-                    reason = "input must be a non-empty string"
-                elif len(test_input) > MAX_INPUT_CHARS:
-                    reason = "input exceeds the maximum size"
-                elif test_input in seen_inputs:
-                    reason = "duplicate of instructor or generated input"
-                elif "\x00" in test_input or any(
-                    ord(ch) < 32 and ch not in "\r\n\t" for ch in test_input
-                ):
-                    reason = "input contains a forbidden control character"
-                tags = item.get("tags", [])
-                if reason is None and (
-                    not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags)
-                ):
-                    reason = "tags must be a list of strings"
-                rationale = item.get("rationale", item.get("description", ""))
-                if reason is None and not isinstance(rationale, str):
-                    reason = "rationale must be text"
-            if reason is None:
-                candidate_id = (
-                    candidate_id if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", candidate_id)
-                    else f"generated-{index}"
-                )
-                if candidate_id in seen_ids:
-                    reason = "duplicate generated case ID"
-            if reason is None:
-                reason = _validate_input_against_contract(test_input, problem_contract)
-            if reason:
-                rejected_cases.append({"id": candidate_id, "reason": reason})
-                continue
-            seen_inputs.add(test_input)
-            seen_ids.add(candidate_id)
-            accepted_cases.append({
-                "id": candidate_id,
-                "input": test_input,
-                "tags": sorted(set(tag.strip() for tag in tags if tag.strip())) or ["generated"],
-                "description": rationale.strip()[:240],
-            })
-
-        spec = {
-            "spec_summary": problem.strip()[:2000],
-            "spec_summary_source": "assignment_statement",
-            "inferred_contract_source": "assignment_and_instructor_contract",
-            "reference_solution_source": "trusted_instructor_reference",
-            "ambiguities": ambiguities[:10],
-            "inferred_contract": instructor_contract_fallback,
-            "reference_solution_c": trusted_reference_solution,
-            "test_inputs": accepted_cases,
-            "coverage_claims": coverage[:30],
-            "rejected_generated_cases": rejected_cases,
-            "generation_mode": "single_pass",
-            "generation_response_count": 1,
-        }
-        history = [{
-            "pass": 1,
-            "status": "completed",
-            "mode": "single_pass",
-            "test_count": len(accepted_cases),
-            "requested_test_count": max_cases,
-            "rejected_test_count": len(rejected_cases),
-            "ambiguities_reported": len(ambiguities),
-            "coverage_claims": spec["coverage_claims"],
-        }]
-        spec["generation_passes"] = history
-        return spec, history
-
-    # Without a configured instructor reference, the same single response
-    # also provides an independent reference C program for sandbox execution.
-    generation_schema = dict(schema)
-    generation_schema["properties"]["test_inputs"] = dict(
-        generation_schema["properties"]["test_inputs"],
-        minItems=1,
-        maxItems=max_cases,
+        },
+        "required": ["ambiguities", "inferred_contract", "test_inputs"],
+    }
+    system = (
+        "You generate test input and expected-output pairs for a C programming assignment. "
+        "The assignment and instructor problem_contract are the only authority for correctness. "
+        "Use submitted_implementation_analysis only to choose useful test dimensions; never infer "
+        "expected outputs from the student's implementation. Instructor examples are guidance for "
+        "input grammar and output conventions, not an exhaustive list of cases or requirements. "
+        "First formalize the I/O contract. Generate diverse valid inputs and independently solve each "
+        "input from the assignment to provide expected_output. Do not write, propose, or return C code. "
+        "Do not invent requirements or guess ambiguous behaviour. If a required rule is genuinely "
+        "ambiguous, report it in ambiguities. Include normal, boundary, empty/singleton, negative/zero, "
+        "and task-specific cases only when valid. Prefer concise inputs and outputs. Return JSON only."
+    )
+    payload = dict(
+        base,
+        instruction=(
+            f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
+            "id, input, expected_output, and up to three short tags. Derive expected_output from the "
+            "assignment contract, not from the submitted code. Follow the style shown by instructor "
+            "examples while exploring new inputs. Do not repeat instructor inputs. Do not include "
+            "C source, coverage narration, or long rationales."
+        ),
     )
     result = request_json(
         [
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(base, sort_keys=True, ensure_ascii=False)},
+            {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
         ],
         generation_schema,
         "assignment_test_generation_single_pass",
@@ -759,46 +595,64 @@ def generate_assignment_test_spec(
         1,
         allow_ambiguities=False,
         fallback_summary=problem,
-        fallback_contract=instructor_contract_fallback,
-        allow_missing_reference_solution=True,
+        fallback_contract=fallback_contract,
     )
-    reference_recovery_used = not bool(candidate["reference_solution_c"])
-    if reference_recovery_used:
-        candidate["reference_solution_c"] = _recover_reference_solution(
-            problem=problem,
-            problem_contract=problem_contract,
-            inferred_contract=candidate["inferred_contract"],
-            instructor_examples=instructor_examples,
-            request_json=request_json,
-        )
-        candidate["reference_solution_source"] = "model_reference_recovery"
-        candidate["reference_recovery_count"] = 1
-    filtered, rejected = [], []
+
+    rejected: list[dict[str, str]] = []
+    contract_valid_cases: list[dict[str, Any]] = []
+    instructor_inputs = {
+        case["input"] for case in (instructor_examples or [])
+        if isinstance(case, dict) and isinstance(case.get("input"), str)
+    }
     for case in candidate["test_inputs"]:
         reason = _validate_input_against_contract(case["input"], problem_contract)
         if reason:
             rejected.append({"id": case["id"], "reason": reason})
+        elif case["input"] in instructor_inputs:
+            rejected.append({"id": case["id"], "reason": "duplicate of an instructor example"})
         else:
-            filtered.append(case)
-    candidate["test_inputs"] = filtered
-    candidate["generation_mode"] = "single_pass"
+            contract_valid_cases.append(case)
+    if not contract_valid_cases:
+        raise TestGenerationError(
+            "no_valid_generated_inputs",
+            "The generator did not produce any distinct inputs that passed deterministic contract validation.",
+        )
+
+    verified_cases, verification_rejections, verification_summary = _verify_expected_outputs(
+        problem=problem,
+        problem_contract=problem_contract,
+        inferred_contract=candidate["inferred_contract"],
+        candidate_cases=contract_valid_cases,
+        instructor_examples=instructor_examples,
+        request_json=request_json,
+    )
+    rejected.extend(verification_rejections)
+    if not verified_cases:
+        preview = "; ".join(f"{item['id']}: {item['reason']}" for item in rejected[:5])
+        raise TestGenerationError(
+            "no_generated_cases_verified",
+            "No generated input/output pair passed independent LLM verification. "
+            + (preview or "Review the assignment contract and instructor examples."),
+        )
+
+    candidate["test_inputs"] = verified_cases
+    candidate["generation_mode"] = "generate_then_independently_verify"
     candidate["generation_response_count"] = 1
+    candidate["verification_response_count"] = 1
+    candidate["verification_summary"] = verification_summary
     candidate["rejected_generated_cases"] = rejected
     history = [{
         "pass": 1,
         "status": "completed",
-        "mode": "single_pass",
-        "test_count": len(filtered),
+        "mode": "generate_then_independently_verify",
+        "test_count": len(verified_cases),
         "requested_test_count": max_cases,
         "rejected_test_count": len(rejected),
         "ambiguities_reported": len(candidate["ambiguities"]),
-        "coverage_claims": candidate["coverage_claims"][:30],
-        "reference_recovery_used": reference_recovery_used,
+        "verification": verification_summary,
     }]
     candidate["generation_passes"] = history
     return candidate, history
-
-
 
 def _validate_input_against_contract(test_input: str, problem_contract: dict[str, Any]) -> str | None:
     """Validate stdin against explicit, machine-readable instructor constraints.
@@ -902,118 +756,102 @@ def _validate_input_against_contract(test_input: str, problem_contract: dict[str
 
 def materialize_test_cases(
     generated_spec: dict[str, Any], *,
-    run_reference: Callable[[str, str], dict[str, Any]],
     instructor_cases: list[dict[str, Any]] | None = None,
     rejected_generated_cases: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Merge instructor cases with generated cases whose expected output comes from an oracle.
+    """Merge instructor examples with independently verified generated pairs."""
+    generated = generated_spec.get("test_inputs")
+    if not isinstance(generated, list):
+        raise TestGenerationError("invalid_spec", "Generated test inputs are missing.")
+    merged: list[dict[str, Any]] = []
+    seen_inputs: dict[str, str] = {}
+    seen_ids: set[str] = set()
 
-    run_reference(reference_source, stdin) must compile/cache reference C in the
-    restricted sandbox and return {stdout, exit_code, timed_out}. Instructor
-    expected outputs are retained; generated expected outputs come from the
-    reference executable, never from the student's executable.
-    """
-    reference, generated = generated_spec.get("reference_solution_c"), generated_spec.get("test_inputs")
-    if not isinstance(reference, str) or not reference.strip() or not isinstance(generated, list):
-        raise TestGenerationError("invalid_spec", "Reference solution or test inputs are missing.")
-    merged, seen, instructor_expected, seen_ids = [], set(), {}, set()
     for index, case in enumerate(instructor_cases or [], 1):
         if not isinstance(case, dict) or not isinstance(case.get("input"), str) or not isinstance(case.get("expected"), str):
             raise TestGenerationError("invalid_instructor_test", f"Instructor test {index} is malformed.")
-        case_id = str(case.get("id", f"instructor-{index}"))
-        if case["input"] in instructor_expected:
-            if instructor_expected[case["input"]].strip() != case["expected"].strip():
-                raise TestGenerationError("conflicting_instructor_tests", f"Instructor tests disagree for identical input in case {case_id}.")
-            for prior_case in merged:
-                if prior_case.get("input") == case["input"]:
-                    prior_origins = prior_case.setdefault("origin_metrics", [])
-                    prior_origins.extend(x for x in case.get("origin_metrics", []) if x not in prior_origins)
-                    prior_tags = prior_case.setdefault("tags", [])
-                    prior_tags.extend(x for x in case.get("tags", []) if x not in prior_tags)
+        test_input, expected = case["input"], case["expected"]
+        if test_input in seen_inputs:
+            if not _outputs_match(seen_inputs[test_input], expected):
+                raise TestGenerationError("conflicting_instructor_tests", f"Instructor examples disagree about expected output for case {case.get('id', index)}.")
+            for prior in merged:
+                if prior.get("input") == test_input:
+                    origins = prior.setdefault("origin_metrics", [])
+                    for origin in case.get("origin_metrics", []):
+                        if origin not in origins:
+                            origins.append(origin)
+                    tags = prior.setdefault("tags", [])
+                    for tag in case.get("tags", []):
+                        if tag not in tags:
+                            tags.append(tag)
                     break
             continue
-        # Cross-check the candidate generated oracle against every supplied
-        # instructor answer. A disagreement is a hard stop, not something to
-        # resolve by silently preferring one source.
-        observed = run_reference(reference, case["input"])
-        if not isinstance(observed, dict) or observed.get("timed_out") or observed.get("output_may_be_truncated") or observed.get("exit_code") != 0:
-            raise TestGenerationError("reference_execution_failed", f"Reference oracle failed while checking instructor case {case_id}.")
-        oracle_expected = observed.get("stdout")
-        if not isinstance(oracle_expected, str) or oracle_expected.strip() != case["expected"].strip():
-            raise TestGenerationError(
-                "oracle_disagreement",
-                f"Generated reference solution disagrees with instructor expected output for case {case.get('id', index)}; require an instructor reference solution or review.",
-            )
-        seen.add(case["input"])
-        instructor_expected[case["input"]] = case["expected"]
-        final_id = f"instructor-{case_id}"
+        final_id = f"instructor-{case.get('id', f'instructor-{index}')}"
         if final_id in seen_ids:
-            raise TestGenerationError("duplicate_test_id", f"Duplicate instructor test ID: {case_id}.")
+            raise TestGenerationError("duplicate_test_id", f"Duplicate instructor test ID: {final_id}.")
+        seen_inputs[test_input] = expected
         seen_ids.add(final_id)
-        merged.append({**case, "id": final_id, "origin": "instructor"})
-    for case in generated:
-        test_input = case.get("input") if isinstance(case, dict) else None
-        if not isinstance(test_input, str):
+        merged.append({**case, "id": final_id, "input": test_input, "expected": expected, "origin": "instructor"})
+
+    for index, case in enumerate(generated, 1):
+        if not isinstance(case, dict):
+            raise TestGenerationError("invalid_generated_test", f"Generated test {index} is malformed.")
+        test_input = case.get("input")
+        expected = case.get("expected_output", case.get("expected"))
+        case_id = str(case.get("id", f"generated-{index}"))
+        if not isinstance(test_input, str) or not isinstance(expected, str):
             if rejected_generated_cases is not None:
-                rejected_generated_cases.append({"id": str(case.get("id", "unknown")) if isinstance(case, dict) else "unknown", "reason": "input is not text"})
+                rejected_generated_cases.append({"id": case_id, "reason": "verified input/expected_output pair is malformed"})
                 continue
-            raise TestGenerationError("invalid_generated_test", "Generated test input is not text.")
-        if test_input in seen:
+            raise TestGenerationError("invalid_generated_test", f"Generated test {case_id} lacks a string input or expected output.")
+        if test_input in seen_inputs:
+            if not _outputs_match(seen_inputs[test_input], expected):
+                raise TestGenerationError("generated_instructor_disagreement", f"Generated expected output disagrees with an instructor example for test {case_id}.")
             continue
-        observed = run_reference(reference, test_input)
-        if not isinstance(observed, dict) or observed.get("timed_out") or observed.get("output_may_be_truncated") or observed.get("exit_code") != 0:
-            if rejected_generated_cases is not None:
-                rejected_generated_cases.append({"id": str(case.get("id", "unknown")), "reason": "reference oracle rejected the input"})
-                continue
-            raise TestGenerationError("reference_execution_failed", f"Reference oracle failed for case {case.get('id')}; expected output is untrusted.")
-        expected = observed.get("stdout")
-        if not isinstance(expected, str):
-            if rejected_generated_cases is not None:
-                rejected_generated_cases.append({"id": str(case.get("id", "unknown")), "reason": "reference oracle returned invalid output"})
-                continue
-            raise TestGenerationError("reference_output_invalid", f"Reference oracle returned invalid output for case {case.get('id')}.")
-        seen.add(test_input)
-        final_id = f"generated-{case['id']}"
+        final_id = f"generated-{case_id}"
         if final_id in seen_ids:
-            raise TestGenerationError("duplicate_test_id", f"Generated test ID collides after normalization: {case['id']}.")
+            raise TestGenerationError("duplicate_test_id", f"Generated test ID collides after normalization: {case_id}.")
+        seen_inputs[test_input] = expected
         seen_ids.add(final_id)
         merged.append({
-            "id": final_id, "input": test_input, "expected": expected,
-            "tags": list(case.get("tags", [])), "description": str(case.get("description", ""))[:240],
-            "origin": "llm_generated_reference_oracle",
+            "id": final_id,
+            "input": test_input,
+            "expected": expected,
+            "tags": list(case.get("tags", [])),
+            "description": str(case.get("description", ""))[:240],
+            "origin": "llm_generated_independently_verified",
         })
     if not merged:
-        raise TestGenerationError("empty_suite", "No instructor or generated cases are available.")
+        raise TestGenerationError("empty_suite", "No instructor or independently verified generated cases are available.")
     return merged
-
 
 def write_frozen_suite(
     cache_dir: Path, *, fingerprint: str, cases: list[dict[str, Any]],
     generated_spec: dict[str, Any], model_id: str,
     assignment_statement: str = "", problem_contract: dict[str, Any] | None = None,
-    oracle_kind: str = "LLM-generated-reference-executed-in-sandbox",
+    oracle_kind: str = "llm-generated-outputs-independently-verified",
 ) -> Path:
-    """Freeze the assignment suite; never silently replace a conflicting suite."""
+    """Freeze verified expected-output pairs; never silently replace a conflicting suite."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"{fingerprint}.json"
     payload = {
-        "schema_version": 2, "assignment_fingerprint": fingerprint,
-        "model_id": model_id, "test_cases": cases,
+        "schema_version": 3,
+        "assignment_fingerprint": fingerprint,
+        "model_id": model_id,
+        "test_cases": cases,
         "generation_passes": generated_spec.get("generation_passes", generated_spec.get("test_generation_rsi", [])),
         "rejected_generated_cases": generated_spec.get("rejected_generated_cases", []),
         "generation_ambiguities": generated_spec.get("ambiguities", []),
         "spec_summary": generated_spec.get("spec_summary", ""),
         "submission_analysis": generated_spec.get("submission_analysis", {}),
         "inferred_contract": generated_spec.get("inferred_contract", {}),
-        "reference_solution_c": str(generated_spec.get("reference_solution_c", "")),
-        "reference_solution_sha256": hashlib.sha256(str(generated_spec.get("reference_solution_c", "")).encode()).hexdigest(),
+        "expected_output_verification": generated_spec.get("verification_summary", {}),
         "oracle_kind": oracle_kind,
         "assignment_statement": assignment_statement,
         "problem_contract": problem_contract or {},
         "oracle_caveat": (
-            "Instructor reference solution was used as the expected-output oracle."
-            if oracle_kind == "instructor-reference" else
-            "RSI-reviewed and executed in the sandbox, but not formally proven equivalent; instructor approval is recommended for high-stakes grading."
+            "Generated expected outputs were independently rechecked by a second LLM call against the assignment specification. "
+            "Instructor-provided examples were used as conventions and hints; they are not an exhaustive oracle."
         ),
     }
     encoded = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
@@ -1021,8 +859,6 @@ def write_frozen_suite(
         if path.read_text(encoding="utf-8") != encoded:
             raise TestGenerationError("frozen_suite_conflict", "A frozen suite already exists for this fingerprint but differs; do not overwrite silently.")
         return path
-    # A unique temporary name prevents concurrent runs from clobbering one
-    # another's staging file; replace is atomic on the same filesystem.
     import os
     import tempfile
     fd, temporary_name = tempfile.mkstemp(prefix=f"{fingerprint}.", suffix=".tmp", dir=cache_dir)
@@ -1034,7 +870,7 @@ def write_frozen_suite(
         if path.exists():
             existing = path.read_text(encoding="utf-8")
             if existing != encoded:
-                raise TestGenerationError("frozen_suite_conflict", "A frozen suite was created concurrently with different contents; review the oracle before grading.")
+                raise TestGenerationError("frozen_suite_conflict", "A frozen suite was created concurrently with different contents; review the verification record before grading.")
             os.unlink(temporary_name)
             return path
         os.replace(temporary_name, path)
@@ -1042,7 +878,6 @@ def write_frozen_suite(
         if os.path.exists(temporary_name):
             os.unlink(temporary_name)
     return path
-
 
 def load_frozen_suite(path: Path, expected_fingerprint: str) -> list[dict[str, Any]]:
     """Load a frozen suite only when its assignment fingerprint matches."""
@@ -1060,46 +895,6 @@ def load_frozen_suite(path: Path, expected_fingerprint: str) -> list[dict[str, A
     return cases
 
 
-def compile_reference_runner(
-    sandbox: Any,
-    reference_source: str,
-    *,
-    timeout_s: float = 10.0,
-    run_timeout_s: float = 2.0,
-    source_filename: str = "generated_reference.c",
-) -> Callable[[str], dict[str, Any]]:
-    """Compile a C reference oracle in the restricted Docker sandbox.
-
-    The returned callable is suitable for ``materialize_test_cases``. The
-    sandbox should have CPU, memory, PID, filesystem and wall-time limits.
-    """
-    if not isinstance(reference_source, str) or not reference_source.strip():
-        raise TestGenerationError("empty_reference", "Reference source is empty.")
-    sandbox.write_file(source_filename, reference_source)
-    compile_result = sandbox.run(
-        ["gcc", "-std=c11", "-O2", "-pipe", "-fno-ident", "-fdiagnostics-color=never",
-         source_filename, "-o", "generated_reference"],
-        timeout_s=timeout_s,
-    )
-    if compile_result.get("timed_out") or compile_result.get("exit_code") != 0:
-        raise TestGenerationError(
-            "reference_compile_failed",
-            "Generated reference solution did not compile cleanly: " + str(compile_result.get("output", ""))[-1200:],
-        )
-
-    def run_reference(_source: str, stdin: str) -> dict[str, Any]:
-        # The source argument is kept in the callback signature so the
-        # materializer's oracle contract is explicit; compilation happened once.
-        # Suppress reference stderr so diagnostics cannot pollute expected stdout.
-        result = sandbox.run(["/bin/bash", "-c", "./generated_reference 2>/dev/null"], timeout_s=run_timeout_s, stdin=stdin)
-        return {
-            "stdout": result.get("output", ""),
-            "exit_code": result.get("exit_code"),
-            "timed_out": bool(result.get("timed_out")),
-            "output_may_be_truncated": bool(result.get("output_may_be_truncated")),
-        }
-
-    return run_reference
 
 
 def prepare_assignment_test_suite(
@@ -1114,12 +909,12 @@ def prepare_assignment_test_suite(
     submission_source: str = "",
     submission_filename: str = "submission.c",
 ) -> dict[str, Any]:
-    """Generate/fetch a test suite and bind the combined suite to metrics.
+    """Generate, independently verify, freeze, and bind assignment test cases.
 
-    When a submission is supplied, the LLM first analyzes it for code paths and
-    likely weaknesses. The assignment contract remains authoritative. A
-    configured reference solution is used for expected outputs; otherwise an
-    independently generated reference implementation is run in the sandbox.
+    No reference C program is generated, loaded, compiled, or executed. The
+    first LLM call proposes input/output pairs; a second LLM call independently
+    solves the proposed inputs from the assignment specification. The sandbox
+    is reserved for grading the student's original submission later.
     """
     testing_cfg = rules.get("test_generation", {})
     testing_cfg = testing_cfg if isinstance(testing_cfg, dict) else {}
@@ -1137,12 +932,8 @@ def prepare_assignment_test_suite(
 
     project_root = Path(project_root).resolve()
     instructor_by_input: dict[str, dict[str, Any]] = {}
-    instructor_reference = None
     for metric in execution_metrics:
         params = metric.get("params", {})
-        # Only paths explicitly configured by the instructor count as teacher
-        # cases. A resolved path injected by a previous generation call must
-        # not be re-ingested as instructor input on a repeated invocation.
         path_value = params.get("resolved_testset_path") if params.get("testset_path") not in (None, "") else None
         if path_value:
             try:
@@ -1159,57 +950,15 @@ def prepare_assignment_test_suite(
                     instructor_by_input[key] = {**item, "origin_metrics": [str(metric.get("name"))]}
                 else:
                     prior = instructor_by_input[key]
-                    if prior["expected"].strip() != item["expected"].strip():
+                    if not _outputs_match(prior["expected"], item["expected"]):
                         raise TestGenerationError("conflicting_instructor_tests", f"Instructor metrics disagree on expected output for identical input ({metric.get('name')}, case {item.get('id', index)}).")
                     prior.setdefault("origin_metrics", []).append(str(metric.get("name")))
 
     instructor_cases = list(instructor_by_input.values())
-    reference_path_value = testing_cfg.get("reference_solution_path")
-    reference_path_source = "configured" if reference_path_value else None
-    if not reference_path_value:
-        # Reuse a repository-owned oracle only when the assignment statement
-        # and full instructor contract exactly match a canonical example.
-        matching_references: set[str] = set()
-        for candidate_rules_path in sorted((project_root / "examples" / "assignments").glob("*/rules.json")):
-            try:
-                candidate_rules = json.loads(candidate_rules_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            candidate_generation = candidate_rules.get("test_generation", {})
-            candidate_reference = (
-                candidate_generation.get("reference_solution_path")
-                if isinstance(candidate_generation, dict) else None
-            )
-            if (
-                candidate_rules.get("problem") == rules.get("problem")
-                and candidate_rules.get("problem_contract", {}) == rules.get("problem_contract", {})
-                and isinstance(candidate_reference, str)
-            ):
-                try:
-                    resolved_candidate = _project_relative_path(
-                        project_root, candidate_reference, "test_generation.reference_solution_path"
-                    )
-                except TestGenerationError:
-                    continue
-                if resolved_candidate.is_file():
-                    matching_references.add(candidate_reference)
-        if len(matching_references) == 1:
-            reference_path_value = matching_references.pop()
-            reference_path_source = "exact_assignment_contract_match"
-    reference_source = None
-    reference_hash = None
-    if reference_path_value:
-        try:
-            resolved = _project_relative_path(project_root, str(reference_path_value), "test_generation.reference_solution_path")
-        except TestGenerationError as exc:
-            raise TestGenerationError("reference_path_invalid", str(exc)) from exc
-        if not resolved.is_file():
-            raise TestGenerationError("reference_path_invalid", "Configured reference solution is missing or outside the project root.")
-        reference_source = resolved.read_text(encoding="utf-8")
-        reference_hash = hashlib.sha256(reference_source.encode("utf-8")).hexdigest()
-
     seed = int(generation_seed)
     max_cases = testing_cfg.get("max_cases", 12)
+    if isinstance(max_cases, bool) or not isinstance(max_cases, int) or not 1 <= max_cases <= MAX_GENERATED_CASES:
+        raise TestGenerationError("invalid_test_generation_config", f"test_generation.max_cases must be from 1 to {MAX_GENERATED_CASES}.")
     additional_focus = testing_cfg.get("additional_focus", "")
     if not isinstance(additional_focus, str) or len(additional_focus) > 500:
         raise TestGenerationError("invalid_test_generation_config", "test_generation.additional_focus must be text of at most 500 characters.")
@@ -1224,17 +973,17 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":single-pass-compact-cases-v13-no-coverage-narration",
-        rsi_passes=1, max_cases=int(max_cases), temperature=float(temperature),
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v14",
+        rsi_passes=1,
+        max_cases=int(max_cases),
+        temperature=float(temperature),
         additional_focus=additional_focus,
         submission_source_sha256=submission_source_sha256,
     )
-    # Include instructor test contents and any trusted reference in the final
-    # cache identity, not merely the problem statement.
     supplemental = {
         "base": fingerprint,
         "instructor_cases": instructor_cases,
-        "reference_solution_sha256": reference_hash,
+        "expected_output_verification": "independent_second_llm_call",
     }
     try:
         fingerprint = hashlib.sha256(
@@ -1242,6 +991,7 @@ def prepare_assignment_test_suite(
         ).hexdigest()
     except (TypeError, ValueError) as exc:
         raise TestGenerationError("invalid_fingerprint_data", f"Assignment fingerprint data is not valid JSON: {exc}") from exc
+
     cache_dir_value = testing_cfg.get("cache_dir", ".generated_tests")
     cache_dir = _project_relative_path(project_root, cache_dir_value, "test_generation.cache_dir")
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1266,18 +1016,22 @@ def prepare_assignment_test_suite(
         frozen = json.loads(frozen_path.read_text(encoding="utf-8"))
         if frozen.get("assignment_fingerprint") != fingerprint:
             raise TestGenerationError("suite_fingerprint_mismatch", "Frozen suite fingerprint does not match the current assignment.")
+        if frozen.get("schema_version") != 3:
+            raise TestGenerationError("suite_schema_version_mismatch", "Frozen suite uses an obsolete reference-program schema; regenerate it with the two-pass expected-output verifier.")
         all_cases = frozen.get("test_cases")
-        if not isinstance(all_cases, list) or not all_cases:
-            raise TestGenerationError("suite_empty", "Frozen assignment suite has no tests.")
-        cached_reference = frozen.get("reference_solution_c")
-        cached_reference_hash = hashlib.sha256(str(cached_reference or "").encode("utf-8")).hexdigest()
-        if not isinstance(cached_reference, str) or not cached_reference.strip() or cached_reference_hash != frozen.get("reference_solution_sha256"):
-            raise TestGenerationError("frozen_reference_corrupt", "Frozen test suite has a missing or mismatched reference-solution hash.")
-        generation_history = frozen.get("generation_passes", frozen.get("test_generation_rsi", []))
+        if (
+            not isinstance(all_cases, list)
+            or not all_cases
+            or any(
+                not isinstance(case, dict)
+                or not isinstance(case.get("input"), str)
+                or not isinstance(case.get("expected"), str)
+                for case in all_cases
+            )
+        ):
+            raise TestGenerationError("suite_empty", "Frozen assignment suite has missing or malformed input/expected-output pairs.")
+        generation_history = frozen.get("generation_passes", [])
         suite_source = "frozen_cache"
-        reference_hash = cached_reference_hash
-        reference_source = cached_reference
-        suite_path = frozen_path
     else:
         submission_analysis = None
         if submission_source_sha256:
@@ -1288,59 +1042,56 @@ def prepare_assignment_test_suite(
                 submission_filename=submission_filename,
                 request_json=request_json,
             )
-        requested_generated_count = int(max_cases)
         spec, generation_history = generate_assignment_test_spec(
             problem=str(rules.get("problem", "")),
             problem_contract=rules.get("problem_contract", {}),
             request_json=request_json,
-            passes=1, generation_seed=int(seed), max_cases=requested_generated_count,
+            passes=1,
+            generation_seed=int(seed),
+            max_cases=int(max_cases),
             additional_focus=additional_focus,
             instructor_examples=instructor_cases,
-            trusted_reference_solution=reference_source,
             submission_analysis=submission_analysis,
         )
         if submission_analysis is not None:
             spec["submission_analysis"] = submission_analysis
-        if reference_source is not None:
-            spec["reference_solution_c"] = reference_source
-        reference_hash = hashlib.sha256(spec["reference_solution_c"].encode("utf-8")).hexdigest()
-        run_reference = compile_reference_runner(
-            sandbox, spec["reference_solution_c"],
-            timeout_s=float(testing_cfg.get("compile_timeout_s", 10.0)),
-            run_timeout_s=float(rules.get("time_limit_s", 2.0)),
-        )
         rejected_generated_cases: list[dict[str, str]] = list(spec.get("rejected_generated_cases", []))
         all_cases = materialize_test_cases(
-            spec, run_reference=run_reference, instructor_cases=instructor_cases,
+            spec,
+            instructor_cases=instructor_cases,
             rejected_generated_cases=rejected_generated_cases,
         )
         instructor_suite = [case for case in all_cases if case.get("origin") == "instructor"]
-        generated_suite = [case for case in all_cases if case.get("origin") == "llm_generated_reference_oracle"]
-        # A requested generation run is not complete merely because instructor
-        # examples exist. At least one additional case must pass both candidate
-        # validation and trusted-reference execution before the suite is frozen.
-        if requested_generated_count > 0 and not generated_suite:
-            rejection_preview = [
+        generated_suite = [
+            case for case in all_cases
+            if case.get("origin") == "llm_generated_independently_verified"
+        ]
+        if not generated_suite:
+            preview = "; ".join(
                 f"{item.get('id', 'candidate')}: {item.get('reason', 'rejected')}"
                 for item in rejected_generated_cases[:5]
-                if isinstance(item, dict)
-            ]
-            detail = "; ".join(rejection_preview) or "the model returned no usable additional candidates"
-            raise TestGenerationError(
-                "no_generated_cases_survived",
-                f"Requested {requested_generated_count} additional test cases, but none passed "
-                f"candidate validation and reference-oracle execution. {detail}",
             )
-        # Freeze only contract-valid cases that also completed successfully
-        # against the trusted reference oracle.
-        all_cases = instructor_suite + generated_suite[:requested_generated_count]
+            raise TestGenerationError(
+                "no_generated_cases_verified",
+                "Requested additional cases, but no generated pair survived independent expected-output verification. "
+                + (preview or "Review the assignment specification and instructor examples."),
+            )
+        all_cases = instructor_suite + generated_suite[:int(max_cases)]
         spec["rejected_generated_cases"] = rejected_generated_cases
-        oracle_kind = "instructor-reference" if reference_path_value else "LLM-generated-reference-executed-in-sandbox"
+        oracle_kind = (
+            "instructor-examples-plus-two-pass-llm-verification"
+            if instructor_cases else
+            "two-pass-llm-verified-expected-outputs"
+        )
         suite_path = write_frozen_suite(
-            cache_dir, fingerprint=fingerprint, cases=all_cases,
-            generated_spec=spec, model_id=model_id,
+            cache_dir,
+            fingerprint=fingerprint,
+            cases=all_cases,
+            generated_spec=spec,
+            model_id=model_id,
             assignment_statement=str(rules.get("problem", "")),
-            problem_contract=rules.get("problem_contract", {}), oracle_kind=oracle_kind,
+            problem_contract=rules.get("problem_contract", {}),
+            oracle_kind=oracle_kind,
         )
         frozen = json.loads(suite_path.read_text(encoding="utf-8"))
         suite_source = "generated_and_frozen"
@@ -1352,7 +1103,6 @@ def prepare_assignment_test_suite(
     }
 
     def is_edge_case(case: dict[str, Any]) -> bool:
-        """Recognize common tag spellings and descriptions for edge coverage."""
         tags = case.get("tags", [])
         origins = case.get("origin_metrics", [])
         if isinstance(origins, list) and {str(x).casefold() for x in origins}.intersection(
@@ -1364,10 +1114,7 @@ def prepare_assignment_test_suite(
         words = set(re.findall(r"[a-z0-9]+", " ".join(text_parts).casefold()))
         return bool(words & edge_markers) or bool({"edge", "boundary", "corner"} & words)
 
-    edge_cases = []
-    for case in all_cases:
-        if isinstance(case, dict) and is_edge_case(case):
-            edge_cases.append(case)
+    edge_cases = [case for case in all_cases if isinstance(case, dict) and is_edge_case(case)]
     if not edge_cases and any(metric.get("analyzer") == "edge_case_runner" for metric in execution_metrics):
         raise TestGenerationError("edge_coverage_missing", "Generated test suite contains no identifiable edge/boundary cases; logical metric cannot be measured.")
 
@@ -1380,33 +1127,27 @@ def prepare_assignment_test_suite(
         if not target.exists():
             target.write_text(encoded, encoding="utf-8")
 
-    metric_bindings = {}
+    metric_bindings: dict[str, str] = {}
     for metric in execution_metrics:
         analyzer = metric.get("analyzer")
         target = edge_path if analyzer == "edge_case_runner" else all_path
         metric.setdefault("params", {})["resolved_testset_path"] = str(target)
         metric_bindings[str(metric.get("name"))] = str(target)
+    generated_count = sum(
+        case.get("origin") == "llm_generated_independently_verified"
+        for case in all_cases if isinstance(case, dict)
+    )
+    verification_summary = frozen.get("expected_output_verification", {})
     return {
         "status": "completed",
         "source": suite_source,
         "assignment_fingerprint": fingerprint,
         "suite_path": str(frozen_path),
-        "reference_solution_sha256": reference_hash,
-        "reference_solution_source": reference_path_source or "llm_generated",
         "instructor_test_count": len(instructor_cases),
         "total_test_count": len(all_cases),
-        "generated_test_count": sum(
-            case.get("origin") == "llm_generated_reference_oracle"
-            for case in all_cases if isinstance(case, dict)
-        ),
+        "generated_test_count": generated_count,
         "requested_generated_test_count": int(max_cases),
-        "generated_test_count_shortfall": max(
-            0,
-            int(max_cases) - sum(
-                case.get("origin") == "llm_generated_reference_oracle"
-                for case in all_cases if isinstance(case, dict)
-            ),
-        ),
+        "generated_test_count_shortfall": max(0, int(max_cases) - generated_count),
         "rejected_generated_test_count": len(frozen.get("rejected_generated_cases", [])),
         "edge_test_count": len(edge_cases),
         "generation_passes": generation_history,
@@ -1416,7 +1157,8 @@ def prepare_assignment_test_suite(
         "submission_analysis": frozen.get("submission_analysis", {}),
         "inferred_contract": frozen.get("inferred_contract", {}),
         "spec_summary": frozen.get("spec_summary", ""),
-        "oracle_kind": frozen.get("oracle_kind", "LLM-generated-reference-executed-in-sandbox"),
-        "oracle_caveat": frozen.get("oracle_caveat", "Reference oracle requires instructor audit."),
+        "oracle_kind": frozen.get("oracle_kind", "two-pass-llm-verified-expected-outputs"),
+        "oracle_caveat": frozen.get("oracle_caveat", "Expected outputs were independently checked by a second LLM call."),
+        "expected_output_verification": verification_summary,
         "unresolved_ambiguities": frozen.get("generation_ambiguities", []),
     }
