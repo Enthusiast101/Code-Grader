@@ -143,7 +143,8 @@ def _validate_candidate(
         if not isinstance(case_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", case_id):
             case_id = f"generated-{index}"
         if case_id in seen_ids:
-            raise TestGenerationError("duplicate_test_id", f"Duplicate generated test ID: {case_id}.")
+            rejected_cases.append({"id": case_id, "reason": "duplicate generated test ID"})
+            continue
         test_input = item.get("input", item.get("stdin"))
         expected_output = item.get("expected_output", item.get("expected"))
         if not isinstance(test_input, str):
@@ -155,8 +156,12 @@ def _validate_candidate(
         if len(test_input) > MAX_INPUT_CHARS:
             rejected_cases.append({"id": case_id, "reason": f"input exceeds {MAX_INPUT_CHARS} characters"})
             continue
-        if not isinstance(expected_output, str) or len(expected_output) > MAX_INPUT_CHARS:
-            raise TestGenerationError("invalid_expected_output", f"Generated test {case_id} must include a bounded expected_output string.")
+        if not isinstance(expected_output, str):
+            rejected_cases.append({"id": case_id, "reason": "expected_output is missing or is not text"})
+            continue
+        if len(expected_output) > MAX_INPUT_CHARS:
+            rejected_cases.append({"id": case_id, "reason": f"expected_output exceeds {MAX_INPUT_CHARS} characters"})
+            continue
         tags = item.get("tags", [])
         if not isinstance(tags, list) or not all(isinstance(x, str) for x in tags):
             tags = []
