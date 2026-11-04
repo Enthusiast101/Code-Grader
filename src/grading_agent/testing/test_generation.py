@@ -418,13 +418,17 @@ def _verify_expected_outputs(
         checks[case_id] = item
 
     expected_ids = {str(case["id"]) for case in candidate_cases}
-    if set(checks) != expected_ids:
-        missing = sorted(expected_ids - set(checks))
-        unexpected = sorted(set(checks) - expected_ids)
+    missing = sorted(expected_ids - set(checks))
+    unexpected = sorted(set(checks) - expected_ids)
+    if missing:
         raise TestGenerationError(
             "expected_output_verification_failed",
-            "The independent verifier returned a mismatched set of test IDs "
-            f"(missing={missing[:5]}, unexpected={unexpected[:5]}). No generated outputs were accepted.",
+            f"The independent verifier omitted test {missing[0]}. No generated outputs were accepted.",
+        )
+    if unexpected:
+        raise TestGenerationError(
+            "expected_output_verification_failed",
+            f"The independent verifier returned unexpected test IDs {unexpected[:5]}. No generated outputs were accepted.",
         )
 
     accepted: list[dict[str, Any]] = []
@@ -456,7 +460,8 @@ def _verify_expected_outputs(
                 "reason": "generated expected_output disagreed with the independent verifier",
             })
             continue
-        accepted.append({**case, "expected_output": verified_output})
+        canonical_output = verified_output.replace("\r\n", "\n").replace("\r", "\n")
+        accepted.append({**case, "expected_output": canonical_output})
 
     summary = {
         "method": "independent_second_llm_call",
