@@ -142,7 +142,6 @@
   "test_generation": {
     "enabled": true,
     "max_cases": 12,
-    "reference_solution_path": "examples/assignments/03-computation-average/reference_solution.c",
     "additional_focus": "Generate distinct valid cases across N and signed values, including zeros, negative values, large magnitudes, and averages with fractional parts. Avoid relying on unspecified exact half-cent tie behavior."
   }
 }
