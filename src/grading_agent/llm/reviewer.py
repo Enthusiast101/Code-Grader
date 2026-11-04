@@ -903,7 +903,23 @@ def _request_json(
         )
         return None, diagnostic
 
-    return None, content[:2_000]
+    try:
+        json.loads(content)
+        json_error = "content parsed as JSON but was not a JSON object"
+    except json.JSONDecodeError as exc:
+        json_error = (
+            f"{exc.msg} at line {exc.lineno}, column {exc.colno} "
+            f"(character {exc.pos})"
+        )
+    truncated = finish_reason == "length"
+    diagnostic = (
+        f"Malformed final assistant JSON; finish_reason={finish_reason}; "
+        f"completion_tokens={completion_tokens}; prompt_tokens={prompt_tokens}; "
+        f"content_chars={len(content)}; reasoning_content_chars={reasoning_chars}; "
+        f"possibly_truncated={truncated}; parse_error={json_error}; "
+        f"content_preview={content[:700]!r}"
+    )
+    return None, diagnostic
 
 
 def _review_pass(

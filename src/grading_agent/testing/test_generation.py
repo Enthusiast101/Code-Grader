@@ -226,11 +226,23 @@ def analyze_submission_for_test_generation(
     schema = {
         "type": "object",
         "properties": {
-            "implementation_summary": {"type": "string"},
-            "input_parsing_and_validation": {"type": "array", "items": {"type": "string"}},
-            "control_flow_and_data_types": {"type": "array", "items": {"type": "string"}},
-            "likely_weak_points": {"type": "array", "items": {"type": "string"}},
-            "recommended_test_dimensions": {"type": "array", "items": {"type": "string"}},
+            "implementation_summary": {"type": "string", "maxLength": 700},
+            "input_parsing_and_validation": {
+                "type": "array", "maxItems": 8,
+                "items": {"type": "string", "maxLength": 180},
+            },
+            "control_flow_and_data_types": {
+                "type": "array", "maxItems": 8,
+                "items": {"type": "string", "maxLength": 180},
+            },
+            "likely_weak_points": {
+                "type": "array", "maxItems": 6,
+                "items": {"type": "string", "maxLength": 180},
+            },
+            "recommended_test_dimensions": {
+                "type": "array", "maxItems": 8,
+                "items": {"type": "string", "maxLength": 180},
+            },
         },
         "required": [
             "implementation_summary", "input_parsing_and_validation",
@@ -246,9 +258,12 @@ def analyze_submission_for_test_generation(
                 "Read the assignment and C source carefully. Explain what the submitted program "
                 "actually parses and computes, its branches, data types, assumptions, and likely "
                 "failure points. Recommend concrete test dimensions that exercise its paths. "
-                "The assignment and instructor contract are authoritative: do not reinterpret "
-                "requirements to match the student's implementation. Do not execute the source, "
-                "produce expected outputs, or treat the source's behavior as correct. Return JSON only."
+                "Be concise: use at most 8 short bullets per list (6 for weak points), keep each "
+                "bullet under 180 characters, and keep the summary under 700 characters. Prefer "
+                "distinct, actionable observations over exhaustive narration. The assignment and "
+                "instructor contract are authoritative: do not reinterpret requirements to match "
+                "the student's implementation. Do not execute the source, produce expected outputs, "
+                "or treat the source's behavior as correct. Return JSON only."
             ),
         },
         {
@@ -260,9 +275,10 @@ def analyze_submission_for_test_generation(
                     "submission_filename": submission_filename,
                     "submission_source": submission_source,
                     "instruction": (
-                        "Understand this exact implementation in one pass. Identify likely edge "
-                        "cases and missing checks that a separate test-generation call should probe. "
-                        "Do not supply test inputs or expected outputs."
+                        "Understand this exact implementation in one pass. Return a concise summary "
+                        "and only the most useful distinct observations within the schema limits. Identify "
+                        "likely edge cases and missing checks that a separate test-generation call should "
+                        "probe. Do not supply test inputs or expected outputs."
                     ),
                 },
                 sort_keys=True,
@@ -291,9 +307,9 @@ def analyze_submission_for_test_generation(
             "The single implementation-understanding response omitted required fields or returned malformed lists; no retry was performed.",
         )
     return {
-        "implementation_summary": summary.strip()[:4000],
+        "implementation_summary": summary.strip()[:700],
         **{
-            field: [item.strip()[:500] for item in result[field] if item.strip()][:20]
+            field: [item.strip()[:180] for item in result[field] if item.strip()][:8]
             for field in list_fields
         },
     }

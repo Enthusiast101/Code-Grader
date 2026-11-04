@@ -140,6 +140,32 @@ class ReviewerContextTests(unittest.TestCase):
             _request_json([{"role": "user", "content": "test"}])
 
     @patch("grading_agent.llm.reviewer.requests.post")
+    def test_malformed_json_diagnostic_reports_finish_reason_and_parse_position(self, post):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = json.dumps({
+            "choices": [{
+                "message": {"content": '{"implementation_summary":"incomplete'},
+                "finish_reason": "length",
+            }],
+            "usage": {"prompt_tokens": 500, "completion_tokens": 128},
+        }).encode()
+        response.url = "http://127.0.0.1:8080/v1/chat/completions"
+        post.return_value = response
+
+        parsed, diagnostic = _request_json(
+            [{"role": "user", "content": "Return JSON."}],
+            max_tokens=128,
+            response_schema={"type": "object"},
+        )
+
+        self.assertIsNone(parsed)
+        self.assertIn("finish_reason=length", diagnostic)
+        self.assertIn("completion_tokens=128", diagnostic)
+        self.assertIn("possibly_truncated=True", diagnostic)
+        self.assertIn("parse_error=", diagnostic)
+
+    @patch("grading_agent.llm.reviewer.requests.post")
     def test_requests_constrained_json_output(self, post):
         response = requests.Response()
         response.status_code = 200

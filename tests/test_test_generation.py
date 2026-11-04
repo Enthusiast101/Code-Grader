@@ -48,6 +48,9 @@ def test_submission_understanding_stage_reads_source_before_test_design():
         payload = json.loads(messages[1]["content"])
         assert payload["submission_source"] == source
         assert payload["assignment"] == "Read an integer and print it."
+        assert schema["properties"]["implementation_summary"]["maxLength"] == 700
+        assert schema["properties"]["input_parsing_and_validation"]["maxItems"] == 8
+        assert schema["properties"]["likely_weak_points"]["maxItems"] == 6
         assert "test_inputs" not in schema["properties"]
         return {
             "implementation_summary": "Reads one integer and prints it unchanged.",

@@ -738,9 +738,15 @@ def generate_test_cases_for_submission(
             )
 
             def generation_request(messages, schema, stage_name):
+                stage_token_budget = generation_token_budget
+                if stage_name == "assignment_submission_understanding_single_pass":
+                    stage_token_budget = min(
+                        generation_token_budget,
+                        max(512, int(settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS)),
+                    )
                 parsed, diagnostic = _request_json(
                     messages,
-                    max_tokens=generation_token_budget,
+                    max_tokens=stage_token_budget,
                     enable_thinking=None,
                     response_schema=schema,
                     schema_name=stage_name,
