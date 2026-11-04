@@ -417,54 +417,181 @@ def _verify_expected_outputs(
             "set input_is_valid=false and explain briefly. Return exactly one verification for every id."
         ),
     }
-    result = request_json(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "You are an independent expected-output verifier for programming tests. "
-                    "You are not reviewing or executing the student's code. Derive each answer from "
-                    "the assignment specification yourself, using instructor examples only to understand "
-                    "the intended conventions. Return JSON only."
-                ),
-            },
-            {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
-        ],
-        schema,
-        "assignment_expected_output_verification_single_pass",
+    verifier_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an independent expected-output verifier for programming tests. "
+                "You are not reviewing or executing the student's code. Derive each answer from "
+                "the assignment specification yourself, using instructor examples only to understand "
+                "the intended conventions. Return exactly one JSON object with a top-level "
+                "'verifications' array. Return JSON only."
+            ),
+        },
+        {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
+    ]
+    required_item_fields = {
+        "id", "input", "input_is_valid", "expected_output", "reason",
+    }
+    alternate_array_keys = (
+        "results", "checks", "test_results", "verification_results",
     )
-    if not isinstance(result, dict) or not isinstance(result.get("verifications"), list):
-        raise TestGenerationError(
-            "expected_output_verification_failed",
-            "The independent verifier did not return the required verifications array. No generated outputs were accepted.",
-        )
-    checks: dict[str, dict[str, Any]] = {}
-    for item in result["verifications"]:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            raise TestGenerationError(
-                "expected_output_verification_failed",
-                "The independent verifier returned a malformed verification item. No generated outputs were accepted.",
-            )
-        case_id = item["id"]
-        if case_id in checks:
-            raise TestGenerationError(
-                "expected_output_verification_failed",
-                f"The independent verifier returned duplicate results for test {case_id}.",
-            )
-        checks[case_id] = item
 
-    expected_ids = {str(case["id"]) for case in candidate_cases}
-    missing = sorted(expected_ids - set(checks))
-    unexpected = sorted(set(checks) - expected_ids)
-    if missing:
-        raise TestGenerationError(
-            "expected_output_verification_failed",
-            f"The independent verifier omitted test {missing[0]}. No generated outputs were accepted.",
+    def parse_verifier_response(response: Any) -> dict[str, dict[str, Any]]:
+        if not isinstance(response, dict):
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"Verifier returned {type(response).__name__}, not a JSON object.",
+            )
+        verifications = response.get("verifications")
+        if not isinstance(verifications, list):
+            # Accept a compatible envelope alias only when it is unambiguous
+            # and every entry still satisfies the complete verification contract.
+            alternatives = [
+                key for key in alternate_array_keys
+                if isinstance(response.get(key), list)
+                and all(
+                    isinstance(item, dict) and required_item_fields.issubset(item)
+                    for item in response[key]
+                )
+            ]
+            if len(alternatives) == 1:
+                verifications = response[alternatives[0]]
+            else:
+                keys = sorted(str(key) for key in response.keys())[:12]
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    "Verifier response is missing the required 'verifications' array. "
+                    f"Top-level keys returned: {keys}; valid alternate arrays found: {alternatives}.",
+                )
+
+        if len(verifications) != len(candidate_cases):
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"Verifier returned {len(verifications)} items for {len(candidate_cases)} supplied inputs.",
+            )
+        checks: dict[str, dict[str, Any]] = {}
+        for index, item in enumerate(verifications, 1):
+            if not isinstance(item, dict):
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier item {index} is {type(item).__name__}, not an object.",
+                )
+            missing_fields = sorted(required_item_fields - set(item))
+            if missing_fields:
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier item {index} is missing fields: {missing_fields}.",
+                )
+            case_id = item.get("id")
+            if not isinstance(case_id, str) or not case_id:
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier item {index} has a missing or invalid id.",
+                )
+            if case_id in checks:
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier returned duplicate results for test {case_id}.",
+                )
+            if not isinstance(item.get("input"), str):
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier input echo for test {case_id} is not text.",
+                )
+            if type(item.get("input_is_valid")) is not bool:
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier input_is_valid for test {case_id} is not boolean.",
+                )
+            if not isinstance(item.get("expected_output"), str):
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier expected_output for test {case_id} is not text.",
+                )
+            if len(item["expected_output"]) > MAX_INPUT_CHARS:
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier expected_output for test {case_id} exceeds {MAX_INPUT_CHARS} characters.",
+                )
+            if not isinstance(item.get("reason"), str):
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier reason for test {case_id} is not text.",
+                )
+            checks[case_id] = item
+
+        expected_ids = {str(case["id"]) for case in candidate_cases}
+        missing_ids = sorted(expected_ids - set(checks))
+        unexpected_ids = sorted(set(checks) - expected_ids)
+        if missing_ids:
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"Verifier omitted test {missing_ids[0]}.",
+            )
+        if unexpected_ids:
+            raise TestGenerationError(
+                "expected_output_verification_failed",
+                f"Verifier returned unexpected test IDs {unexpected_ids[:5]}.",
+            )
+        for case in candidate_cases:
+            case_id = str(case["id"])
+            if checks[case_id]["input"] != case["input"]:
+                raise TestGenerationError(
+                    "expected_output_verification_failed",
+                    f"Verifier associated an output with the wrong input for test {case_id}.",
+                )
+        return checks
+
+    verifier_errors: list[str] = []
+    checks: dict[str, dict[str, Any]] | None = None
+    for attempt in range(2):
+        stage_name = (
+            "assignment_expected_output_verification_single_pass"
+            if attempt == 0
+            else "assignment_expected_output_verification_repair"
         )
-    if unexpected:
+        messages = verifier_messages
+        if attempt == 1:
+            repair_payload = dict(
+                payload,
+                corrective_instruction=(
+                    "Your previous response did not satisfy the required verification response structure. "
+                    "Re-solve the same supplied inputs from the assignment specification. Return exactly "
+                    "one JSON object whose only top-level field is 'verifications'. Its value must be an "
+                    "array with exactly one object per supplied input. Every object must contain all five "
+                    "fields: id (copy exactly), input (copy the exact stdin string, including empty strings "
+                    "and newlines), input_is_valid (JSON boolean), expected_output (exact stdout for a "
+                    "correct solution), and reason (short text). Do not omit fields, rename keys, group "
+                    "results under another key, add prose, or use student code or proposed outputs."
+                ),
+            )
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are correcting a malformed independent test verifier response. "
+                        "Re-derive the expected output from the assignment. Output exactly one JSON "
+                        "object with a top-level verifications array and no other top-level fields. "
+                        "Return JSON only."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(repair_payload, sort_keys=True, ensure_ascii=False)},
+            ]
+        try:
+            response = request_json(messages, schema, stage_name)
+            checks = parse_verifier_response(response)
+            break
+        except Exception as exc:
+            detail = " ".join(str(exc).split())[:500] or type(exc).__name__
+            verifier_errors.append(f"{stage_name}: {detail}")
+            checks = None
+
+    if checks is None:
         raise TestGenerationError(
             "expected_output_verification_failed",
-            f"The independent verifier returned unexpected test IDs {unexpected[:5]}. No generated outputs were accepted.",
+            "The independent verifier did not return a structurally valid response after one corrective retry. "
+            + " | ".join(verifier_errors),
         )
 
     accepted: list[dict[str, Any]] = []

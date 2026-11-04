@@ -442,9 +442,52 @@ def test_edge_case_runner_recognizes_boundary_in_test_id(tmp_path):
 
 
 def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
+    generated = sample_response()
+    generated["test_inputs"].append({
+        "id": "ambiguous",
+        "input": "not-a-number\n",
+        "expected_output": "0\n",
+        "tags": ["invalid"],
+    })
+    calls = []
 
-def test_missing_verifier_result_fails_closed():
     def request(messages, schema, stage):
+        calls.append(stage)
+        if stage == "assignment_test_generation_single_pass":
+            return generated
+        if stage == "assignment_expected_output_verification_single_pass":
+            payload = json.loads(messages[1]["content"])
+            return {
+                "verifications": [
+                    {"id": "basic", "input": "2 3\n", "input_is_valid": True, "expected_output": "5\n", "reason": ""},
+                    {"id": "negative", "input": "-4 7\n", "input_is_valid": True, "expected_output": "999\n", "reason": ""},
+                    {"id": "ambiguous", "input": "not-a-number\n", "input_is_valid": False, "expected_output": "", "reason": "Input is not valid under the assignment."},
+                ]
+            }
+        raise AssertionError(f"Unexpected stage: {stage}")
+
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=3,
+    )
+
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+    ]
+    assert [case["id"] for case in spec["test_inputs"]] == ["basic"]
+    reasons = {item["id"]: item["reason"] for item in spec["rejected_generated_cases"]}
+    assert "disagreed" in reasons["negative"]
+    assert "invalid or ambiguous" in reasons["ambiguous"]
+
+
+def test_missing_verifier_result_gets_one_corrective_retry_then_fails_closed():
+    calls = []
+
+    def request(messages, schema, stage):
+        calls.append(stage)
         if stage == "assignment_test_generation_single_pass":
             return sample_response()
         return {"verifications": [
@@ -458,6 +501,63 @@ def test_missing_verifier_result_fails_closed():
             request_json=request,
             max_cases=2,
         )
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+        "assignment_expected_output_verification_repair",
+    ]
+
+
+def test_independent_verifier_accepts_unambiguous_results_alias_with_strict_item_contract():
+    generated = sample_response()
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            return generated
+        payload = json.loads(messages[1]["content"])
+        return {"results": [
+            {
+                "id": case["id"],
+                "input": case["input"],
+                "input_is_valid": True,
+                "expected_output": "5\n" if case["id"] == "basic" else "3\n",
+                "reason": "Solved from the assignment specification.",
+            }
+            for case in payload["test_inputs_to_solve"]
+        ]}
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=2,
+    )
+    assert [case["expected_output"] for case in spec["test_inputs"]] == ["5\n", "3\n"]
+
+
+def test_independent_verifier_retries_wrong_envelope_without_accepting_partial_results():
+    generated = sample_response()
+    calls = []
+    def request(messages, schema, stage):
+        calls.append(stage)
+        if stage == "assignment_test_generation_single_pass":
+            return generated
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_expected_output_verification_single_pass":
+            return {"answers": [{"id": case["id"]} for case in payload["test_inputs_to_solve"]]}
+        assert stage == "assignment_expected_output_verification_repair"
+        assert "only top-level field is 'verifications'" in payload["corrective_instruction"]
+        return verifier_response(payload["test_inputs_to_solve"])
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=2,
+    )
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+        "assignment_expected_output_verification_repair",
+    ]
+    assert len(spec["test_inputs"]) == 2
 
 
 def test_generation_fails_closed_on_ambiguous_contract():
