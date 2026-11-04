@@ -1,12 +1,11 @@
-"""Single-pass, source-aware test generation with deterministic candidate validation.
+"""Assignment-driven test generation with independent expected-output verification.
 
-The LLM first studies the submitted implementation once, then proposes test
-inputs once. If an independent reference program is omitted, a focused
-reference-only request may supply it; test inputs are never regenerated.
-Invalid or duplicate candidates are discarded; accepted inputs must also
-execute successfully against a trusted or independent reference solution in
-the restricted sandbox. The resulting suite is frozen by a source-aware
-fingerprint.
+A source-understanding call may identify useful test dimensions, but it never
+determines correctness. A generation call proposes exact stdin/expected-stdout
+pairs; a second, independent LLM call solves the inputs from the assignment
+specification. One bounded refill request can replace malformed, invalid, or
+unverified candidates. No generated C reference program is compiled or run.
+The independently verified suite is frozen by an assignment/source fingerprint.
 """
 from __future__ import annotations
 
@@ -81,8 +80,15 @@ def _validate_candidate(
     allow_ambiguities: bool = False,
     fallback_summary: str = "",
     fallback_contract: dict[str, Any] | None = None,
+    allow_empty: bool = False,
 ) -> dict[str, Any]:
-    """Validate generated input/output pairs before independent verification."""
+    """Validate generated input/output pairs before independent verification.
+
+    Empty stdin is preserved as a possible test input. The assignment contract
+    and independent verifier—not a blanket non-empty-string rule—decide whether
+    a particular task permits it. allow_empty permits a wholly unusable batch
+    to reach the caller's bounded replacement path.
+    """
     if not isinstance(value, dict):
         raise TestGenerationError("invalid_response", f"Generation response {pass_number} did not return an object.")
     summary = value.get("spec_summary", value.get("summary"))
@@ -128,7 +134,11 @@ def _validate_candidate(
             if not inferred["semantics"]:
                 raise TestGenerationError("invalid_inferred_contract", f"Generation response {pass_number} must identify at least one task semantic.")
 
-    if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
+    if (
+        not isinstance(cases, list)
+        or (not cases and not allow_empty)
+        or len(cases) > MAX_GENERATED_CASES
+    ):
         raise TestGenerationError("invalid_test_count", f"Generation response {pass_number} must return 1..{MAX_GENERATED_CASES} input/output pairs.")
     cleaned, seen_ids, seen_inputs = [], set(), set()
     rejected_cases: list[dict[str, str]] = []
@@ -145,13 +155,13 @@ def _validate_candidate(
         if case_id in seen_ids:
             rejected_cases.append({"id": case_id, "reason": "duplicate generated test ID"})
             continue
+        # Reserve IDs before payload validation so malformed candidates cannot
+        # let a later candidate silently reuse the same identity.
+        seen_ids.add(case_id)
         test_input = item.get("input", item.get("stdin"))
         expected_output = item.get("expected_output", item.get("expected"))
         if not isinstance(test_input, str):
             rejected_cases.append({"id": case_id, "reason": "input is missing or is not text"})
-            continue
-        if not test_input.strip():
-            rejected_cases.append({"id": case_id, "reason": "input is empty or whitespace-only"})
             continue
         if len(test_input) > MAX_INPUT_CHARS:
             rejected_cases.append({"id": case_id, "reason": f"input exceeds {MAX_INPUT_CHARS} characters"})
@@ -169,8 +179,8 @@ def _validate_candidate(
         rationale = item.get("rationale", item.get("description", ""))
         if not isinstance(rationale, str):
             rationale = ""
-        seen_ids.add(case_id)
         if test_input in seen_inputs:
+            rejected_cases.append({"id": case_id, "reason": "duplicate generated input"})
             continue
         seen_inputs.add(test_input)
         cleaned.append({
@@ -180,7 +190,7 @@ def _validate_candidate(
             "tags": tags,
             "description": rationale.strip()[:240],
         })
-    if not cleaned:
+    if not cleaned and not allow_empty:
         preview = "; ".join(
             f"{item['id']}: {item['reason']}" for item in rejected_cases[:5]
         )
@@ -365,7 +375,7 @@ def _verify_expected_outputs(
                     "type": "object",
                     "properties": {
                         "id": {"type": "string"},
-                        "input": {"type": "string", "minLength": 1, "maxLength": MAX_INPUT_CHARS},
+                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS, "description": "Exact stdin text; empty is valid when the assignment reads no stdin."},
                         "input_is_valid": {"type": "boolean"},
                         "expected_output": {"type": "string"},
                         "reason": {"type": "string", "maxLength": 240},
@@ -597,7 +607,7 @@ def generate_assignment_test_spec(
                     "type": "object",
                     "properties": {
                         "id": {"type": "string"},
-                        "input": {"type": "string", "minLength": 1, "maxLength": MAX_INPUT_CHARS},
+                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS, "description": "Exact stdin text; empty is valid when the assignment reads no stdin."},
                         "expected_output": {"type": "string", "maxLength": MAX_INPUT_CHARS},
                         "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
                     },
@@ -623,19 +633,21 @@ def generate_assignment_test_spec(
         base,
         instruction=(
             f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
-            "id, input, expected_output, and up to three short tags. The input must be a non-empty "
-            "string containing the exact stdin text for one test (not a label such as 'normal' or 'edge'). "
-            "Derive expected_output from the assignment contract, not from the submitted code. "
+            "id, input, expected_output, and up to three short tags. The input is the exact stdin text for one "
+            "test (not a label such as 'normal' or 'edge'). The empty string is valid only when the "
+            "assignment requires no stdin; whitespace-only text must never stand in for missing required "
+            "input. Derive expected_output from the assignment contract, not from the submitted code. "
             "Follow the style shown by instructor "
             "examples while exploring new inputs. Do not repeat instructor inputs. Do not include "
             "C source, coverage narration, or long rationales."
         ),
     )
+    generation_messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
+    ]
     result = request_json(
-        [
-            {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
-        ],
+        generation_messages,
         generation_schema,
         "assignment_test_generation_single_pass",
     )
@@ -645,62 +657,201 @@ def generate_assignment_test_spec(
         allow_ambiguities=False,
         fallback_summary=problem,
         fallback_contract=fallback_contract,
+        allow_empty=True,
     )
 
     rejected: list[dict[str, str]] = list(candidate.get("rejected_generated_cases", []))
-    contract_valid_cases: list[dict[str, Any]] = []
     instructor_inputs = {
         case["input"] for case in (instructor_examples or [])
         if isinstance(case, dict) and isinstance(case.get("input"), str)
     }
-    for case in candidate["test_inputs"]:
-        reason = _validate_input_against_contract(case["input"], problem_contract)
-        if reason:
-            rejected.append({"id": case["id"], "reason": reason})
-        elif case["input"] in instructor_inputs:
-            rejected.append({"id": case["id"], "reason": "duplicate of an instructor example"})
-        else:
-            contract_valid_cases.append(case)
-    if not contract_valid_cases:
-        raise TestGenerationError(
-            "no_valid_generated_inputs",
-            "The generator did not produce any distinct inputs that passed deterministic contract validation. "
-            + "; ".join(f"{item['id']}: {item['reason']}" for item in rejected[:5]),
-        )
+    used_inputs = set(instructor_inputs)
 
-    verified_cases, verification_rejections, verification_summary = _verify_expected_outputs(
-        problem=problem,
-        problem_contract=problem_contract,
-        inferred_contract=candidate["inferred_contract"],
-        candidate_cases=contract_valid_cases,
-        instructor_examples=instructor_examples,
-        request_json=request_json,
-    )
-    rejected.extend(verification_rejections)
+    def retain_contract_valid_cases(
+        cases: list[dict[str, Any]],
+        *,
+        id_prefix: str = "",
+    ) -> list[dict[str, Any]]:
+        retained: list[dict[str, Any]] = []
+        for index, case in enumerate(cases, 1):
+            item = dict(case)
+            if id_prefix:
+                item["id"] = f"{id_prefix}{index}-{str(item.get('id', 'case'))[:48]}"
+            already_seen = item["input"] in used_inputs
+            used_inputs.add(item["input"])
+            reason = _validate_input_against_contract(item["input"], problem_contract)
+            if reason:
+                rejected.append({"id": str(item["id"]), "reason": reason})
+            elif already_seen:
+                rejected.append({
+                    "id": str(item["id"]),
+                    "reason": "duplicate of an instructor or earlier generated input",
+                })
+            else:
+                retained.append(item)
+        return retained
+
+    first_batch = retain_contract_valid_cases(candidate["test_inputs"])
+    verified_cases: list[dict[str, Any]] = []
+    verification_calls = 0
+    verification_requested = 0
+    verification_rejected = 0
+    first_batch_verified: list[dict[str, Any]] = []
+    first_verification_summary: dict[str, Any] = {
+        "method": "independent_second_llm_call",
+        "requested": 0,
+        "verified": 0,
+        "rejected": 0,
+        "comparison": "trimmed exact text with normalized line endings",
+    }
+
+    if first_batch:
+        first_batch_verified, first_batch_rejected, first_verification_summary = _verify_expected_outputs(
+            problem=problem,
+            problem_contract=problem_contract,
+            inferred_contract=candidate["inferred_contract"],
+            candidate_cases=first_batch,
+            instructor_examples=instructor_examples,
+            request_json=request_json,
+        )
+        verification_calls += 1
+        verification_requested += len(first_batch)
+        verification_rejected += len(first_batch_rejected)
+        verified_cases.extend(first_batch_verified)
+        rejected.extend(first_batch_rejected)
+
+    initial_rejected_count = len(rejected)
+    repair_count = 0
+    repair_verified: list[dict[str, Any]] = []
+    repair_verification_summary: dict[str, Any] = {
+        "method": "independent_second_llm_call",
+        "requested": 0,
+        "verified": 0,
+        "rejected": 0,
+        "comparison": "trimmed exact text with normalized line endings",
+    }
+
+    # A single bounded refill prevents one malformed/invalid batch from
+    # aborting generation. Every replacement goes through the same strict
+    # structural checks and independent expected-output verification.
+    missing_count = max(0, max_cases - len(verified_cases))
+    if missing_count:
+        repair_count = 1
+        repair_payload = dict(
+            base,
+            requested_replacement_count=missing_count,
+            previously_used_inputs=sorted(used_inputs)[:max_cases],
+            previously_rejected_candidates=[
+                {"id": item.get("id", "candidate"), "reason": item.get("reason", "rejected")}
+                for item in rejected[:40]
+            ],
+            provisional_inferred_contract=candidate["inferred_contract"],
+            instruction=(
+                f"The first batch did not produce {max_cases} independently verified distinct cases. "
+                f"Generate up to {missing_count} NEW replacement cases. Each must contain an id, exact "
+                "stdin text in input, expected_output, and up to three concise tags. Do not reuse any "
+                "previously_used_inputs. Follow the assignment and problem_contract exactly. Empty stdin "
+                "is valid only when the assignment requires no stdin; never use spaces or blank text as "
+                "a placeholder for missing required values. For input-required tasks, include all required "
+                "tokens and lines. Independently derive expected_output from the assignment, not from the "
+                "student implementation. Do not return C code."
+            ),
+        )
+        repair_schema = json.loads(json.dumps(generation_schema))
+        repair_schema["properties"]["test_inputs"]["maxItems"] = missing_count
+        repair_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You repair an incomplete test set for a C programming assignment. "
+                    "The assignment specification is authoritative. Return only new, distinct, valid "
+                    "input/expected-output pairs. Empty stdin is valid only for a task that does not "
+                    "read stdin. Never use blank or whitespace-only placeholders for required input. "
+                    "Return JSON only."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(repair_payload, sort_keys=True, ensure_ascii=False),
+            },
+        ]
+        repair_result = request_json(
+            repair_messages,
+            repair_schema,
+            "assignment_test_generation_repair",
+        )
+        repair_candidate = _validate_candidate(
+            repair_result,
+            2,
+            allow_ambiguities=False,
+            fallback_summary=problem,
+            fallback_contract=fallback_contract,
+            allow_empty=True,
+        )
+        rejected.extend(repair_candidate.get("rejected_generated_cases", []))
+        repair_batch = retain_contract_valid_cases(
+            repair_candidate["test_inputs"],
+            id_prefix="refill-",
+        )
+        if repair_batch:
+            repair_verified, repair_rejected, repair_verification_summary = _verify_expected_outputs(
+                problem=problem,
+                problem_contract=problem_contract,
+                inferred_contract=candidate["inferred_contract"],
+                candidate_cases=repair_batch,
+                instructor_examples=instructor_examples,
+                request_json=request_json,
+            )
+            verification_calls += 1
+            verification_requested += len(repair_batch)
+            verification_rejected += len(repair_rejected)
+            verified_cases.extend(repair_verified)
+            rejected.extend(repair_rejected)
+
     if not verified_cases:
-        preview = "; ".join(f"{item['id']}: {item['reason']}" for item in rejected[:5])
+        preview = "; ".join(
+            f"{item['id']}: {item['reason']}" for item in rejected[:8]
+        )
         raise TestGenerationError(
             "no_generated_cases_verified",
-            "No generated input/output pair passed independent LLM verification. "
-            + (preview or "Review the assignment contract and instructor examples."),
+            "No generated input/output pair passed deterministic validation and independent "
+            "expected-output verification after one bounded refill. "
+            + (preview or "Review the assignment input/output contract and instructor examples."),
         )
 
-    candidate["test_inputs"] = verified_cases
-    candidate["generation_mode"] = "generate_then_independently_verify"
-    candidate["generation_response_count"] = 1
-    candidate["verification_response_count"] = 1
-    candidate["verification_summary"] = verification_summary
+    candidate["test_inputs"] = verified_cases[:max_cases]
+    candidate["generation_mode"] = "generate_then_independently_verify_with_bounded_refill"
+    candidate["generation_response_count"] = 1 + repair_count
+    candidate["verification_response_count"] = verification_calls
+    candidate["verification_summary"] = {
+        "method": "independent_second_llm_call",
+        "requested": verification_requested,
+        "verified": len(candidate["test_inputs"]),
+        "rejected": verification_rejected,
+        "verification_calls": verification_calls,
+        "comparison": "trimmed exact text with normalized line endings",
+    }
     candidate["rejected_generated_cases"] = rejected
+
     history = [{
         "pass": 1,
-        "status": "completed",
+        "status": "completed" if first_batch_verified else "recovered_or_refilled",
         "mode": "generate_then_independently_verify",
-        "test_count": len(verified_cases),
+        "test_count": len(first_batch_verified),
         "requested_test_count": max_cases,
-        "rejected_test_count": len(rejected),
-        "ambiguities_reported": len(candidate["ambiguities"]),
-        "verification": verification_summary,
+        "rejected_test_count": initial_rejected_count,
+        "verification": first_verification_summary,
     }]
+    if repair_count:
+        history.append({
+            "pass": 2,
+            "status": "completed" if repair_verified else "no_additional_cases_verified",
+            "mode": "bounded_replacement_generation",
+            "test_count": len(repair_verified),
+            "requested_test_count": missing_count,
+            "rejected_test_count": len(rejected) - initial_rejected_count,
+            "verification": repair_verification_summary,
+        })
     candidate["generation_passes"] = history
     return candidate, history
 
@@ -710,8 +861,8 @@ def _validate_input_against_contract(test_input: str, problem_contract: dict[str
     Free-form prose cannot be interpreted as a formal grammar. Strict structural
     validation is available through input_schema/input_fields token descriptors.
     """
-    if not isinstance(test_input, str) or not test_input.strip():
-        return "input must be a non-empty string"
+    if not isinstance(test_input, str):
+        return "input must be text"
     if len(test_input) > MAX_INPUT_CHARS:
         return "input exceeds the maximum size"
     if "\x00" in test_input or any(ord(ch) < 32 and ch not in "\r\n\t" for ch in test_input):
@@ -734,9 +885,9 @@ def _validate_input_against_contract(test_input: str, problem_contract: dict[str
     max_count = problem_contract.get("max_input_tokens")
     if isinstance(exact_count, int) and not isinstance(exact_count, bool) and len(tokens) != exact_count:
         return f"expected exactly {exact_count} whitespace-delimited input tokens"
-    if isinstance(min_count, int) and len(tokens) < min_count:
+    if isinstance(min_count, int) and not isinstance(min_count, bool) and len(tokens) < min_count:
         return f"expected at least {min_count} whitespace-delimited input tokens"
-    if isinstance(max_count, int) and len(tokens) > max_count:
+    if isinstance(max_count, int) and not isinstance(max_count, bool) and len(tokens) > max_count:
         return f"expected at most {max_count} whitespace-delimited input tokens"
 
     schema = problem_contract.get("input_schema", problem_contract.get("input_fields"))
@@ -1024,7 +1175,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v14",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v15-empty-stdin-and-bounded-refill",
         rsi_passes=1,
         max_cases=int(max_cases),
         temperature=float(temperature),

@@ -141,25 +141,27 @@ def test_generation_proposes_pairs_then_second_llm_independently_verifies_them()
 
 
 @pytest.mark.parametrize(
-    "bad_input, expected_reason",
+    "bad_field, bad_value, expected_reason",
     [
-        (None, "input is missing or is not text"),
-        ("   ", "input is empty or whitespace-only"),
-        ("x" * 20_001, "input exceeds 20000 characters"),
+        ("input", None, "input is missing or is not text"),
+        ("input", "x" * 20_001, "input exceeds 20000 characters"),
+        ("expected_output", None, "expected_output is missing or is not text"),
+        ("expected_output", "x" * 20_001, "expected_output exceeds 20000 characters"),
     ],
 )
-def test_invalid_generated_input_is_rejected_without_discarding_valid_cases(bad_input, expected_reason):
+def test_malformed_candidates_are_rejected_without_discarding_valid_cases(
+    bad_field, bad_value, expected_reason
+):
     generated = sample_response()
     generated["test_inputs"][0]["id"] = "normal"
-    generated["test_inputs"][0]["input"] = bad_input
+    generated["test_inputs"][0][bad_field] = bad_value
 
     def request(messages, schema, stage):
         if stage == "assignment_test_generation_single_pass":
             input_schema = schema["properties"]["test_inputs"]["items"]["properties"]["input"]
-            assert input_schema["minLength"] == 1
+            assert "minLength" not in input_schema
             return generated
         payload = json.loads(messages[1]["content"])
-        # Only the surviving, well-formed case reaches independent verification.
         assert payload["test_inputs_to_solve"] == [
             {"id": "negative", "input": "-4 7\n"}
         ]
@@ -169,7 +171,7 @@ def test_invalid_generated_input_is_rejected_without_discarding_valid_cases(bad_
         problem="Read two integers and print their sum.",
         problem_contract={},
         request_json=request,
-        max_cases=2,
+        max_cases=1,
     )
 
     assert [case["id"] for case in spec["test_inputs"]] == ["negative"]
@@ -177,6 +179,129 @@ def test_invalid_generated_input_is_rejected_without_discarding_valid_cases(bad_
         {"id": "normal", "reason": expected_reason}
     ]
     assert history[0]["rejected_test_count"] == 1
+
+
+@pytest.mark.parametrize("stdin_text", ["", " \n"])
+def test_empty_or_whitespace_stdin_is_preserved_for_independent_verification(stdin_text):
+    generated = {
+        "spec_summary": "Print READY without reading stdin.",
+        "ambiguities": [],
+        "inferred_contract": {
+            "input_format": "No standard input is read.",
+            "output_format": "Print READY followed by a newline.",
+            "constraints": [],
+            "semantics": ["Print a fixed readiness message."],
+            "formatting": ["One line containing READY."],
+        },
+        "test_inputs": [{
+            "id": "no-input",
+            "input": stdin_text,
+            "expected_output": "READY\n",
+            "tags": ["normal"],
+        }],
+    }
+
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            input_schema = schema["properties"]["test_inputs"]["items"]["properties"]["input"]
+            assert "minLength" not in input_schema
+            return generated
+        assert stage == "assignment_expected_output_verification_single_pass"
+        payload = json.loads(messages[1]["content"])
+        assert payload["test_inputs_to_solve"] == [{"id": "no-input", "input": stdin_text}]
+        return {"verifications": [{
+            "id": "no-input",
+            "input": stdin_text,
+            "input_is_valid": True,
+            "expected_output": "READY\n",
+            "reason": "The program does not read stdin.",
+        }]}
+
+    spec, _ = generate_assignment_test_spec(
+        problem="Print READY and a newline without reading any standard input.",
+        problem_contract={},
+        request_json=request,
+        max_cases=1,
+    )
+
+    assert spec["test_inputs"][0]["input"] == stdin_text
+    assert spec["test_inputs"][0]["expected_output"] == "READY\n"
+
+
+def test_explicit_input_contract_still_rejects_missing_required_stdin():
+    from grading_agent.testing.test_generation import _validate_input_against_contract
+
+    assert _validate_input_against_contract("", {}) is None
+    assert "exactly 1" in _validate_input_against_contract("", {"input_token_count": 1})
+    assert "missing required field" in _validate_input_against_contract(
+        "",
+        {"input_schema": {"fields": [{"name": "value", "type": "integer"}]}},
+    )
+
+
+def test_all_invalid_candidates_get_one_bounded_refill_then_independent_verification():
+    initial = sample_response()
+    initial["test_inputs"] = [
+        {"id": "normal_case", "input": "", "expected_output": "5\n", "tags": ["normal"]},
+        {"id": "boundary_case", "input": " \n", "expected_output": "3\n", "tags": ["edge"]},
+    ]
+    calls = []
+    verification_calls = 0
+
+    def request(messages, schema, stage):
+        nonlocal verification_calls
+        calls.append(stage)
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_test_generation_single_pass":
+            return initial
+        if stage == "assignment_expected_output_verification_single_pass":
+            verification_calls += 1
+            if verification_calls == 1:
+                return {"verifications": [
+                    {
+                        "id": case["id"],
+                        "input": case["input"],
+                        "input_is_valid": False,
+                        "expected_output": "",
+                        "reason": "This assignment requires two integer tokens on stdin.",
+                    }
+                    for case in payload["test_inputs_to_solve"]
+                ]}
+            return verifier_response(payload["test_inputs_to_solve"])
+        if stage == "assignment_test_generation_repair":
+            assert payload["requested_replacement_count"] == 2
+            assert payload["previously_used_inputs"] == ["", " \n"]
+            assert schema["properties"]["test_inputs"]["maxItems"] == 2
+            assert "expected_output" not in json.dumps(payload["previously_rejected_candidates"])
+            return {
+                "spec_summary": "Read two integers and print their sum.",
+                "ambiguities": [],
+                "inferred_contract": sample_response()["inferred_contract"],
+                "test_inputs": [
+                    {"id": "normal", "input": "8 9\n", "expected_output": "17\n", "tags": ["normal"]},
+                    {"id": "negative", "input": "-1 1\n", "expected_output": "0\n", "tags": ["edge"]},
+                ],
+            }
+        raise AssertionError(f"Unexpected request stage: {stage}")
+
+    spec, history = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=2,
+    )
+
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+        "assignment_test_generation_repair",
+        "assignment_expected_output_verification_single_pass",
+    ]
+    assert [case["input"] for case in spec["test_inputs"]] == ["8 9\n", "-1 1\n"]
+    assert [case["id"] for case in spec["test_inputs"]] == ["refill-1-normal", "refill-2-negative"]
+    assert spec["generation_response_count"] == 2
+    assert spec["verification_response_count"] == 2
+    assert len(history) == 2
 
 
 def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
@@ -204,7 +329,7 @@ def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
         problem="Read two integers and print their sum.",
         problem_contract={},
         request_json=request,
-        max_cases=3,
+        max_cases=1,
     )
 
     assert calls == [
