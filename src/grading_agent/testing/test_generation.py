@@ -523,10 +523,11 @@ def generate_assignment_test_spec(
     trusted_reference_solution: str | None = None,
     submission_analysis: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Generate input/output pairs once, then independently verify them once.
+    """Generate input/output pairs and independently verify them.
 
-    trusted_reference_solution remains an ignored compatibility argument. No
-    generated or configured C reference source is used by this pipeline.
+    A single bounded refill may replace rejected or missing candidates. The
+    trusted_reference_solution argument remains ignored for compatibility:
+    no generated or configured C reference source is compiled or executed.
     """
     if not isinstance(problem, str) or not problem.strip():
         raise TestGenerationError("missing_assignment", "A complete assignment statement is required.")
@@ -722,6 +723,8 @@ def generate_assignment_test_spec(
 
     initial_rejected_count = len(rejected)
     repair_count = 0
+    repair_response_count = 0
+    repair_failure: str | None = None
     repair_verified: list[dict[str, Any]] = []
     repair_verification_summary: dict[str, Any] = {
         "method": "independent_second_llm_call",
@@ -775,38 +778,53 @@ def generate_assignment_test_spec(
                 "content": json.dumps(repair_payload, sort_keys=True, ensure_ascii=False),
             },
         ]
-        repair_result = request_json(
-            repair_messages,
-            repair_schema,
-            "assignment_test_generation_repair",
-        )
-        repair_candidate = _validate_candidate(
-            repair_result,
-            2,
-            allow_ambiguities=False,
-            fallback_summary=problem,
-            fallback_contract=fallback_contract,
-            allow_empty=True,
-        )
-        rejected.extend(repair_candidate.get("rejected_generated_cases", []))
-        repair_batch = retain_contract_valid_cases(
-            repair_candidate["test_inputs"],
-            id_prefix="refill-",
-        )
-        if repair_batch:
-            repair_verified, repair_rejected, repair_verification_summary = _verify_expected_outputs(
-                problem=problem,
-                problem_contract=problem_contract,
-                inferred_contract=candidate["inferred_contract"],
-                candidate_cases=repair_batch,
-                instructor_examples=instructor_examples,
-                request_json=request_json,
+        try:
+            repair_result = request_json(
+                repair_messages,
+                repair_schema,
+                "assignment_test_generation_repair",
             )
-            verification_calls += 1
-            verification_requested += len(repair_batch)
-            verification_rejected += len(repair_rejected)
-            verified_cases.extend(repair_verified)
-            rejected.extend(repair_rejected)
+            repair_response_count = 1
+            repair_candidate = _validate_candidate(
+                repair_result,
+                2,
+                allow_ambiguities=True,
+                fallback_summary=problem,
+                fallback_contract=fallback_contract,
+                allow_empty=True,
+            )
+            if repair_candidate["ambiguities"]:
+                repair_failure = (
+                    "replacement generation reported unresolved ambiguities: "
+                    + "; ".join(repair_candidate["ambiguities"][:3])
+                )
+                rejected.append({"id": "refill-batch", "reason": repair_failure[:300]})
+            else:
+                rejected.extend(repair_candidate.get("rejected_generated_cases", []))
+                repair_batch = retain_contract_valid_cases(
+                    repair_candidate["test_inputs"],
+                    id_prefix="refill-",
+                )
+                if repair_batch:
+                    repair_verified, repair_rejected, repair_verification_summary = _verify_expected_outputs(
+                        problem=problem,
+                        problem_contract=problem_contract,
+                        inferred_contract=candidate["inferred_contract"],
+                        candidate_cases=repair_batch,
+                        instructor_examples=instructor_examples,
+                        request_json=request_json,
+                    )
+                    verification_calls += 1
+                    verification_requested += len(repair_batch)
+                    verification_rejected += len(repair_rejected)
+                    verified_cases.extend(repair_verified)
+                    rejected.extend(repair_rejected)
+        except Exception as exc:
+            repair_failure = " ".join(str(exc).split())[:240] or type(exc).__name__
+            rejected.append({
+                "id": "refill-batch",
+                "reason": ("replacement generation or verification failed: " + repair_failure)[:300],
+            })
 
     if not verified_cases:
         preview = "; ".join(
@@ -821,7 +839,7 @@ def generate_assignment_test_spec(
 
     candidate["test_inputs"] = verified_cases[:max_cases]
     candidate["generation_mode"] = "generate_then_independently_verify_with_bounded_refill"
-    candidate["generation_response_count"] = 1 + repair_count
+    candidate["generation_response_count"] = 1 + repair_response_count
     candidate["verification_response_count"] = verification_calls
     candidate["verification_summary"] = {
         "method": "independent_second_llm_call",
@@ -845,12 +863,13 @@ def generate_assignment_test_spec(
     if repair_count:
         history.append({
             "pass": 2,
-            "status": "completed" if repair_verified else "no_additional_cases_verified",
+            "status": "failed" if repair_failure else ("completed" if repair_verified else "no_additional_cases_verified"),
             "mode": "bounded_replacement_generation",
             "test_count": len(repair_verified),
             "requested_test_count": missing_count,
             "rejected_test_count": len(rejected) - initial_rejected_count,
             "verification": repair_verification_summary,
+            **({"error": repair_failure} if repair_failure else {}),
         })
     candidate["generation_passes"] = history
     return candidate, history
@@ -1311,7 +1330,9 @@ def prepare_assignment_test_suite(
             {"logical", "edge_cases", "edge_case_runner"}
         ):
             return True
-        text_parts = [str(tag) for tag in tags] if isinstance(tags, list) else []
+        text_parts = [str(case.get("id", ""))]
+        if isinstance(tags, list):
+            text_parts.extend(str(tag) for tag in tags)
         text_parts.extend(str(case.get(key, "")) for key in ("description", "rationale"))
         words = set(re.findall(r"[a-z0-9]+", " ".join(text_parts).casefold()))
         return bool(words & edge_markers) or bool({"edge", "boundary", "corner"} & words)

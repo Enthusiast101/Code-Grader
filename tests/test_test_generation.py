@@ -304,43 +304,91 @@ def test_all_invalid_candidates_get_one_bounded_refill_then_independent_verifica
     assert len(history) == 2
 
 
-def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
-    generated = sample_response()
-    generated["test_inputs"].append({
-        "id": "ambiguous", "input": "not-a-number\n",
-        "expected_output": "0\n", "tags": ["invalid"],
-    })
+def test_refill_failure_keeps_already_verified_cases():
     calls = []
 
     def request(messages, schema, stage):
         calls.append(stage)
         if stage == "assignment_test_generation_single_pass":
-            return generated
-        payload = json.loads(messages[1]["content"])
-        return {
-            "verifications": [
-                {"id": "basic", "input": "2 3\n", "input_is_valid": True, "expected_output": "5\n", "reason": ""},
-                {"id": "negative", "input": "-4 7\n", "input_is_valid": True, "expected_output": "999\n", "reason": ""},
-                {"id": "ambiguous", "input": "not-a-number\n", "input_is_valid": False, "expected_output": "", "reason": "Input is not valid under the assignment."},
-            ]
-        }
+            return sample_response()
+        if stage == "assignment_expected_output_verification_single_pass":
+            payload = json.loads(messages[1]["content"])
+            return {"verifications": [
+                {
+                    "id": case["id"],
+                    "input": case["input"],
+                    "input_is_valid": case["id"] == "basic",
+                    "expected_output": "5\n" if case["id"] == "basic" else "",
+                    "reason": "" if case["id"] == "basic" else "Rejected by the assignment verifier.",
+                }
+                for case in payload["test_inputs_to_solve"]
+            ]}
+        if stage == "assignment_test_generation_repair":
+            raise RuntimeError("temporary model endpoint failure")
+        raise AssertionError(f"Unexpected stage: {stage}")
 
-    spec, _ = generate_assignment_test_spec(
+    spec, history = generate_assignment_test_spec(
         problem="Read two integers and print their sum.",
         problem_contract={},
         request_json=request,
-        max_cases=1,
+        max_cases=2,
     )
 
+    assert [case["id"] for case in spec["test_inputs"]] == ["basic"]
+    assert spec["generation_response_count"] == 1
+    assert history[1]["status"] == "failed"
+    assert "temporary model endpoint failure" in history[1]["error"]
     assert calls == [
         "assignment_test_generation_single_pass",
         "assignment_expected_output_verification_single_pass",
+        "assignment_test_generation_repair",
     ]
-    assert [case["id"] for case in spec["test_inputs"]] == ["basic"]
-    reasons = {item["id"]: item["reason"] for item in spec["rejected_generated_cases"]}
-    assert "disagreed" in reasons["negative"]
-    assert "invalid or ambiguous" in reasons["ambiguous"]
 
+
+def test_edge_case_runner_recognizes_boundary_in_test_id(tmp_path):
+    from grading_agent.testing.test_generation import prepare_assignment_test_suite
+
+    rules = {
+        "problem": "Read two integers and print their sum.",
+        "problem_contract": {},
+        "project_root": str(tmp_path),
+        "metrics": [{
+            "name": "logical",
+            "analyzer": "edge_case_runner",
+            "enabled": True,
+            "params": {},
+        }],
+        "test_generation": {"enabled": True, "seed": 42, "max_cases": 1},
+    }
+
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            response = sample_response()
+            response["test_inputs"] = [{
+                "id": "boundary_case",
+                "input": "9 1\n",
+                "expected_output": "10\n",
+                "tags": ["normal"],
+            }]
+            return response
+        payload = json.loads(messages[1]["content"])
+        return verifier_response(payload["test_inputs_to_solve"])
+
+    result = prepare_assignment_test_suite(
+        rules,
+        sandbox=None,
+        request_json=request,
+        project_root=tmp_path,
+        model_id="qwen-test",
+    )
+
+    assert result["generated_test_count"] == 1
+    assert result["edge_test_count"] == 1
+    edge_cases = json.loads(Path(result["edge_testset_path"]).read_text(encoding="utf-8"))
+    assert edge_cases[0]["id"] == "generated-boundary_case"
+
+
+def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
 
 def test_missing_verifier_result_fails_closed():
     def request(messages, schema, stage):
