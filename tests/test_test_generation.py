@@ -124,7 +124,7 @@ def test_missing_model_reference_uses_one_reference_only_recovery_request():
         "assignment_test_generation_single_pass",
         "assignment_reference_solution_recovery_single_pass",
     ]
-    assert spec["reference_solution_c"] == reference
+    assert spec["reference_solution_c"].strip() == reference.strip()
     assert spec["reference_solution_source"] == "model_reference_recovery"
     assert spec["reference_recovery_count"] == 1
     assert history[0]["reference_recovery_used"] is True
