@@ -217,11 +217,36 @@ def run_configured_analyzers(
         }
 
         # Generate a reproducible assignment-level suite from the natural-language
-        # problem statement before running execution analyzers. The student source
-        # is never included in test-generation prompts.
+        # problem statement before running execution analyzers, unless the UI has
+        # already generated and explicitly attached a validated suite. In the UI
+        # workflow generation is a separate user action; grading must not call
+        # the generator a second time.
         report["test_generation"] = {"status": "not_required"}
         testing_cfg = rules.get("test_generation", {})
-        if sandbox is not None and isinstance(testing_cfg, dict) and testing_cfg.get("enabled", True):
+        pre_generated_suite = (
+            testing_cfg.get("pre_generated_suite")
+            if isinstance(testing_cfg, dict) else None
+        )
+        if isinstance(pre_generated_suite, dict) and pre_generated_suite.get("status") == "completed":
+            report["test_generation"] = {
+                **pre_generated_suite,
+                "status": "completed",
+                "source": "pre_generated_by_ui",
+                "request_events": [],
+            }
+            report["test_generation"].setdefault("suite_path", None)
+            missing_bindings = [
+                str(metric.get("name", metric.get("analyzer", "unknown")))
+                for metric in enabled_metrics
+                if metric.get("analyzer") in EXECUTION_ANALYZERS
+                and not metric.get("params", {}).get("resolved_testset_path")
+            ]
+            if missing_bindings:
+                report["test_generation"].update({
+                    "status": "unavailable",
+                    "error": "The pre-generated suite is missing testset bindings for: " + ", ".join(missing_bindings),
+                })
+        elif sandbox is not None and isinstance(testing_cfg, dict) and testing_cfg.get("enabled", True):
             execution_metrics_present = any(
                 item.get("enabled", True) and item.get("analyzer") in
                 {"io_tests", "edge_case_runner", "memory_safety", "runtime_profile"}
@@ -273,6 +298,8 @@ def run_configured_analyzers(
                         model_id=str(settings.runtime_value("MODEL")),
                         generation_seed=settings.SEED,
                         temperature=float(settings.runtime_value("TEMPERATURE")),
+                        submission_source=source_code,
+                        submission_filename=source_filename,
                     )
                     report["test_generation"]["request_events"] = generation_request_events
                 except Exception as exc:

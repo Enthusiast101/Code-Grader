@@ -27,6 +27,7 @@ OCEAN_UI_CSS = """
 .gradio-container {max-width: 1480px !important; margin: 0 auto !important;}
 #app-header {padding: 0.5rem 0 0.2rem 0;}
 #grade-button {min-height: 3.1rem; font-size: 1.05rem;}
+#generate-tests-button {min-height: 3.1rem; font-size: 1.05rem;}
 .compact-note {opacity: 0.78;}
 #grading-progress:empty {display: none;}
 .grade-progress-card {display: flex; gap: 1rem; align-items: flex-start; margin: 0.8rem 0 1rem; padding: 1rem 1.1rem; border: 1px solid rgba(25, 140, 160, .3); border-radius: 16px; background: linear-gradient(120deg, rgba(14, 116, 144, .1), rgba(20, 184, 166, .08)); overflow: hidden;}
@@ -453,6 +454,7 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
         tags = case.get("tags", [])
         case_rows.append([
             case_id,
+            "Instructor" if case.get("origin") == "instructor" else "LLM-generated",
             ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else "",
             case_input,
             str(case.get("expected", "")),
@@ -571,6 +573,319 @@ def load_source_editor_from_upload(source_upload: Any):
         return "", "", f"Could not load source: {type(exc).__name__}: {exc}"
 
 
+def _select_submission_inputs(
+    source_upload: Any,
+    source_code_editor: str,
+    source_editor_hash: str,
+    rules_upload: Any,
+    rules_json_text: str,
+    rules_editor_source_hash: str,
+) -> tuple[str, str, str, Path | None, str, bool]:
+    """Resolve the exact source and rules content used by both UI stages."""
+    uploaded_source_path = _upload_path(source_upload, "C source") if source_upload is not None else None
+    if uploaded_source_path is not None and uploaded_source_path.suffix.lower() != ".c":
+        raise ValueError("The submission must be a .c file.")
+    if uploaded_source_path is not None and uploaded_source_path.stat().st_size > settings.UI_MAX_UPLOAD_BYTES:
+        raise ValueError(f"The source file exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
+    editor_source = str(source_code_editor or "")
+    if uploaded_source_path is not None:
+        uploaded_source = uploaded_source_path.read_text(encoding="utf-8")
+        source_code = (
+            editor_source
+            if source_editor_hash and source_editor_hash == _sha256_text(uploaded_source) and editor_source
+            else uploaded_source
+        )
+    elif editor_source.strip():
+        source_code = editor_source
+    else:
+        raise ValueError("Upload a C source file or paste C code into the editor.")
+    if len(source_code.encode("utf-8")) > settings.UI_MAX_UPLOAD_BYTES:
+        raise ValueError(f"The source code exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
+
+    editor_text = str(rules_json_text or "").strip()
+    uploaded_rules_path: Path | None = None
+    uploaded_rules_text = ""
+    uploaded_rules_hash = ""
+    if rules_upload is not None:
+        uploaded_rules_path = _upload_path(rules_upload, "rules JSON")
+        uploaded_rules_text = uploaded_rules_path.read_text(encoding="utf-8")
+        uploaded_rules_hash = _sha256_text(uploaded_rules_text)
+
+    if uploaded_rules_path is not None:
+        if rules_editor_source_hash and rules_editor_source_hash == uploaded_rules_hash and editor_text:
+            raw_rules = editor_text
+            selected_rules_source = "edited Gradio rules editor"
+        else:
+            raw_rules = uploaded_rules_text
+            selected_rules_source = "uploaded rules file"
+    elif editor_text:
+        raw_rules = editor_text
+        selected_rules_source = "manually entered Gradio rules editor"
+    else:
+        raise ValueError("Upload a rules JSON file or enter rules in the editor.")
+
+    stale_editor = bool(
+        uploaded_rules_path is not None
+        and rules_editor_source_hash
+        and rules_editor_source_hash != uploaded_rules_hash
+    )
+    return (
+        source_code, raw_rules, selected_rules_source,
+        uploaded_rules_path, uploaded_rules_hash, stale_editor,
+    )
+
+
+def generate_test_cases_for_submission(
+    source_upload: Any,
+    source_code_editor: str,
+    source_editor_hash: str,
+    rules_upload: Any,
+    rules_json_text: str,
+    rules_editor_source_hash: str,
+    time_limit_s: float,
+    memory_limit_mb: float,
+    docker_cpu_limit: float,
+    temperature: float,
+    model_name: str,
+    read_timeout_s: float,
+    max_generated_cases: float,
+    additional_test_focus: str,
+    enable_thinking: bool,
+):
+    """Run the explicit first UI step: understand source, then generate tests."""
+    stage_dir: Path | None = None
+    generation_process = None
+    request_event_token = None
+    generation_request_events: list[dict[str, Any]] = []
+    try:
+        (
+            source_code, raw_rules, selected_rules_source,
+            uploaded_rules_path, uploaded_rules_hash, stale_editor,
+        ) = _select_submission_inputs(
+            source_upload, source_code_editor, source_editor_hash,
+            rules_upload, rules_json_text, rules_editor_source_hash,
+        )
+        rules = json.loads(raw_rules)
+        if not isinstance(rules, dict) or not isinstance(rules.get("submission"), dict):
+            raise ValueError("The rules JSON must contain a submission object.")
+        _normalize_legacy_metric_profile(rules)
+        if isinstance(max_generated_cases, bool) or not 1 <= int(max_generated_cases) <= 60:
+            raise ValueError("Generated test-case target must be between 1 and 60. Set the slider to 0 to grade without generating cases.")
+        if not isinstance(additional_test_focus, str) or len(additional_test_focus) > 500:
+            raise ValueError("Test variation focus must be at most 500 characters.")
+        for name, value in (("time_limit_s", time_limit_s), ("memory_limit_mb", memory_limit_mb), ("docker_cpu_limit", docker_cpu_limit)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be a finite positive number.")
+        if int(memory_limit_mb) != memory_limit_mb:
+            raise ValueError("Docker memory limit must be a whole number of MB.")
+        if not 0.0 <= float(temperature) <= 1.0:
+            raise ValueError("LLM temperature must be between 0 and 1.")
+        if not 10 <= float(read_timeout_s) <= 900:
+            raise ValueError("LLM read timeout must be between 10 and 900 seconds.")
+        model_name = str(model_name or "").strip()
+        if not model_name:
+            raise ValueError("Model name cannot be empty.")
+
+        test_generation = rules.setdefault("test_generation", {})
+        if not isinstance(test_generation, dict):
+            raise ValueError("test_generation in rules must be a JSON object.")
+        test_generation["enabled"] = int(max_generated_cases) > 0
+        test_generation["max_cases"] = int(max_generated_cases)
+        test_generation["additional_focus"] = additional_test_focus.strip()
+        rules["time_limit_s"] = float(time_limit_s)
+        rules["memory_limit_mb"] = int(memory_limit_mb)
+        rules["_run_metadata"] = {
+            "selection": {
+                "selected_from": selected_rules_source,
+                "uploaded_file_name": uploaded_rules_path.name if uploaded_rules_path else None,
+                "uploaded_file_sha256": uploaded_rules_hash or None,
+                "selected_rules_sha256": _sha256_text(raw_rules),
+                "editor_was_stale": stale_editor,
+            }
+        }
+
+        run_id = uuid.uuid4().hex[:12]
+        stage_dir = settings.GRADIO_STAGING_DIR / run_id
+        stage_dir.mkdir(parents=True, exist_ok=False)
+        staged_source = stage_dir / "submission.c"
+        staged_source.write_text(source_code, encoding="utf-8")
+        rules["submission"]["source_file"] = str(staged_source.relative_to(PROJECT_ROOT))
+        staged_rules = stage_dir / "rules.json"
+        staged_rules.write_text(json.dumps(rules, indent=2), encoding="utf-8")
+
+        from grading_agent.config.rule_loader import load_rules
+        from grading_agent.llm.server import initiate_server
+        from grading_agent.sandbox.docker_sandbox import DockerSandbox
+        from grading_agent.testing.test_generation import prepare_assignment_test_suite
+        from grading_agent.llm.reviewer import _LLM_REQUEST_EVENTS, _request_json
+
+        normalized_rules = load_rules(staged_rules, project_root=PROJECT_ROOT)
+        runtime_options = {
+            "MODEL": model_name,
+            "TEMPERATURE": float(temperature),
+            "LLAMA_REQUEST_TIMEOUT": (settings.LLAMA_REQUEST_CONNECT_TIMEOUT_S, float(read_timeout_s)),
+            "LLAMA_REASONING_ENABLED": bool(enable_thinking),
+            "DOCKER_CPU_LIMIT": float(docker_cpu_limit),
+        }
+        with settings.runtime_overrides(runtime_options):
+            request_event_token = _LLM_REQUEST_EVENTS.set(generation_request_events)
+            if not _generation_server_is_ready():
+                generation_process = initiate_server()
+            requested_cases = int(max_generated_cases)
+            replacement_reserve = min(max(0, 80 - requested_cases), max(3, (requested_cases + 3) // 4))
+            candidate_count = requested_cases + replacement_reserve
+            generation_token_budget = max(
+                int(settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS") or 0),
+                min(settings.LLAMA_CONTEXT_SIZE, 2048 + candidate_count * 192),
+            )
+
+            def generation_request(messages, schema, stage_name):
+                parsed, _raw = _request_json(
+                    messages,
+                    max_tokens=generation_token_budget,
+                    enable_thinking=None,
+                    response_schema=schema,
+                    schema_name=stage_name,
+                )
+                return parsed
+
+            with DockerSandbox(
+                memory_limit=f"{int(memory_limit_mb)}m",
+                cpu_limit=float(docker_cpu_limit),
+            ) as sandbox:
+                result = prepare_assignment_test_suite(
+                    normalized_rules,
+                    sandbox=sandbox,
+                    request_json=generation_request,
+                    project_root=PROJECT_ROOT,
+                    model_id=model_name,
+                    generation_seed=settings.SEED,
+                    temperature=float(temperature),
+                    submission_source=source_code,
+                    submission_filename=staged_source.name,
+                )
+            result["request_events"] = generation_request_events
+
+        if result.get("status") != "completed":
+            raise ValueError(result.get("reason") or "Test generation did not complete.")
+        suite_path = Path(str(result.get("suite_path", ""))).resolve()
+        if not suite_path.is_file() or not suite_path.is_relative_to(PROJECT_ROOT.resolve()):
+            raise ValueError("The generated test-suite artifact is missing or outside the project directory.")
+        frozen = json.loads(suite_path.read_text(encoding="utf-8"))
+        cases = frozen.get("test_cases", []) if isinstance(frozen, dict) else []
+        if not isinstance(cases, list) or not cases:
+            raise ValueError("The generated test-suite artifact contains no test cases.")
+        metric_paths = result.get("metric_testset_paths", {})
+        if not isinstance(metric_paths, dict) or not metric_paths:
+            raise ValueError("No execution metrics were bound to the generated test suite.")
+        submission_analysis = result.get("submission_analysis")
+        if (
+            not isinstance(submission_analysis, dict)
+            or not isinstance(submission_analysis.get("implementation_summary"), str)
+            or not submission_analysis.get("implementation_summary", "").strip()
+        ):
+            raise ValueError("The LLM did not complete its analysis of the submitted C source. No grading was started.")
+        manifest = {
+            "status": "completed",
+            "source_sha256": _sha256_text(source_code),
+            "rules_sha256": _sha256_text(raw_rules),
+            "requested_generated_test_count": int(max_generated_cases),
+            "additional_test_focus": additional_test_focus.strip(),
+            "assignment_fingerprint": result.get("assignment_fingerprint"),
+            "suite_path": str(suite_path),
+            "metric_testset_paths": {str(key): str(value) for key, value in metric_paths.items()},
+            "instructor_test_count": int(result.get("instructor_test_count", 0)),
+            "generated_test_count": int(result.get("generated_test_count", 0)),
+            "total_test_count": int(result.get("total_test_count", len(cases))),
+            "edge_test_count": int(result.get("edge_test_count", 0)),
+            "reference_solution_source": result.get("reference_solution_source"),
+            "oracle_kind": result.get("oracle_kind"),
+            "oracle_caveat": result.get("oracle_caveat"),
+            "source_analysis": submission_analysis,
+        }
+        if manifest["generated_test_count"] != int(max_generated_cases):
+            raise ValueError(
+                f"The LLM generated {manifest['generated_test_count']} additional cases, "
+                f"but {int(max_generated_cases)} were requested. Please generate again."
+            )
+
+        preview_rows = []
+        for index, case in enumerate(cases, 1):
+            if not isinstance(case, dict):
+                continue
+            preview_rows.append([
+                str(case.get("id", index)),
+                "Instructor" if case.get("origin") == "instructor" else "LLM-generated",
+                ", ".join(str(tag) for tag in case.get("tags", []) if isinstance(tag, str)),
+                str(case.get("input", "")),
+                str(case.get("expected", "")),
+                "",
+                "Ready to grade",
+            ])
+        implementation_summary = submission_analysis.get("implementation_summary", "").strip()
+        likely_weak_points = submission_analysis.get("likely_weak_points", [])
+        weak_point_text = "\n".join(
+            f"- {item}" for item in likely_weak_points if isinstance(item, str) and item.strip()
+        ) or "- No specific weakness was identified by the analysis stage."
+        status = (
+            f"## Test cases generated successfully\n\n"
+            f"**{manifest['generated_test_count']} additional LLM-generated cases** + "
+            f"**{manifest['instructor_test_count']} unique instructor cases** = "
+            f"**{manifest['total_test_count']} cases ready for grading.**\n\n"
+            "### What the LLM understood from the submitted C code\n\n"
+            f"{implementation_summary}\n\n"
+            f"**Potential weaknesses targeted:**\n{weak_point_text}\n\n"
+            "Expected outputs were produced by the reference solution. Review the combined suite below, "
+            "then click **Grade Submission**."
+        )
+        return status, manifest, preview_rows, gr.update(interactive=True)
+    except Exception as exc:
+        logger.exception("Test-case generation request failed")
+        return (
+            f"## Test-case generation failed\n\n`{type(exc).__name__}: {exc}`\n\n"
+            "No grading was started. Correct the inputs or model settings and generate the suite again.",
+            {},
+            [],
+            gr.update(interactive=False),
+        )
+    finally:
+        if request_event_token is not None:
+            try:
+                from grading_agent.llm.reviewer import _LLM_REQUEST_EVENTS
+                _LLM_REQUEST_EVENTS.reset(request_event_token)
+            except Exception:
+                pass
+        if generation_process is not None:
+            from grading_agent.main import _stop_llm_server
+            _stop_llm_server(generation_process)
+        if stage_dir is not None:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def invalidate_generated_test_suite(max_generated_cases: float = 0):
+    """Clear stale suite state and gate grading based on the requested case count."""
+    return (
+        (
+            "No generated test cases requested. Grading can run with instructor-configured tests."
+            if int(max_generated_cases or 0) == 0
+            else "**The generated suite is no longer current.** Click **Generate Test Cases** again before grading."
+        ),
+        {},
+        [],
+        gr.update(interactive=int(max_generated_cases or 0) == 0),
+    )
+
+
+def _generation_server_is_ready() -> bool:
+    """Small local readiness check used only by the explicit generate action."""
+    import requests
+    try:
+        response = requests.get(settings.LLAMA_HEALTH_URL, timeout=settings.LLAMA_HEALTH_TIMEOUT_S)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
 def grade_uploaded_submission(
     source_upload: Any,
     source_code_editor: str,
@@ -597,55 +912,19 @@ def grade_uploaded_submission(
     rules_editor_source_hash: str = "",
     max_generated_cases: float = 60,
     additional_test_focus: str = "",
+    generated_suite_state: dict[str, Any] | None = None,
 ):
-    """Stage files, apply per-run controls, and execute grading in isolation."""
+    """Stage files and grade only against the suite created by the Generate button."""
     stage_dir: Path | None = None
     source_code = ""
     try:
-        uploaded_source_path = _upload_path(source_upload, "C source") if source_upload is not None else None
-        if uploaded_source_path is not None and uploaded_source_path.suffix.lower() != ".c":
-            raise ValueError("The submission must be a .c file.")
-        if uploaded_source_path is not None and uploaded_source_path.stat().st_size > settings.UI_MAX_UPLOAD_BYTES:
-            raise ValueError(f"The source file exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
-        editor_source = str(source_code_editor or "")
-        if uploaded_source_path is not None:
-            uploaded_source = uploaded_source_path.read_text(encoding="utf-8")
-            if source_editor_hash and source_editor_hash == _sha256_text(uploaded_source) and editor_source:
-                source_code = editor_source
-            else:
-                source_code = uploaded_source
-        elif editor_source.strip():
-            source_code = editor_source
-        else:
-            raise ValueError("Upload a C source file or paste C code into the editor.")
-        if len(source_code.encode("utf-8")) > settings.UI_MAX_UPLOAD_BYTES:
-            raise ValueError(f"The source code exceeds the {settings.UI_MAX_UPLOAD_BYTES} byte project limit.")
-
-        editor_text = str(rules_json_text or "").strip()
-        uploaded_path: Path | None = None
-        uploaded_text = ""
-        uploaded_hash = ""
-        if rules_upload is not None:
-            uploaded_path = _upload_path(rules_upload, "rules JSON")
-            uploaded_text = uploaded_path.read_text(encoding="utf-8")
-            uploaded_hash = _sha256_text(uploaded_text)
-
-        # The editable panel is authoritative only when it was populated from
-        # the currently uploaded file. If a new file has replaced that upload
-        # but the browser still submits an older editor value, prefer the new
-        # upload instead of silently grading against stale assignment rules.
-        if uploaded_path is not None:
-            if rules_editor_source_hash and rules_editor_source_hash == uploaded_hash and editor_text:
-                raw_rules = editor_text
-                selected_rules_source = "edited Gradio rules editor"
-            else:
-                raw_rules = uploaded_text
-                selected_rules_source = "uploaded rules file"
-        elif editor_text:
-            raw_rules = editor_text
-            selected_rules_source = "manually entered Gradio rules editor"
-        else:
-            raise ValueError("Upload a rules JSON file or enter rules in the editor.")
+        (
+            source_code, raw_rules, selected_rules_source,
+            uploaded_path, uploaded_hash, stale_rules_editor,
+        ) = _select_submission_inputs(
+            source_upload, source_code_editor, source_editor_hash,
+            rules_upload, rules_json_text, rules_editor_source_hash,
+        )
 
         rules = json.loads(raw_rules)
         if not isinstance(rules, dict) or not isinstance(rules.get("submission"), dict):
@@ -659,11 +938,7 @@ def grade_uploaded_submission(
                 "uploaded_file_sha256": uploaded_hash or None,
                 "editor_base_sha256": rules_editor_source_hash or None,
                 "selected_rules_sha256": selected_rules_hash,
-                "editor_was_stale": bool(
-                    uploaded_path is not None
-                    and rules_editor_source_hash
-                    and rules_editor_source_hash != uploaded_hash
-                ),
+                "editor_was_stale": stale_rules_editor,
             },
             "metric_profile_migration": metric_profile_migration,
         }
@@ -683,16 +958,71 @@ def grade_uploaded_submission(
         if int(memory_limit_mb) != memory_limit_mb:
             raise ValueError("Docker memory limit must be a whole number of MB.")
 
-        if isinstance(max_generated_cases, bool) or not 1 <= int(max_generated_cases) <= 60:
-            raise ValueError("Generated test-case target must be between 1 and 60.")
+        if isinstance(max_generated_cases, bool) or not 0 <= int(max_generated_cases) <= 60:
+            raise ValueError("Generated test-case target must be between 0 and 60.")
         if not isinstance(additional_test_focus, str) or len(additional_test_focus) > 500:
             raise ValueError("Test variation focus must be at most 500 characters.")
         test_generation = rules.setdefault("test_generation", {})
         if not isinstance(test_generation, dict):
             raise ValueError("test_generation in rules must be a JSON object.")
-        test_generation["enabled"] = True
+        test_generation["enabled"] = int(max_generated_cases) > 0
         test_generation["max_cases"] = int(max_generated_cases)
         test_generation["additional_focus"] = additional_test_focus.strip()
+
+        if int(max_generated_cases) == 0:
+            test_generation.pop("pre_generated_suite", None)
+        else:
+            # The UI uses two explicit actions. Never call the LLM generator from
+            # the grading action: require and verify the artifact created earlier.
+            if not isinstance(generated_suite_state, dict) or generated_suite_state.get("status") != "completed":
+                raise ValueError("Generate test cases first. Select the requested count and click 'Generate Test Cases' before grading.")
+            if generated_suite_state.get("source_sha256") != _sha256_text(source_code):
+                raise ValueError("The C submission changed after test generation. Generate test cases again before grading.")
+            if generated_suite_state.get("rules_sha256") != _sha256_text(raw_rules):
+                raise ValueError("The assignment rules changed after test generation. Generate test cases again before grading.")
+            if int(generated_suite_state.get("requested_generated_test_count", -1)) != int(max_generated_cases):
+                raise ValueError("The selected testcase count changed after generation. Generate test cases again before grading.")
+            if str(generated_suite_state.get("additional_test_focus", "")) != additional_test_focus.strip():
+                raise ValueError("The test variation focus changed after generation. Generate test cases again before grading.")
+
+            suite_path = Path(str(generated_suite_state.get("suite_path", ""))).resolve()
+            if not suite_path.is_file() or not suite_path.is_relative_to(PROJECT_ROOT.resolve()):
+                raise ValueError("The generated test suite is missing or outside the project directory. Generate it again.")
+            metric_paths = generated_suite_state.get("metric_testset_paths")
+            if not isinstance(metric_paths, dict) or not metric_paths:
+                raise ValueError("The generated test suite has no metric bindings. Generate it again.")
+            execution_analyzers = {"io_tests", "edge_case_runner", "memory_safety", "runtime_profile"}
+            bound_paths: dict[str, str] = {}
+            for metric in rules.get("metrics", []):
+                if not isinstance(metric, dict) or not metric.get("enabled", True) or metric.get("analyzer") not in execution_analyzers:
+                    continue
+                metric_name = str(metric.get("name", ""))
+                path_value = metric_paths.get(metric_name)
+                if not isinstance(path_value, str):
+                    raise ValueError(f"The generated suite has no testcase file for metric '{metric_name}'. Generate it again.")
+                resolved_path = Path(path_value).resolve()
+                if not resolved_path.is_file() or not resolved_path.is_relative_to(PROJECT_ROOT.resolve()):
+                    raise ValueError(f"The generated testcase file for '{metric_name}' is missing or invalid.")
+                relative_path = resolved_path.relative_to(PROJECT_ROOT.resolve()).as_posix()
+                metric.setdefault("params", {})["testset_path"] = relative_path
+                bound_paths[metric_name] = relative_path
+
+            test_generation["pre_generated_suite"] = {
+                "status": "completed",
+                "assignment_fingerprint": generated_suite_state.get("assignment_fingerprint"),
+                "suite_path": str(suite_path),
+                "metric_testset_paths": bound_paths,
+                "instructor_test_count": int(generated_suite_state.get("instructor_test_count", 0)),
+                "generated_test_count": int(generated_suite_state.get("generated_test_count", 0)),
+                "requested_generated_test_count": int(generated_suite_state.get("requested_generated_test_count", 0)),
+                "total_test_count": int(generated_suite_state.get("total_test_count", 0)),
+                "edge_test_count": int(generated_suite_state.get("edge_test_count", 0)),
+                "reference_solution_source": generated_suite_state.get("reference_solution_source"),
+                "oracle_kind": generated_suite_state.get("oracle_kind"),
+                "oracle_caveat": generated_suite_state.get("oracle_caveat"),
+                "source_analysis": generated_suite_state.get("source_analysis", {}),
+            }
+            rules["_run_metadata"]["generated_test_suite"] = test_generation["pre_generated_suite"]
 
         # Sanitizer control is reflected into the metric's validated params.
         for metric in rules.get("metrics", []):
@@ -742,7 +1072,7 @@ def grade_uploaded_submission(
             "LLM_PROGRAM_SOURCE_MAX_CHARS": int(source_chars),
             "LLM_GLOBAL_SOURCE_MAX_CHARS": int(source_chars),
             "LLM_MAX_EVIDENCE_CHARS": int(evidence_chars),
-            "LLAMA_REASONING_ENABLED": True,
+            "LLAMA_REASONING_ENABLED": bool(enable_thinking),
             "LLAMA_REASONING_FORMAT": "deepseek",
             "LLAMA_REASONING_BUDGET": settings.LLAMA_REASONING_BUDGET,
             "LLAMA_JSON_GRAMMAR_ENABLED": True,
@@ -1008,7 +1338,7 @@ def build_app() -> gr.Blocks:
     with gr.Blocks(title="Code Grader") as demo:
         gr.Markdown(
             "# Code Grader\n"
-            "Edit or upload C code, choose test variations, then review the grade, executed cases, and findings in separate panels.",
+            "Upload your C submission and assignment rules. Generate additional test cases if needed, or grade with the instructor-configured tests.",
             elem_id="app-header",
         )
         with gr.Tab("Grade a C submission"):
@@ -1023,13 +1353,18 @@ def build_app() -> gr.Blocks:
             )
             with gr.Row():
                 max_generated_cases = gr.Slider(
-                    1, 60, value=12, step=1, label="Generated test case target",
-                    info="Requests this many additional cases. Instructor cases are preserved and included in the final suite.",
+                    0, 60, value=0, step=1, label="Generated test case target",
+                    info="Requests this many additional LLM-generated cases. Existing instructor cases are kept and included too.",
                 )
                 additional_test_focus = gr.Textbox(
                     label="Test variation focus (optional)",
                     placeholder="For example: duplicate values, zero values, and boundary sizes",
                     lines=2, max_lines=3, max_length=500,
+                )
+            with gr.Row():
+                gr.Markdown("Generate additional cases (optional):")
+                generate_button = gr.Button(
+                    "Generate Test Cases", variant="primary", elem_id="generate-tests-button"
                 )
             rules_editor_source_hash = gr.State("")
             with gr.Accordion("Assignment rules", open=False):
@@ -1048,7 +1383,7 @@ def build_app() -> gr.Blocks:
                     memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
                     docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
                     run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
-            with gr.Accordion("LLM and context options", open=False):
+            with gr.Accordion("LLM and context options", open=True):
                 with gr.Row():
                     rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS, step=1, label="RSI iterations")
                     llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature")
@@ -1067,19 +1402,13 @@ def build_app() -> gr.Blocks:
                 with gr.Row():
                     context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED, label="Enable same-model compression")
                     compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS, step=256, label="Compression threshold")
-            source_file.change(
-                load_source_editor_from_upload,
-                inputs=[source_file],
-                outputs=[source_editor, source_editor_hash, source_status],
-                show_progress="hidden",
+            generated_suite_state = gr.State({})
+            generation_status = gr.Markdown(
+                "No generated test cases requested. Grading can run with instructor-configured tests."
             )
-            rules_file.change(
-                load_rules_editor_from_upload,
-                inputs=[rules_file],
-                outputs=[rules_editor, time_limit, memory_limit, rules_status, rules_editor_source_hash],
-                show_progress="hidden",
+            grade_button = gr.Button(
+                "Grade Submission", variant="secondary", elem_id="grade-button", interactive=True,
             )
-            grade_button = gr.Button("Generate test variations & grade", variant="primary", elem_id="grade-button")
             grading_progress = gr.HTML(value="", elem_id="grading-progress")
             with gr.Tabs():
                 with gr.Tab("Overview"):
@@ -1091,12 +1420,13 @@ def build_app() -> gr.Blocks:
                         label="Metric results", max_chars=360,
                     )
                 with gr.Tab("Test cases"):
-                    test_cases_table = gr.Dataframe(
-                        headers=["Case", "Tags", "Input", "Expected", "Actual", "Result"],
-                        datatype=["str", "str", "str", "str", "str", "str"],
-                        value=[], interactive=False, wrap=True, show_search="filter",
-                        label="Case details", max_chars=1200,
-                    )
+                    with gr.Accordion("Generated and graded test cases", open=False):
+                        test_cases_table = gr.Dataframe(
+                            headers=["Case", "Origin", "Tags", "Input", "Expected", "Actual", "Result"],
+                            datatype=["str", "str", "str", "str", "str", "str", "str"],
+                            value=[], interactive=False, wrap=True, show_search="filter",
+                            label="Case details", max_chars=1200,
+                        )
                 with gr.Tab("Findings"):
                     findings_table = gr.Dataframe(
                         headers=["Severity", "Metric", "Lines", "Finding", "Evidence"],
@@ -1113,6 +1443,65 @@ def build_app() -> gr.Blocks:
                     with gr.Row():
                         report_json = gr.File(label="JSON report")
                         report_text = gr.File(label="Readable report")
+            source_file.change(
+                load_source_editor_from_upload,
+                inputs=[source_file],
+                outputs=[source_editor, source_editor_hash, source_status],
+                show_progress="hidden",
+            ).then(
+                invalidate_generated_test_suite,
+                inputs=[max_generated_cases],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="hidden",
+            )
+            source_editor.change(
+                invalidate_generated_test_suite,
+                inputs=[max_generated_cases],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="hidden",
+            )
+            rules_file.change(
+                load_rules_editor_from_upload,
+                inputs=[rules_file],
+                outputs=[rules_editor, time_limit, memory_limit, rules_status, rules_editor_source_hash],
+                show_progress="hidden",
+            ).then(
+                invalidate_generated_test_suite,
+                inputs=[max_generated_cases],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="hidden",
+            )
+            rules_editor.change(
+                invalidate_generated_test_suite,
+                inputs=[max_generated_cases],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="hidden",
+            )
+            max_generated_cases.change(
+                invalidate_generated_test_suite,
+                inputs=[max_generated_cases],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="hidden",
+            )
+            additional_test_focus.change(
+                invalidate_generated_test_suite,
+                inputs=[max_generated_cases],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="hidden",
+            )
+            generate_button.click(
+                generate_test_cases_for_submission,
+                inputs=[
+                    source_file, source_editor, source_editor_hash,
+                    rules_file, rules_editor, rules_editor_source_hash,
+                    time_limit, memory_limit, docker_cpu,
+                    llm_temperature_ui, model_name_ui, llm_timeout_ui,
+                    max_generated_cases, additional_test_focus, thinking_ui,
+                ],
+                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
+                show_progress="full",
+                scroll_to_output=True,
+            )
             grade_button.click(
                 grade_uploaded_submission_with_progress,
                 inputs=[
@@ -1124,6 +1513,7 @@ def build_app() -> gr.Blocks:
                     thinking_ui, run_sanitizers, context_compression_ui,
                     compression_threshold_ui, rules_editor_source_hash,
                     max_generated_cases, additional_test_focus,
+                    generated_suite_state,
                 ],
                 outputs=[grading_progress, grade_summary, metrics_table, test_cases_table, findings_table, graded_source, report_json, report_text],
                 show_progress="hidden", scroll_to_output=True,

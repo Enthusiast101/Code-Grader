@@ -1,0 +1,157 @@
+{
+  "problem": "Read an integer N (1 <= N <= 1000), followed by N signed 32-bit integers. Accumulate their sum in a signed 64-bit integer, divide using floating-point arithmetic, and print the arithmetic mean with exactly two digits after the decimal point followed by a newline.",
+  "problem_contract": {
+    "description": "Compute the arithmetic mean without truncating fractional results. Use a floating-point division after accumulating safely.",
+    "operand_type": "signed integers",
+    "sum_type": "64-bit signed integer",
+    "input_range": "1 <= N <= 1000; each value fits in signed 32-bit integer",
+    "output_rule": "Print the arithmetic mean with exactly two digits after the decimal point."
+  },
+  "time_limit_s": 2.0,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": ".gradio_runs\\096012aaac6e\\submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/03-computation-average/testcases.json"
+      },
+      "max_points": 20,
+      "grade_contribution": true
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/03-computation-average/edge_cases.json"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "runtime_efficiency",
+      "analyzer": "runtime_profile",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": null,
+        "target_runtime_ms": 1000,
+        "repetitions": 3
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/assignments/03-computation-average/memory_cases.json",
+        "run_sanitizers": true
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "originality",
+      "analyzer": "similarity_flag",
+      "weight": 0.0,
+      "enabled": false,
+      "params": {
+        "corpus_dir": "submissions",
+        "flag_threshold": 0.85,
+        "max_files": 5000,
+        "shingle_size": 5
+      },
+      "max_points": 0,
+      "grade_contribution": false
+    }
+  ],
+  "test_generation": {
+    "enabled": true,
+    "max_cases": 5,
+    "reference_solution_path": "examples/assignments/03-computation-average/reference_solution.c",
+    "additional_focus": ""
+  },
+  "_run_metadata": {
+    "selection": {
+      "selected_from": "edited Gradio rules editor",
+      "uploaded_file_name": "rules.json",
+      "uploaded_file_sha256": "63becd02bdf76c635f34ee2d2d50967e30f39813f7a71d0e328a0613d4e92066",
+      "selected_rules_sha256": "f2af8b2cc69e646d2bbaeaab02cc0a1440acb06f1e16842688b511c00c81708b",
+      "editor_was_stale": false
+    }
+  }
+}

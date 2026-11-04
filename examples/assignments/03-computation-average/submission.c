@@ -1,21 +1,22 @@
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 
 int main(void) {
     int count;
-    if (scanf("%d", &count) != 1 || count <= 0) {
+    if (scanf("%d", &count) != 1 || count < 1 || count > 1000) {
         return 1;
     }
 
-    long long sum = 0;
+    int64_t sum = 0;
     for (int i = 0; i < count; ++i) {
-        int value;
-        if (scanf("%d", &value) != 1) {
+        int32_t value;
+        if (scanf("%" SCNd32, &value) != 1) {
             return 1;
         }
         sum += value;
     }
 
-    double average = sum / count;
-    printf("%.2f\n", average);
+    printf("%.2f\n", (double)sum / (double)count);
     return 0;
 }

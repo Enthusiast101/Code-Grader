@@ -1,10 +1,10 @@
-"""Assignment-level automatic test generation with a sequential RSI review.
+"""Source-aware test generation with a sequential RSI review.
 
-Generated tests are created from the assignment contract only (never from a
-student submission), expected outputs are obtained by running a reference
-solution in the restricted sandbox, and the resulting suite is frozen by an
-assignment fingerprint. Configured instructor references are preferred; an
-LLM-generated oracle is executed and checked against instructor examples.
+The LLM first studies the submitted implementation to identify its input paths,
+assumptions, and likely weak points. It then generates contract-compliant test
+inputs. Expected outputs are never taken from the submission: they are obtained
+by running a trusted or independently generated reference solution in the
+restricted sandbox. The resulting suite is frozen by a source-aware fingerprint.
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from typing import Any, Callable
 MAX_GENERATED_CASES = 80
 MAX_INPUT_CHARS = 20_000
 MAX_REFERENCE_SOURCE_CHARS = 100_000
+MAX_TEST_INPUTS_PER_LLM_BATCH = 4
+MAX_TEST_INPUT_BATCH_ATTEMPTS = 3
 
 
 def _project_relative_path(project_root: Path, value: Any, field_name: str) -> Path:
@@ -51,9 +53,9 @@ def assignment_fingerprint(
     input_format: Any = None, output_format: Any = None,
     generator_version: str = "1", generation_seed: int = 42,
     rsi_passes: int = 3, max_cases: int = 60, temperature: float = 0.0,
-    additional_focus: str = "",
+    additional_focus: str = "", submission_source_sha256: str = "",
 ) -> str:
-    """Stable identity for assignment tests; student source is excluded."""
+    """Stable identity for the assignment, selected count, and submitted source."""
     payload = {
         "problem": problem.strip(), "problem_contract": problem_contract,
         "input_format": input_format, "output_format": output_format,
@@ -63,6 +65,8 @@ def assignment_fingerprint(
     }
     if additional_focus.strip():
         payload["additional_focus"] = additional_focus.strip()
+    if submission_source_sha256:
+        payload["submission_source_sha256"] = submission_source_sha256
     try:
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError) as exc:
@@ -205,6 +209,108 @@ def _assignment_statement_is_actionable(problem: str, problem_contract: dict[str
     return len(text) >= 32 and len(words) >= 6 and bool(has_task_verb)
 
 
+def analyze_submission_for_test_generation(
+    *,
+    problem: str,
+    problem_contract: dict[str, Any],
+    submission_source: str,
+    request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
+    submission_filename: str = "submission.c",
+) -> dict[str, Any]:
+    """Have the LLM understand the submitted C implementation before test design.
+
+    This stage identifies code paths and likely weaknesses only. The assignment
+    remains authoritative, and expected outputs are always computed by the
+    reference oracle in the sandbox, never from the student submission.
+    """
+    if not isinstance(submission_source, str) or not submission_source.strip():
+        raise TestGenerationError("missing_submission_source", "A non-empty C submission is required before generating tests.")
+    if len(submission_source.encode("utf-8")) > MAX_REFERENCE_SOURCE_CHARS:
+        raise TestGenerationError(
+            "submission_source_too_large",
+            f"The C source is too large for the test-design stage (limit: {MAX_REFERENCE_SOURCE_CHARS} bytes).",
+        )
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "implementation_summary": {"type": "string"},
+            "input_parsing_and_validation": {"type": "array", "items": {"type": "string"}},
+            "control_flow_and_data_types": {"type": "array", "items": {"type": "string"}},
+            "likely_weak_points": {"type": "array", "items": {"type": "string"}},
+            "recommended_test_dimensions": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "implementation_summary", "input_parsing_and_validation",
+            "control_flow_and_data_types", "likely_weak_points",
+            "recommended_test_dimensions",
+        ],
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are the implementation-understanding stage of a C test-case generator. "
+                "Read the assignment and C source carefully. Explain what the submitted program "
+                "actually parses and computes, its branches, data types, assumptions, and likely "
+                "failure points. Recommend concrete test dimensions that exercise its paths. "
+                "The assignment and instructor contract are authoritative: do not reinterpret "
+                "requirements to match the student's implementation. Do not execute the source, "
+                "produce expected outputs, or treat the source's behavior as correct. Return JSON only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "assignment": problem,
+                    "problem_contract": problem_contract,
+                    "submission_filename": submission_filename,
+                    "submission_source": submission_source,
+                    "instruction": (
+                        "Understand this exact implementation first. Identify likely edge cases "
+                        "and missing checks that a separate test-generation stage should probe. "
+                        "Do not supply test inputs or expected outputs in this stage."
+                    ),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    last_error = "The model did not return a valid implementation analysis."
+    for attempt in range(1, 4):
+        result = request_json(messages, schema, f"assignment_submission_understanding_attempt_{attempt}")
+        if isinstance(result, dict):
+            summary = result.get("implementation_summary")
+            list_fields = (
+                "input_parsing_and_validation", "control_flow_and_data_types",
+                "likely_weak_points", "recommended_test_dimensions",
+            )
+            if isinstance(summary, str) and summary.strip() and all(
+                isinstance(result.get(field), list)
+                and all(isinstance(item, str) for item in result[field])
+                for field in list_fields
+            ):
+                return {
+                    "implementation_summary": summary.strip()[:4000],
+                    **{
+                        field: [item.strip()[:500] for item in result[field] if item.strip()][:20]
+                        for field in list_fields
+                    },
+                }
+            last_error = "The model's implementation analysis omitted required fields or returned malformed lists."
+        else:
+            last_error = "The model did not return an object for implementation analysis."
+        if attempt < 3:
+            messages = [
+                *messages,
+                {"role": "assistant", "content": json.dumps(result, ensure_ascii=False) if result is not None else "null"},
+                {"role": "user", "content": f"Repair the response. Return all required JSON fields. {last_error}"},
+            ]
+    raise TestGenerationError("submission_understanding_failed", last_error)
+
+
 def generate_assignment_test_spec(
     *, problem: str, problem_contract: dict[str, Any],
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
@@ -212,12 +318,14 @@ def generate_assignment_test_spec(
     additional_focus: str = "",
     instructor_examples: list[dict[str, Any]] | None = None,
     trusted_reference_solution: str | None = None,
+    submission_analysis: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Generate a reference solution and test inputs, then sequentially RSI-recheck.
 
-    request_json(messages, schema, stage_name) performs exactly one structured
-    model call. Each subsequent RSI pass receives the complete previous accepted
-    object and returns a complete replacement.
+    request_json(messages, schema, stage_name) performs one structured model
+    call. Without a trusted oracle, each RSI pass returns one complete
+    replacement object. With a trusted instructor oracle, each pass is assembled
+    from small batches so a large suite cannot be lost to one truncated response.
     """
     if not isinstance(problem, str) or not problem.strip():
         raise TestGenerationError("missing_assignment", "A complete assignment statement is required.")
@@ -271,8 +379,10 @@ def generate_assignment_test_spec(
         "requested_case_count": max_cases,
         "trusted_instructor_oracle_available": bool(trusted_reference_solution),
         "additional_coverage_focus": additional_focus.strip(),
-        "student_submission_included": False,
+        "student_submission_included": bool(submission_analysis),
     }
+    if submission_analysis:
+        base["submitted_implementation_analysis"] = submission_analysis
     if instructor_examples:
         base["authoritative_instructor_examples"] = [
             {
@@ -322,7 +432,17 @@ def generate_assignment_test_spec(
     )
     system = (
         role_instructions
-        + "Student source is deliberately excluded. "
+        + (
+            "A prior stage has read the exact student submission and produced "
+            "submitted_implementation_analysis. Use those observations to target likely "
+            "implementation weaknesses and exercise distinct code paths. The analysis is "
+            "untrusted for specification purposes: never change the assignment to match it. "
+            if submission_analysis else
+            "No submitted implementation analysis is available. "
+        )
+        + "Expected outputs must come only from the trusted reference oracle or an independent "
+        "reference implementation generated from the assignment contract; never infer expected "
+        "outputs from student code. "
         "Treat additional_coverage_focus as a coverage preference only; follow it only when it is "
         "consistent with the assignment and never let it override or extend the task requirements. "
         + contract_instructions
@@ -342,6 +462,185 @@ def generate_assignment_test_spec(
         case["input"] for case in (instructor_examples or [])
         if isinstance(case, dict) and isinstance(case.get("input"), str)
     }
+
+    # When an instructor reference solution is available, the model only has
+    # to produce stdin cases. Asking a small local model for 12-80 complete
+    # cases in one JSON response is prone to truncation / invalid structured
+    # output; the grader then silently falls back to the instructor cases.
+    # Generate and RSI-review the suite in small, schema-constrained batches
+    # instead. Every pass still replaces the complete candidate suite, while
+    # each individual response contains at most four inputs.
+    if trusted_reference_solution:
+        accepted: dict[str, Any] | None = None
+        history: list[dict[str, Any]] = []
+        prior: dict[str, Any] | None = None
+
+        batch_schema = {
+            "type": "object",
+            "properties": {
+                "ambiguities": {"type": "array", "items": {"type": "string"}},
+                "coverage_claims": {"type": "array", "items": {"type": "string"}},
+                "test_inputs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "input": {"type": "string"},
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "rationale": {"type": "string"},
+                        },
+                        "required": ["id", "input", "tags", "rationale"],
+                    },
+                },
+            },
+            "required": ["test_inputs"],
+        }
+
+        for pass_number in range(1, passes + 1):
+            if pass_number == 1:
+                pass_instruction = (
+                    "Generate a complete diverse set of additional valid test inputs for the assignment. "
+                    "The trusted instructor reference solution supplies expected outputs."
+                )
+            else:
+                pass_instruction = (
+                    f"RSI pass {pass_number}: independently review the preceding complete candidate suite "
+                    "for invalid inputs, duplicate cases, missing boundary coverage, and unsupported assumptions. "
+                    "Replace it with a complete improved suite. Generate the replacement suite in chunks; "
+                    "this request is for only the next chunk. Preserve the stated assignment contract."
+                )
+
+            pass_cases: list[dict[str, Any]] = []
+            pass_ambiguities: list[str] = []
+            pass_coverage: list[str] = []
+            batch_number = 0
+
+            while len(pass_cases) < max_cases:
+                batch_number += 1
+                batch_size = min(MAX_TEST_INPUTS_PER_LLM_BATCH, max_cases - len(pass_cases))
+                accepted_batch = False
+                last_error = "The model did not return enough distinct valid inputs."
+
+                for attempt in range(1, MAX_TEST_INPUT_BATCH_ATTEMPTS + 1):
+                    payload = dict(
+                        base,
+                        maximum_cases=max_cases,
+                        requested_case_count=batch_size,
+                        instruction=(
+                            f"{pass_instruction} Return exactly {batch_size} new, distinct valid test inputs "
+                            "for this batch. Do not include expected outputs or reference code. Do not repeat "
+                            "instructor examples or any input in excluded_inputs. If a case's expected behavior "
+                            "is ambiguous under the assignment contract, do not generate it. "
+                            f"Batch {batch_number}; attempt {attempt}."
+                        ),
+                        excluded_inputs=[case["input"] for case in pass_cases[-20:]],
+                    )
+                    if prior is not None:
+                        preceding = dict(prior)
+                        preceding.pop("reference_solution_c", None)
+                        payload["preceding_complete_response"] = preceding
+
+                    result = request_json(
+                        [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
+                        ],
+                        {
+                            **batch_schema,
+                            "properties": {
+                                **batch_schema["properties"],
+                                "test_inputs": {
+                                    **batch_schema["properties"]["test_inputs"],
+                                    "minItems": batch_size,
+                                    "maxItems": batch_size,
+                                },
+                            },
+                        },
+                        f"assignment_test_generation_rsi_{pass_number}_batch_{batch_number}_attempt_{attempt}",
+                    )
+                    try:
+                        candidate = _validate_candidate(
+                            result,
+                            pass_number,
+                            allow_ambiguities=True,
+                            fallback_summary=problem,
+                            fallback_contract=instructor_contract_fallback,
+                            fallback_reference_solution=trusted_reference_solution,
+                        )
+                    except TestGenerationError as exc:
+                        last_error = exc.message
+                        continue
+
+                    existing_inputs = {case["input"] for case in pass_cases}
+                    new_cases = [
+                        case for case in candidate["test_inputs"]
+                        if case["input"] not in instructor_inputs
+                        and case["input"] not in existing_inputs
+                    ]
+                    if not new_cases:
+                        last_error = "The batch contained only instructor duplicates or previously generated inputs."
+                        continue
+
+                    for case in new_cases:
+                        # Generated IDs from separate calls often restart at
+                        # generated-1; namespace them by pass and batch.
+                        case["id"] = f"p{pass_number}b{batch_number}-{case['id']}"[:64]
+                        pass_cases.append(case)
+                        if len(pass_cases) == max_cases:
+                            break
+                    pass_ambiguities.extend(candidate.get("ambiguities", []))
+                    pass_coverage.extend(candidate.get("coverage_claims", []))
+                    accepted_batch = True
+                    break
+
+                if not accepted_batch:
+                    raise TestGenerationError(
+                        "test_input_batch_failed",
+                        f"Could not generate batch {batch_number} in RSI pass {pass_number}: {last_error}",
+                    )
+
+            accepted = {
+                "spec_summary": problem.strip()[:2_000],
+                "spec_summary_source": "assignment_statement",
+                "inferred_contract_source": "assignment_and_instructor_contract",
+                "reference_solution_source": "trusted_instructor_reference",
+                "ambiguities": list(dict.fromkeys(pass_ambiguities))[:10],
+                "inferred_contract": {
+                    "input_format": instructor_contract_fallback["input_format"],
+                    "output_format": instructor_contract_fallback["output_format"],
+                    "constraints": instructor_contract_fallback["constraints"],
+                    "semantics": instructor_contract_fallback["semantics"],
+                    "formatting": instructor_contract_fallback["formatting"],
+                },
+                "reference_solution_c": trusted_reference_solution,
+                "test_inputs": pass_cases,
+                "coverage_claims": list(dict.fromkeys(pass_coverage))[:30],
+                "case_count_shortfall": max(0, max_cases - len(pass_cases)),
+            }
+            history.append({
+                "pass": pass_number,
+                "status": "completed",
+                "test_count": len(pass_cases),
+                "requested_test_count": max_cases,
+                "test_count_shortfall": accepted["case_count_shortfall"],
+                "batch_count": batch_number,
+                "ambiguities_reported": len(accepted["ambiguities"]),
+                "reference_source_sha256": hashlib.sha256(trusted_reference_solution.encode()).hexdigest(),
+                "coverage_claims": accepted["coverage_claims"],
+            })
+            prior = accepted
+
+        if accepted is None:
+            raise TestGenerationError("no_generation", "No valid generated test suite was produced.")
+        if accepted["case_count_shortfall"]:
+            raise TestGenerationError(
+                "generated_test_count_shortfall",
+                f"The LLM produced {len(accepted['test_inputs'])} distinct additional cases; {max_cases} were requested.",
+            )
+        accepted["test_generation_rsi"] = history
+        return accepted, history
+
     accepted, prior, history = None, None, []
     for index in range(1, passes + 1):
         if index == 1 and trusted_reference_solution:
@@ -526,6 +825,7 @@ def write_frozen_suite(
         "rejected_generated_cases": generated_spec.get("rejected_generated_cases", []),
         "generation_ambiguities": generated_spec.get("ambiguities", []),
         "spec_summary": generated_spec.get("spec_summary", ""),
+        "submission_analysis": generated_spec.get("submission_analysis", {}),
         "inferred_contract": generated_spec.get("inferred_contract", {}),
         "reference_solution_c": str(generated_spec.get("reference_solution_c", "")),
         "reference_solution_sha256": hashlib.sha256(str(generated_spec.get("reference_solution_c", "")).encode()).hexdigest(),
@@ -633,13 +933,15 @@ def prepare_assignment_test_suite(
     model_id: str,
     generation_seed: int = 42,
     temperature: float = 0.0,
+    submission_source: str = "",
+    submission_filename: str = "submission.c",
 ) -> dict[str, Any]:
-    """Prepare/fetch the immutable assignment test suite and bind it to metrics.
+    """Generate/fetch a test suite and bind the combined suite to metrics.
 
-    This function is called once before analyzers execute, while the Docker
-    sandbox is available. It always supplements configured instructor cases
-    by default. A configured reference_solution_path is trusted as the oracle;
-    otherwise the 3-pass RSI-generated C reference is compiled in the sandbox.
+    When a submission is supplied, the LLM first analyzes it for code paths and
+    likely weaknesses. The assignment contract remains authoritative. A
+    configured reference solution is used for expected outputs; otherwise an
+    independently generated reference implementation is run in the sandbox.
     """
     testing_cfg = rules.get("test_generation", {})
     testing_cfg = testing_cfg if isinstance(testing_cfg, dict) else {}
@@ -734,6 +1036,10 @@ def prepare_assignment_test_suite(
     additional_focus = testing_cfg.get("additional_focus", "")
     if not isinstance(additional_focus, str) or len(additional_focus) > 500:
         raise TestGenerationError("invalid_test_generation_config", "test_generation.additional_focus must be text of at most 500 characters.")
+    submission_source_sha256 = (
+        hashlib.sha256(submission_source.encode("utf-8")).hexdigest()
+        if isinstance(submission_source, str) and submission_source.strip() else ""
+    )
     fingerprint = assignment_fingerprint(
         problem=str(rules.get("problem", "")),
         problem_contract=rules.get("problem_contract", {}),
@@ -741,9 +1047,10 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":contract-v9",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":source-aware-contract-v10",
         rsi_passes=int(passes), max_cases=int(max_cases), temperature=float(temperature),
         additional_focus=additional_focus,
+        submission_source_sha256=submission_source_sha256,
     )
     # Include instructor test contents and any trusted reference in the final
     # cache identity, not merely the problem statement.
@@ -795,6 +1102,15 @@ def prepare_assignment_test_suite(
         reference_source = cached_reference
         suite_path = frozen_path
     else:
+        submission_analysis = None
+        if submission_source_sha256:
+            submission_analysis = analyze_submission_for_test_generation(
+                problem=str(rules.get("problem", "")),
+                problem_contract=rules.get("problem_contract", {}),
+                submission_source=submission_source,
+                submission_filename=submission_filename,
+                request_json=request_json,
+            )
         requested_generated_count = int(max_cases)
         replacement_reserve = min(
             MAX_GENERATED_CASES - requested_generated_count,
@@ -809,7 +1125,10 @@ def prepare_assignment_test_suite(
             additional_focus=additional_focus,
             instructor_examples=instructor_cases,
             trusted_reference_solution=reference_source,
+            submission_analysis=submission_analysis,
         )
+        if submission_analysis is not None:
+            spec["submission_analysis"] = submission_analysis
         if reference_source is not None:
             spec["reference_solution_c"] = reference_source
         reference_hash = hashlib.sha256(spec["reference_solution_c"].encode("utf-8")).hexdigest()
@@ -913,6 +1232,9 @@ def prepare_assignment_test_suite(
         "edge_test_count": len(edge_cases),
         "rsi_passes": generation_history,
         "metric_testset_paths": metric_bindings,
+        "all_testset_path": str(all_path),
+        "edge_testset_path": str(edge_path),
+        "submission_analysis": frozen.get("submission_analysis", {}),
         "inferred_contract": frozen.get("inferred_contract", {}),
         "spec_summary": frozen.get("spec_summary", ""),
         "oracle_kind": frozen.get("oracle_kind", "LLM-generated-reference-executed-in-sandbox"),
