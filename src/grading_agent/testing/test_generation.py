@@ -1,10 +1,12 @@
 """Single-pass, source-aware test generation with deterministic candidate validation.
 
 The LLM first studies the submitted implementation once, then proposes test
-inputs once. Invalid or duplicate candidates are discarded; accepted inputs
-must also execute successfully against a trusted or independent reference
-solution in the restricted sandbox. The resulting suite is frozen by a
-source-aware fingerprint.
+inputs once. If an independent reference program is omitted, a focused
+reference-only request may supply it; test inputs are never regenerated.
+Invalid or duplicate candidates are discarded; accepted inputs must also
+execute successfully against a trusted or independent reference solution in
+the restricted sandbox. The resulting suite is frozen by a source-aware
+fingerprint.
 """
 from __future__ import annotations
 
@@ -80,6 +82,7 @@ def _validate_candidate(
     fallback_summary: str = "",
     fallback_contract: dict[str, Any] | None = None,
     fallback_reference_solution: str = "",
+    allow_missing_reference_solution: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TestGenerationError("invalid_response", f"Generation response {pass_number} did not return an object.")
@@ -132,8 +135,20 @@ def _validate_candidate(
             contract_source = "assignment_and_instructor_contract"
             if not inferred["semantics"]:
                 raise TestGenerationError("invalid_inferred_contract", f"Generation response {pass_number} must identify at least one task semantic.")
-    if not isinstance(reference, str) or not reference.strip() or len(reference) > MAX_REFERENCE_SOURCE_CHARS:
-        raise TestGenerationError("missing_reference", f"Generation response {pass_number} omitted a bounded C reference solution.")
+    reference_missing = not isinstance(reference, str) or not reference.strip()
+    reference_too_large = isinstance(reference, str) and len(reference) > MAX_REFERENCE_SOURCE_CHARS
+    if reference_missing or reference_too_large:
+        if allow_missing_reference_solution:
+            # Validate the contract and test inputs first. A separate, narrowly
+            # scoped request will provide only the independent reference code.
+            reference = ""
+            reference_source = "model_reference_pending"
+        else:
+            reason = "omitted" if reference_missing else "exceeded the configured size limit"
+            raise TestGenerationError(
+                "missing_reference",
+                f"Generation response {pass_number} {reason} a bounded C reference solution.",
+            )
     if not isinstance(cases, list) or not cases or len(cases) > MAX_GENERATED_CASES:
         raise TestGenerationError("invalid_test_count", f"Generation response {pass_number} must return 1..{MAX_GENERATED_CASES} test inputs.")
 
@@ -320,6 +335,102 @@ def analyze_submission_for_test_generation(
     }
 
 
+def _recover_reference_solution(
+    *,
+    problem: str,
+    problem_contract: dict[str, Any],
+    inferred_contract: dict[str, Any],
+    instructor_examples: list[dict[str, Any]] | None,
+    request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
+) -> str:
+    """Request only the independent C oracle when the testcase response omitted it."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "reference_solution_c": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_REFERENCE_SOURCE_CHARS,
+            },
+        },
+        "required": ["reference_solution_c"],
+    }
+    examples = [
+        {
+            "id": str(case.get("id", f"instructor-{index}")),
+            "input": case["input"],
+            "expected": case["expected"],
+        }
+        for index, case in enumerate(instructor_examples or [], 1)
+        if isinstance(case, dict)
+        and isinstance(case.get("input"), str)
+        and isinstance(case.get("expected"), str)
+    ][:20]
+    payload = {
+        "assignment": problem,
+        "problem_contract": problem_contract,
+        "inferred_contract": inferred_contract,
+        "authoritative_instructor_examples": examples,
+        "instruction": (
+            "Return one complete, self-contained C11 reference solution as reference_solution_c. "
+            "Implement the assignment contract exactly, including its input parsing, output formatting, "
+            "numeric semantics, and stated constraints. The assignment and instructor contract are "
+            "authoritative; use inferred_contract only as a faithful restatement. Instructor examples "
+            "are consistency checks, not permission to change the specification. Do not use or imitate "
+            "any student implementation. Do not include test cases, explanations, markdown fences, or "
+            "expected outputs. Return only the required JSON object."
+        ),
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are producing an independent reference oracle for a C programming assignment. "
+                "Write portable C11 source code that compiles as a standalone program when the assignment "
+                "requires stdin/stdout, or follows the exact required interface when it specifies one. "
+                "The reference must implement the instructor's specification, not a student's approach. "
+                "Return JSON only and include the entire source file in reference_solution_c."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, sort_keys=True, ensure_ascii=False),
+        },
+    ]
+    try:
+        result = request_json(
+            messages,
+            schema,
+            "assignment_reference_solution_recovery_single_pass",
+        )
+    except Exception as exc:
+        raise TestGenerationError(
+            "reference_recovery_failed",
+            f"The focused reference-solution request failed: {exc}",
+        ) from exc
+
+    if not isinstance(result, dict):
+        raise TestGenerationError(
+            "reference_recovery_failed",
+            "The focused reference-solution request did not return a JSON object.",
+        )
+    reference = result.get("reference_solution_c", result.get("reference_solution"))
+    if (
+        not isinstance(reference, str)
+        or not reference.strip()
+        or len(reference) > MAX_REFERENCE_SOURCE_CHARS
+    ):
+        returned_fields = sorted(str(key) for key in result)
+        raise TestGenerationError(
+            "reference_recovery_failed",
+            "The test-generation response omitted its C reference solution and the focused "
+            "reference-only request did not return a bounded reference_solution_c "
+            f"(returned fields: {returned_fields[:8]}). Configure "
+            "test_generation.reference_solution_path with an instructor oracle for this assignment.",
+        )
+    return reference.strip()
+
+
 def generate_assignment_test_spec(
     *, problem: str, problem_contract: dict[str, Any],
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
@@ -329,11 +440,12 @@ def generate_assignment_test_spec(
     trusted_reference_solution: str | None = None,
     submission_analysis: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Generate a reference solution and test inputs in one LLM call.
+    """Generate test inputs once, with an optional focused reference-only recovery.
 
     The passes parameter is retained for API compatibility; testcase generation
-    now always uses one pass. Candidate validation and reference execution are
-    deterministic and do not trigger additional LLM generation calls.
+    now always uses one pass. If that response omits its independent C oracle,
+    one separate request may produce only the oracle, never replacement tests.
+    Candidate validation and reference execution remain deterministic.
     """
     if not isinstance(problem, str) or not problem.strip():
         raise TestGenerationError("missing_assignment", "A complete assignment statement is required.")
@@ -648,7 +760,19 @@ def generate_assignment_test_spec(
         allow_ambiguities=False,
         fallback_summary=problem,
         fallback_contract=instructor_contract_fallback,
+        allow_missing_reference_solution=True,
     )
+    reference_recovery_used = not bool(candidate["reference_solution_c"])
+    if reference_recovery_used:
+        candidate["reference_solution_c"] = _recover_reference_solution(
+            problem=problem,
+            problem_contract=problem_contract,
+            inferred_contract=candidate["inferred_contract"],
+            instructor_examples=instructor_examples,
+            request_json=request_json,
+        )
+        candidate["reference_solution_source"] = "model_reference_recovery"
+        candidate["reference_recovery_count"] = 1
     filtered, rejected = [], []
     for case in candidate["test_inputs"]:
         reason = _validate_input_against_contract(case["input"], problem_contract)
@@ -669,6 +793,7 @@ def generate_assignment_test_spec(
         "rejected_test_count": len(rejected),
         "ambiguities_reported": len(candidate["ambiguities"]),
         "coverage_claims": candidate["coverage_claims"][:30],
+        "reference_recovery_used": reference_recovery_used,
     }]
     candidate["generation_passes"] = history
     return candidate, history
