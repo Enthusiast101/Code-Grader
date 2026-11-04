@@ -366,18 +366,17 @@ def generate_assignment_test_spec(
             "test_inputs": {"type": "array", "minItems": max_cases, "maxItems": max_cases, "items": {
                 "type": "object", "properties": {
                     "id": {"type": "string"}, "input": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "rationale": {"type": "string"},
-                }, "required": ["id", "input", "tags", "rationale"],
+                    "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
+                }, "required": ["id", "input"],
             }},
-            "coverage_claims": {"type": "array", "items": {"type": "string"}},
+            "coverage_claims": {"type": "array", "items": {"type": "string"}, "maxItems": 0},
         }, "required": ["spec_summary", "ambiguities", "inferred_contract", "reference_solution_c", "test_inputs", "coverage_claims"],
     }
     if trusted_reference_solution:
         # When the instructor supplies the oracle, keep the model response
         # focused on test inputs instead of asking a small model to reproduce
         # the contract, summary, and reference implementation as well.
-        for optional_field in ("spec_summary", "inferred_contract", "reference_solution_c", "coverage_claims"):
+        for optional_field in ("spec_summary", "inferred_contract", "reference_solution_c"):
             schema["properties"].pop(optional_field, None)
             if optional_field in schema["required"]:
                 schema["required"].remove(optional_field)
@@ -466,7 +465,7 @@ def generate_assignment_test_spec(
         "use them to follow the stated output convention, but do not treat them as exhaustive requirements. "
         "Do not repeat any input from authoritative instructor examples; the requested count means that many "
         "additional distinct generated inputs. "
-        "Give each test a stable id, tags and rationale. JSON only."
+        "Give each test a short stable id and at most three compact tags. Do not explain coverage, repeat value-by-value claims, include rationales, or add prose outside the JSON fields. The application computes coverage from the accepted and executed cases. JSON only."
     )
     instructor_inputs = {
         case["input"] for case in (instructor_examples or [])
@@ -490,10 +489,9 @@ def generate_assignment_test_spec(
                         "properties": {
                             "id": {"type": "string"},
                             "input": {"type": "string"},
-                            "tags": {"type": "array", "items": {"type": "string"}},
-                            "rationale": {"type": "string"},
+                            "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
                         },
-                        "required": ["id", "input", "tags", "rationale"],
+                        "required": ["id", "input"],
                     },
                 },
             },
@@ -508,7 +506,7 @@ def generate_assignment_test_spec(
                 "and instructor contract remain authoritative. Examine every proposed case against "
                 "the full contract before returning it. Return only inputs that are valid, well-defined, "
                 "distinct, and within all stated constraints. Exclude malformed, out-of-range, ambiguous, "
-                "and duplicate inputs. Do not provide expected outputs; the trusted instructor reference "
+                "and duplicate inputs. Return only compact test objects with a short id, input, and up to three tags. Do not include coverage claims, rationales, expected outputs, or explanations. The trusted instructor reference "
                 "solution is the only expected-output oracle. The application applies deterministic "
                 "contract validation and reference execution, discarding candidates that fail."
             ),
@@ -1101,7 +1099,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":single-pass-valid-only-v12-require-generated-cases",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":single-pass-compact-cases-v13-no-coverage-narration",
         rsi_passes=1, max_cases=int(max_cases), temperature=float(temperature),
         additional_focus=additional_focus,
         submission_source_sha256=submission_source_sha256,

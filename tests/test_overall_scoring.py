@@ -177,6 +177,34 @@ class OverallScoringTests(unittest.TestCase):
         self.assertEqual(overall["score"], 80.0)
         self.assertEqual([item["metric"] for item in overall["contributions"]], ["correctness"])
 
+    def test_execution_metrics_without_measurement_reject_llm_scores(self):
+        for name, analyzer in (("runtime", "runtime_profile"), ("memory", "memory_safety")):
+            with self.subTest(metric=name):
+                metric = {"name": name, "analyzer": analyzer, "weight": 1.0, "max_points": 100, "enabled": True}
+                report = {name: {"status": "inconclusive", "score": None, "reason": "No test inputs."}}
+                llm = {"metrics": [{"name": name, "score_points": 100.0, "origin": "llm", "rationale": "This metric could not be measured from available evidence."}]}
+                apply_metric_scores([metric], report, llm)
+                self.assertIsNone(report[name]["score"])
+                overall = calculate_overall_score([metric], report)
+                self.assertEqual(overall["status"], "failed_incomplete")
+                self.assertIsNone(overall["score"])
+
+    def test_llm_unmeasured_rationale_cannot_become_full_credit(self):
+        metric = {"name": "structure", "analyzer": "static_analysis", "weight": 1.0, "max_points": 100, "enabled": True}
+        report = {"structure": {"status": "unavailable", "score": None}}
+        llm = {"metrics": [{"name": "structure", "score_points": 100.0, "origin": "llm", "rationale": "Structure could not be measured from available evidence."}]}
+        apply_metric_scores([metric], report, llm)
+        self.assertIsNone(report["structure"]["score"])
+        self.assertEqual(calculate_overall_score([metric], report)["status"], "failed_incomplete")
+
+    def test_completed_compiler_measurement_does_not_claim_unmeasured(self):
+        metric = {"name": "syntax", "analyzer": "compiler_diagnostics", "weight": 1.0, "max_points": 100, "enabled": True}
+        report = {"syntax": {"analyzer": "compiler_diagnostics", "status": "completed", "score": 100.0, "compiled": True, "exit_code": 0, "warning_count": 0, "error_count": 0}}
+        apply_metric_scores([metric], report, None)
+        rationale = report["syntax"]["score_rationale"].lower()
+        self.assertIn("compilation succeeded", rationale)
+        self.assertNotIn("could not be measured", rationale)
+
 
 if __name__ == "__main__":
     unittest.main()

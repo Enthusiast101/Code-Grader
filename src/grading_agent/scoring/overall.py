@@ -58,8 +58,14 @@ def apply_metric_scores(
         llm_points = None
         llm_score = None
         if isinstance(llm_item, dict) and llm_item.get("origin", "llm") == "llm":
+            llm_rationale = str(llm_item.get("rationale", ""))
+            llm_claims_unmeasured = bool(re.search(
+                r"\b(?:could not|cannot|unable to)\s+be measured\b|\bnot measured\b|\binsufficient evidence\b",
+                llm_rationale,
+                re.IGNORECASE,
+            ))
             candidate = llm_item.get("score_points")
-            if (
+            if not llm_claims_unmeasured and (
                 not isinstance(candidate, bool)
                 and isinstance(candidate, (int, float))
                 and math.isfinite(float(candidate))
@@ -186,8 +192,40 @@ def apply_metric_scores(
             llm_item.get("rationale") if origin == "llm" else
             result.get("summary") or result.get("rationale") or result.get("message") or result.get("reason")
         ) if isinstance(llm_item, dict) else (result.get("summary") or result.get("rationale") or result.get("reason"))
+        if not explanation and origin == "deterministic_analyzer" and analyzer_score is not None:
+            if analyzer_name == "compiler_diagnostics":
+                explanation = (
+                    f"Compilation succeeded (exit code {result.get('exit_code')}); "
+                    f"{result.get('warning_count', 0)} warning(s) and "
+                    f"{result.get('error_count', 0)} error(s) were recorded."
+                )
+            elif analyzer_name == "memory_safety":
+                total = result.get("tests_checked", result.get("tests_total", 0))
+                clean = result.get("tests_clean")
+                if isinstance(total, int) and total > 0 and isinstance(clean, int):
+                    explanation = f"Memory-safety execution completed: {clean}/{total} test run(s) were classified as clean."
+            elif analyzer_name == "runtime_profile":
+                samples = result.get("samples", [])
+                count = len(samples) if isinstance(samples, list) else 0
+                median = result.get("median_runtime_ms")
+                if count and isinstance(median, (int, float)):
+                    explanation = f"Runtime profiling completed with {count} sample(s); median runtime was {float(median):.3f} ms."
+            if not explanation:
+                explanation = (
+                    f"The completed {analyzer_name or 'deterministic analyzer'} returned "
+                    f"a score of {analyzer_score:.2f}/100 from its recorded measurement."
+                )
         if not explanation:
             explanation = f"{name.replace('_', ' ')} could not be measured from available evidence."
+        elif origin == "deterministic_analyzer" and analyzer_score is not None and re.search(
+            r"\b(?:could not|cannot|unable to)\s+be measured\b|\bnot measured\b|\binsufficient evidence\b",
+            str(explanation),
+            re.IGNORECASE,
+        ):
+            explanation = (
+                f"The completed {analyzer_name or 'deterministic analyzer'} returned "
+                f"a score of {analyzer_score:.2f}/100 from its recorded measurement."
+            )
         if origin == "deterministic_test_results":
             explanation = (
                 f"Configured {name} tests passed {test_passed}/{test_total}; the score is the observed pass rate "

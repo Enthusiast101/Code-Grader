@@ -732,9 +732,9 @@ def generate_test_cases_for_submission(
             if not _generation_server_is_ready():
                 generation_process = initiate_server()
             requested_cases = int(max_generated_cases)
-            generation_token_budget = max(
-                int(settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS") or 0),
-                min(settings.LLAMA_CONTEXT_SIZE, 2048 + requested_cases * 192),
+            generation_token_budget = min(
+                max(4096, 2048 + requested_cases * 128),
+                max(1024, int(settings.LLAMA_CONTEXT_SIZE) // 2),
             )
 
             def generation_request(messages, schema, stage_name):
