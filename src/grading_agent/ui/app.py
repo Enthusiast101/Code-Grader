@@ -717,7 +717,6 @@ def generate_test_cases_for_submission(
 
         from grading_agent.config.rule_loader import load_rules
         from grading_agent.llm.server import initiate_server
-        from grading_agent.sandbox.docker_sandbox import DockerSandbox
         from grading_agent.testing.test_generation import prepare_assignment_test_suite
         from grading_agent.llm.reviewer import _LLM_REQUEST_EVENTS, _request_json
 
@@ -767,21 +766,17 @@ def generate_test_cases_for_submission(
                     )
                 return parsed
 
-            with DockerSandbox(
-                memory_limit=f"{int(memory_limit_mb)}m",
-                cpu_limit=float(docker_cpu_limit),
-            ) as sandbox:
-                result = prepare_assignment_test_suite(
-                    normalized_rules,
-                    sandbox=sandbox,
-                    request_json=generation_request,
-                    project_root=PROJECT_ROOT,
-                    model_id=model_name,
-                    generation_seed=settings.SEED,
-                    temperature=float(temperature),
-                    submission_source=source_code,
-                    submission_filename=staged_source.name,
-                )
+            result = prepare_assignment_test_suite(
+                normalized_rules,
+                sandbox=None,
+                request_json=generation_request,
+                project_root=PROJECT_ROOT,
+                model_id=model_name,
+                generation_seed=settings.SEED,
+                temperature=float(temperature),
+                submission_source=source_code,
+                submission_filename=staged_source.name,
+            )
             result["request_events"] = generation_request_events
 
         if result.get("status") != "completed":
