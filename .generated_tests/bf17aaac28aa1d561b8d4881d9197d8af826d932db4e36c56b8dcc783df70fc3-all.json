@@ -1,0 +1,37 @@
+[
+  {
+    "expected": "grading sample\n",
+    "id": "instructor-normal",
+    "input": "",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "logical",
+      "memory_safety"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-boundary",
+    "input": "0",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "minimal input",
+      "single digit",
+      "zero"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-large",
+    "input": "12345678901234567890",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary",
+      "large input",
+      "long string"
+    ]
+  }
+]

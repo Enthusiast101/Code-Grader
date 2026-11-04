@@ -104,12 +104,18 @@ def metric_score_response(correctness: float = 9.5, syntax: float = 9.4) -> dict
 
 class GlobalRSITests(unittest.TestCase):
     def test_understanding_three_chained_rsi_passes_then_separate_scoring(self) -> None:
+        rules = {
+            **RULES,
+            "metrics": RULES["metrics"] + [
+                {"name": "readability", "analyzer": "readability", "weight": 0.0, "max_points": 10, "enabled": True, "params": {}},
+            ],
+        }
         responses = [
             understanding_response(),
             review_response(1),
             review_response(2),
             review_response(3),
-            metric_score_response(9.5, 9.4),
+            {"scores": {"readability": {"score": 8, "rationale": "Consistent formatting; the helper name add states its purpose.", "zero_score_reason": "", "confidence": 0.8}}},
         ]
         captured: list[list[dict[str, str]]] = []
 
@@ -120,8 +126,10 @@ class GlobalRSITests(unittest.TestCase):
             return parsed, json.dumps(parsed)
 
         report = make_report()
-        with patch.object(reviewer, "_request_json", side_effect=fake_request):
-            result = reviewer.evaluate_metrics_with_llm(report, RULES, max_iterations=3)
+        report["readability"] = {"status": "completed", "score": 90}
+        with patch.object(reviewer.settings, "LLM_RSI_STOP_ON_CONVERGENCE", False), \
+                patch.object(reviewer, "_request_json", side_effect=fake_request):
+            result = reviewer.evaluate_metrics_with_llm(report, rules, max_iterations=3)
 
         self.assertEqual(result["status"], "completed_with_warnings")
         self.assertEqual(result["llm_calls"], 5)
@@ -131,23 +139,41 @@ class GlobalRSITests(unittest.TestCase):
         self.assertIn("Whole-program assessment at pass 2.", captured[3][1]["content"])
         self.assertIn("Do not provide metric scores", captured[1][1]["content"])
         self.assertIn("Do not provide metric scores", captured[3][1]["content"])
-        self.assertIn("final_validated_findings", captured[4][1]["content"])
-        self.assertEqual(result["metrics"][0]["score"], 9.5)
-        self.assertEqual(result["metrics"][1]["score"], 9.4)
+        scoring_payload = json.loads(captured[4][1]["content"])
+        self.assertIn("final_validated_findings", scoring_payload)
+        # Only the metric without an authoritative measurement is sent for rating.
+        self.assertEqual(scoring_payload["metrics_to_rate"], ["readability"])
+        self.assertEqual(sorted(scoring_payload["metrics_already_measured_by_tools"]), ["correctness", "syntax"])
+        self.assertNotIn("instructor_rubric", scoring_payload)
+        readability = next(item for item in result["metrics"] if item["name"] == "readability")
+        self.assertEqual(readability["score_points"], 8.0)  # level 8 of 10 on a 10-point metric
         self.assertEqual(report["program_understanding"]["functions"][0]["name"], "add")
-        self.assertEqual(report["program_understanding"]["actual_behavior"], "Reads two integers and prints their sum.")
-        self.assertEqual(report["program_understanding"]["intended_behavior"], "Read two integers and print their sum.")
         self.assertEqual(report["llm_rsi_findings"], [])
         self.assertTrue(report["llm_rsi_rejected_findings"])
-        self.assertEqual(result["latency_seconds"]["metric_scoring_requests"], [0.0])
 
-        apply_metric_scores(RULES["metrics"], report, result)
-        overall = calculate_overall_score(RULES["metrics"], report)
+        apply_metric_scores(rules["metrics"], report, result)
         self.assertEqual(report["correctness"]["score"], 100)
         self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
         self.assertEqual(report["syntax"]["score"], 100)
         self.assertEqual(report["syntax"]["score_origin"], "deterministic_analyzer")
-        self.assertEqual(overall["score"], 100)
+
+    def test_rsi_stops_when_a_pass_reproduces_the_previous_findings(self) -> None:
+        responses = [understanding_response(), review_response(1), review_response(1), review_response(1)]
+        calls: list[str] = []
+
+        def fake_request(messages, *, schema_name=None, **kwargs):
+            calls.append(schema_name)
+            parsed = responses.pop(0)
+            return parsed, json.dumps(parsed)
+
+        with patch.object(reviewer.settings, "LLM_RSI_STOP_ON_CONVERGENCE", True), \
+                patch.object(reviewer, "_request_json", side_effect=fake_request):
+            result = reviewer.evaluate_metrics_with_llm(make_report(), RULES, max_iterations=3)
+
+        self.assertEqual(calls.count("whole_program_rsi_findings"), 2)
+        self.assertEqual(result["rsi_converged_at_iteration"], 2)
+        self.assertEqual(result["iterations_completed"], 2)
+        self.assertTrue(result["iterations"][1]["unchanged_from_previous_pass"])
 
     def test_grading_request_can_explicitly_disable_reasoning(self) -> None:
         class FakeResponse:
@@ -197,9 +223,9 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(parsed, {"findings": []})
         request_body = post.call_args.kwargs["json"]
         self.assertEqual(request_body["response_format"]["type"], "json_schema")
-        self.assertEqual(request_body["response_format"]["schema"], schema)
-        self.assertEqual(request_body["response_format"]["schema"], schema)
-        self.assertNotIn("json_schema", request_body["response_format"])
+        self.assertEqual(request_body["response_format"]["json_schema"]["schema"], schema)
+        self.assertEqual(request_body["response_format"]["json_schema"]["schema"], schema)
+        self.assertNotIn("schema", request_body["response_format"])  # top-level schema is ignored by llama-server
         self.assertNotIn("grammar", request_body)
         self.assertIn("REQUIRED JSON OUTPUT CONTRACT", request_body["messages"][0]["content"])
         self.assertIn(json.dumps(schema, ensure_ascii=False, separators=(",", ":")), request_body["messages"][0]["content"])
@@ -275,7 +301,7 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(post.call_count, 1)
         request_body = post.call_args.kwargs["json"]
         self.assertEqual(request_body["response_format"]["type"], "json_schema")
-        self.assertEqual(request_body["response_format"]["schema"], schema)
+        self.assertEqual(request_body["response_format"]["json_schema"]["schema"], schema)
         self.assertTrue(request_body["chat_template_kwargs"]["enable_thinking"])
         self.assertNotIn("grammar", request_body)
 
@@ -358,38 +384,106 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(len(result["metrics"]), 2)
         self.assertEqual(result["findings_status"], "completed_with_rejections")
         self.assertTrue(result["rejected_findings"])
-        self.assertEqual(result["metric_scoring_status"], "completed_with_fallback")
-        self.assertEqual(result["llm_calls"], 5)
+        # Both metrics are measured by completed tools, so no rating request is made.
+        self.assertEqual(result["metric_scoring_status"], "completed")
+        self.assertEqual(result["llm_calls"], 4)
 
     def test_metric_scoring_missing_metrics_falls_back_without_retry(self) -> None:
-        partial_scores = {
-            "scores": {
-                "correctness": {
-                    "score": 8.8,
-                    "rationale": "Functional behavior matches the supplied contract.",
-                    "zero_score_reason": "",
-                    "confidence": 0.9,
-                }
-            }
+        """A rating response that omits a metric is repaired, naming the omission."""
+        rules = {
+            **RULES,
+            "metrics": RULES["metrics"] + [
+                {"name": "readability", "analyzer": "readability", "weight": 0.0, "max_points": 10, "enabled": True, "params": {}},
+                {"name": "modularity", "analyzer": "modularity", "weight": 0.0, "max_points": 10, "enabled": True, "params": {}},
+            ],
         }
-        responses = [understanding_response(), review_response(1), partial_scores]
-
+        rating = {"score": 7, "rationale": "Formatting is consistent and the helper add has one clear role.", "zero_score_reason": "", "confidence": 0.8}
+        responses = [
+            understanding_response(), review_response(1),
+            {"scores": {"readability": rating}},
+            {"scores": {"readability": rating, "modularity": rating}},
+        ]
         captured: list[list[dict[str, str]]] = []
-        def fake_request(messages, *, max_tokens=None, enable_thinking=None, response_schema=None, schema_name=None, **kwargs):
+
+        def fake_request(messages, *, schema_name=None, **kwargs):
             captured.append(messages)
             parsed = responses.pop(0)
             return parsed, json.dumps(parsed)
 
         report = make_report()
-        with patch.object(reviewer.settings, "LLM_GRADING_RETRY_ATTEMPTS", 1), patch.object(reviewer, "_request_json", side_effect=fake_request):
-            result = reviewer.evaluate_metrics_with_llm(report, RULES, max_iterations=1)
+        report["readability"] = {"status": "completed", "score": 90}
+        report["modularity"] = {"status": "completed", "score": 100}
+        with patch.object(reviewer.settings, "LLM_GRADING_RETRY_ATTEMPTS", 3), \
+                patch.object(reviewer, "_request_json", side_effect=fake_request):
+            result = reviewer.evaluate_metrics_with_llm(report, rules, max_iterations=1)
 
-        self.assertEqual(result["status"], "completed_with_warnings")
-        self.assertEqual(result["llm_calls"], 3)
-        self.assertEqual(result["iterations_completed"], 1)
-        self.assertEqual(result["metrics"][0]["score"], 8.8)
-        self.assertEqual(len(captured), 3)
-        self.assertTrue(any("Metric scoring response omitted" in item for item in result["diagnostics"]))
+        self.assertEqual(result["llm_calls"], 4)
+        repair_prompt = captured[3][-1]["content"]
+        self.assertIn("REPAIR REQUIRED", repair_prompt)
+        self.assertIn("modularity", repair_prompt)
+        rated = {item["name"]: item for item in result["metrics"]}
+        self.assertEqual(rated["modularity"]["origin"], "llm")
+        self.assertEqual(rated["modularity"]["score_points"], 7.0)
+        self.assertEqual(result["missing_metrics"], [])
+
+    def test_defect_evidence_survives_the_evidence_budget(self) -> None:
+        ledger = [
+            {"id": f"E-METRIC-{index}", "kind": "metric_summary",
+             "statement": "Metric clean: status=completed, score=100.0/100, weight=0.1. " + "x" * 150,
+             "facts": {"metric": f"m{index}", "status": "completed", "score": 100.0}}
+            for index in range(40)
+        ] + [
+            {"id": "E-GCC-ANALYZER-001", "kind": "static_finding",
+             "statement": "GCC -fanalyzer use_after_free: pointer used after free (line 24).",
+             "facts": {"line": 24, "category": "use_after_free"}},
+            {"id": "E-VALGRIND-TEST-001", "kind": "valgrind_result",
+             "statement": "Valgrind: errors=2; definitely_lost=32.",
+             "facts": {"error_count": 2, "definitely_lost": {"bytes": 32, "blocks": 1}}},
+            {"id": "E-SANITIZER-001", "kind": "sanitizer_result",
+             "statement": "ASan: clean=False; address_error=True.", "facts": {"clean": False}},
+        ]
+        sent = [item["id"] for item in reviewer._compact_ledger(ledger)]
+        self.assertEqual(sent[:3], ["E-GCC-ANALYZER-001", "E-VALGRIND-TEST-001", "E-SANITIZER-001"])
+        self.assertLess(len(sent), len(ledger))  # the budget still applies to clean summaries
+
+    def test_oversized_non_grading_payload_is_shortened_without_dropping_keys(self) -> None:
+        payload = {
+            "assignment": "Read n then n integers; print the LIS length.",
+            "instruction": "Solve every input.",
+            "test_inputs_to_solve": [
+                {"id": "huge", "input": " ".join(str(n) for n in range(30000))},
+                {"id": "small", "input": "3\n1 2 3\n"},
+            ],
+        }
+        messages = [{"role": "system", "content": "Verify."}, {"role": "user", "content": json.dumps(payload)}]
+        with patch.object(reviewer, "_count_tokens", return_value=None):
+            fitted, _tokens, stats = reviewer._fit_grading_messages(messages, 4096)
+        out = json.loads(fitted[1]["content"])
+        self.assertTrue(stats["prompt_fits_context_estimate"])
+        self.assertIn("longest_value_shortening", stats["compression_methods"])
+        self.assertEqual(sorted(out), sorted(payload))
+        self.assertEqual(out["instruction"], payload["instruction"])
+        self.assertEqual(out["test_inputs_to_solve"][1]["input"], "3\n1 2 3\n")
+        self.assertIn("characters omitted", out["test_inputs_to_solve"][0]["input"])
+
+    def test_previous_rsi_response_is_sent_verbatim_when_prompt_fits(self) -> None:
+        previous = {
+            "overall_assessment": "A" * 1_500,
+            "findings": [{"metric": "correctness", "severity": "high", "title": "Wrong operator",
+                          "description": "D" * 900, "line_start": 5, "line_end": 5,
+                          "evidence_ids": [], "confidence": 0.9}],
+            "unresolved_questions": [],
+        }
+        content = (
+            "ITERATION 2/3\n\nPROGRAM:\n" + json.dumps({"task": "sum", "source_code_with_line_numbers": "00001 | int main(void){}"})
+            + "\n\nYOUR IMMEDIATELY PRECEDING COMPLETE MODEL RESPONSE (recheck this):\n" + json.dumps(previous)
+        )
+        messages = [{"role": "system", "content": "Review."}, {"role": "user", "content": content}]
+        with patch.object(reviewer, "_count_tokens", return_value=None), \
+                patch.object(reviewer, "compress_review_history", side_effect=AssertionError("must not compress")):
+            fitted, _tokens, stats = reviewer._fit_grading_messages(messages, 3072)
+        self.assertEqual(fitted[1]["content"], content)
+        self.assertEqual(stats["compression_methods"], [])
 
     def test_early_pass_can_be_valid_without_metric_scores(self) -> None:
         parsed = review_response(1)
@@ -637,7 +731,8 @@ int main(void) {
             )
         self.assertIsNone(scores["correctness"]["score"])
         self.assertIsNone(scores["logical"]["score"])
-        self.assertEqual(scores["syntax"]["score"], 10.0)
+        # syntax has no completed analyzer here, so the model rates it: level 10 of 10.
+        self.assertEqual(scores["syntax"]["score"], 100.0)
         self.assertTrue(any("marked unmeasured" in message for message in diagnostics))
 
     def test_unavailable_finding_adjudicator_fails_closed(self) -> None:
@@ -719,7 +814,8 @@ int main(void) {
         self.assertEqual(schemas_seen[2], "post_rsi_finding_validation")
         self.assertEqual(result["findings"][0]["validation_status"], "accepted")
         self.assertEqual(result["finding_validation"]["accepted_count"], 1)
-        self.assertEqual(result["llm_calls"], 4)
+        # understanding + one RSI pass + adjudication; tool-measured metrics need no rating call.
+        self.assertEqual(result["llm_calls"], 3)
         self.assertEqual(result["status"], "completed")
 
     def test_unavailable_rsi_is_not_reported_as_no_defects(self) -> None:

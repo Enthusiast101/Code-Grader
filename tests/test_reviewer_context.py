@@ -203,7 +203,7 @@ class ReviewerContextTests(unittest.TestCase):
 
         body = post.call_args.kwargs["json"]
         self.assertEqual(parsed, {"ok": True})
-        self.assertEqual(body["response_format"]["schema"], schema)
+        self.assertEqual(body["response_format"]["json_schema"]["schema"], schema)
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(body["reasoning_format"], "none")
 

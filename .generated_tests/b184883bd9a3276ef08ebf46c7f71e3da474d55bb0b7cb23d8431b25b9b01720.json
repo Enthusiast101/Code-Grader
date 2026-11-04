@@ -1,0 +1,421 @@
+{
+  "assignment_fingerprint": "b184883bd9a3276ef08ebf46c7f71e3da474d55bb0b7cb23d8431b25b9b01720",
+  "assignment_statement": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 2,
+    "requested": 18,
+    "verification_calls": 1,
+    "verified": 16
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 4,
+      "requested_test_count": 20,
+      "status": "completed",
+      "test_count": 16,
+      "verification": {
+        "comparison": "trimmed exact text with normalized line endings",
+        "method": "independent_second_llm_call",
+        "rejected": 2,
+        "requested": 18,
+        "verified": 16
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "1 <= R,C <= 30",
+      "Grid values are 0 or 1",
+      "Path count fits signed 64-bit integer",
+      "Blocked start or end yields 0",
+      "No blocked cells in grid except start/end if they are 1",
+      "Input lines contain exactly R lines of C integers",
+      "No extra whitespace or empty lines allowed between R and grid"
+    ],
+    "formatting": [],
+    "input_format": "R C followed by R lines of C integers (0 or 1) separated by whitespace",
+    "output_format": "One signed 64-bit integer followed by a newline",
+    "semantics": [
+      "Count paths from (0,0) to (R-1,C-1) using only right and down moves",
+      "Only traverse cells with value 0",
+      "If start (0,0) is 1 or end (R-1,C-1) is 1, output 0",
+      "formatting:",
+      "required_input_format",
+      "output_format",
+      "constraints",
+      "semantics",
+      "formatting",
+      "required_input_format",
+      "output_format",
+      "constraints",
+      "semantics",
+      "formatting",
+      "required_input_format",
+      "output_format",
+      "constraints",
+      "semantics",
+      "formatting"
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were independently rechecked by a second LLM call against the assignment specification. When available, instructor-provided examples guided input and output conventions; they are not an exhaustive oracle.",
+  "oracle_kind": "instructor-examples-plus-two-pass-llm-verification",
+  "problem_contract": {
+    "description": "Count right/down paths from the top-left to bottom-right cell without entering cells marked 1. A blocked start or destination yields zero.",
+    "input_range": "1 <= rows, cols <= 30; each cell is 0 (open) or 1 (blocked); path count fits signed 64-bit.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "output_rule": "One signed 64-bit integer: number of valid paths; newline terminated.",
+    "sum_type": "signed 64-bit integer where applicable"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "blocked-middle-middle",
+      "reason": "duplicate generated input"
+    },
+    {
+      "id": "blocked-start-end-middle",
+      "reason": "duplicate generated input"
+    },
+    {
+      "id": "large-grid-open",
+      "reason": "generated expected_output disagreed with the independent verifier"
+    },
+    {
+      "id": "mixed-pattern-4x4",
+      "reason": "generated expected_output disagreed with the independent verifier"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "Uses signed 64-bit integer (long long) for DP table and output.",
+      "Loops through rows and columns sequentially.",
+      "Conditional logic checks i==0 && j==0 to skip initialization.",
+      "Adds contributions from top and left neighbors only.",
+      "Prints result followed by newline."
+    ],
+    "implementation_summary": "The program reads R, C and a grid of 0s and 1s. It initializes a DP table and iterates to compute paths from top-left to bottom-right, adding contributions from top and left neighbors. It assumes blocked cells are 1 and valid paths are 0.",
+    "input_parsing_and_validation": [
+      "Validates R and C are within [1, 30] and grid values are 0 or 1.",
+      "Checks if start (0,0) or end (R-1, C-1) is blocked before processing.",
+      "Ensures grid dimensions match input R and C exactly.",
+      "Handles malformed input by returning 1 on any validation failure."
+    ],
+    "likely_weak_points": [
+      "DP recurrence incorrectly adds paths through blocked cells.",
+      "Start/end blocked check only verifies cell value, not path reachability.",
+      "Grid dimensions must match input R and C precisely.",
+      "No validation for negative R or C values.",
+      "Assumes grid is fully populated without bounds checking.",
+      "DP initialization sets all cells to 0 instead of blocking start."
+    ],
+    "recommended_test_dimensions": [
+      "Test R=1, C=1 with blocked start/end.",
+      "Test R=1, C=2 with blocked middle cell.",
+      "Test R=2, C=2 with blocked start.",
+      "Test R=2, C=2 with blocked end.",
+      "Test R=2, C=2 with blocked middle.",
+      "Test R=30, C=30 with all cells blocked.",
+      "Test R=30, C=30 with all cells open.",
+      "Test R=30, C=30 with alternating blocked/open pattern."
+    ]
+  },
+  "submission_derived_contract_entries_removed": [
+    {
+      "entry": "DP recurrence: dp[i][j] = (i>0?dp[i-1][j]:0) + (j>0?dp[i][j-1]:0)",
+      "field": "semantics",
+      "submission_terms": "recurrenc"
+    }
+  ],
+  "test_cases": [
+    {
+      "expected": "2\n",
+      "id": "instructor-center-obstacle",
+      "input": "3 3\n0 0 0\n0 1 0\n0 0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "memory_safety"
+      ]
+    },
+    {
+      "expected": "2\n",
+      "id": "instructor-empty-2x2",
+      "input": "2 2\n0 0\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-top-right-blocked",
+      "input": "2 2\n0 1\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-single-open-cell",
+      "input": "1 1\n0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-single-blocked-cell",
+      "input": "1 1\n1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-blocked-start",
+      "input": "2 2\n1 0\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-blocked-destination",
+      "input": "2 2\n0 0\n0 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-one-row-barrier",
+      "input": "1 3\n0 1 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-one-column-barrier",
+      "input": "3 1\n0\n1\n0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "6\n",
+      "id": "instructor-no-obstacles-3x3",
+      "input": "3 3\n0 0 0\n0 0 0\n0 0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-start",
+      "input": "2 2\n1 0\n0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "small-grid",
+        "standard",
+        "start-blocked"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-end",
+      "input": "2 2\n0 0\n0 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "end-blocked",
+        "small-grid",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-middle",
+      "input": "2 2\n0 1\n0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "middle-blocked",
+        "small-grid",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-one-row-barrier",
+      "input": "1 3\n0 1 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "barrier",
+        "one-row",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-one-column-barrier",
+      "input": "3 1\n0\n1\n0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "barrier",
+        "one-column",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "6\n",
+      "id": "generated-no-obstacles-3x3",
+      "input": "3 3\n0 0 0\n0 0 0\n0 0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "large",
+        "no-obstacles",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-all-blocked-3x3",
+      "input": "3 3\n1 1 1\n1 1 1\n1 1 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "all-blocked",
+        "large",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "id": "generated-single-open-1x1",
+      "input": "1 1\n0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "single-open",
+        "small",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-single-block-1x1",
+      "input": "1 1\n1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "single-block",
+        "small",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-start-end-2x2",
+      "input": "2 2\n1 1\n1 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "end-blocked",
+        "standard",
+        "start-blocked"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-alternating-3x3",
+      "input": "3 3\n0 1 0\n1 0 1\n0 1 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "alternating",
+        "medium",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-large-grid-blocked",
+      "input": "10 10\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1\n1 1 1 1 1 1 1 1 1 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "all-blocked",
+        "large-grid",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "id": "generated-zero-start-end",
+      "input": "2 2\n0 0\n0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "small",
+        "standard",
+        "zero-start-end"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-start-middle",
+      "input": "3 3\n1 0 0\n0 0 0\n0 0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "medium",
+        "standard",
+        "start-blocked"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-middle-start",
+      "input": "3 3\n0 0 0\n0 1 0\n0 0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "medium",
+        "middle-blocked",
+        "standard"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "id": "generated-blocked-middle-end",
+      "input": "3 3\n0 0 0\n0 0 1\n0 0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "end-blocked",
+        "middle-blocked",
+        "standard"
+      ]
+    }
+  ]
+}

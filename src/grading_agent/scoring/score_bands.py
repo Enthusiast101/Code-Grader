@@ -62,26 +62,53 @@ def band_for_score(score: float) -> str:
     return f"{lower}-{lower + 5}"
 
 
+# Few, clearly separated anchors. A small model cannot reliably tell twenty
+# near-synonymous bands ("excellent", "very excellent", "near exemplary") apart,
+# which shows up as arbitrary, ceiling-heavy scores.
+GENERIC_LEVEL_ANCHORS = (
+    ("10", "Fully meets the criterion; no defect found after checking the source and evidence."),
+    ("8", "Meets the criterion with one or two minor, low-impact issues."),
+    ("6", "Mostly meets it; at least one moderate issue a reviewer would ask to fix."),
+    ("4", "Partly meets it; a major issue or several moderate ones."),
+    ("2", "Largely unmet; only fragments satisfy the criterion."),
+    ("0", "Not met at all, demonstrated by a specific failure (give zero_score_reason)."),
+)
+
+
 def rubric_prompt_block(
     metric_rubrics: dict[str, Any] | None = None,
     metric_caps: dict[str, float] | None = None,
+    *,
+    levels: dict[str, dict[str, str] | None] | None = None,
 ) -> str:
-    """Build a rubric prompt for consolidated, metric-specific point scores."""
+    """Build the rating instructions: one integer level 0-10 per metric.
+
+    ``levels`` optionally supplies metric-specific anchors (e.g. {"10": ...,
+    "6": ...}) that take precedence over the generic anchors for that metric.
+    Odd levels sit between the neighbouring anchors.
+    """
     lines = [
-        "CONSOLIDATED METRIC POINTS: return the earned points directly for each metric, using that metric's maximum below.",
-        "Do not return a normalized rating or a separate LLM rating. A returned metric score is already points earned out of its configured maximum.",
-        "The overall grade is the sum of earned points and is out of 100. Diagnostic-only metrics are excluded.",
-        "Executed correctness/logical test results and completed deterministic analyzer results remain authoritative when available; model points are used for other metrics when evidence supports them.",
-        "Missing measurements are not zeros. Never invent evidence or task requirements.",
-        "GENERAL QUALITY ANCHORS (bands are percentages of each metric's point maximum):",
+        "RATING SCALE: rate each metric with one integer from 0 to 10. Python converts the level to points.",
+        "Start from 10 and deduct only for issues you can point to in the source, validated findings, or evidence.",
+        "Missing measurements are not failures. Never invent evidence or task requirements.",
+        "GENERIC LEVEL ANCHORS:",
     ]
-    lines.extend(f"{band.label}%: {band.descriptor}" for band in SCORE_BANDS)
+    lines.extend(f"{level}: {text}" for level, text in GENERIC_LEVEL_ANCHORS)
     if metric_caps:
-        lines.append("MAXIMUM POINTS BY METRIC:")
-        lines.extend(f"{name}: 0 to {points:g} points" for name, points in metric_caps.items())
+        lines.append("MAXIMUM POINTS BY METRIC (for reference only; still return 0-10 levels):")
+        lines.extend(f"{name}: {points:g} points" for name, points in metric_caps.items())
     if metric_rubrics:
         criteria = metric_rubrics.get("metrics", metric_rubrics)
         if isinstance(criteria, dict) and criteria:
             lines.append("METRIC-SPECIFIC CRITERIA:")
-            lines.extend(f"{name}: {criteria[name]}" for name in sorted(criteria))
+            lines.extend(
+                f"{name}: {criteria[name]}" for name in sorted(criteria)
+                if isinstance(criteria[name], str) and criteria[name].strip()
+            )
+    specific = {name: value for name, value in (levels or {}).items() if isinstance(value, dict) and value}
+    if specific:
+        lines.append("METRIC-SPECIFIC LEVEL ANCHORS (use these instead of the generic anchors for that metric):")
+        for name in sorted(specific):
+            ordered = sorted(specific[name].items(), key=lambda item: -float(item[0]) if item[0].replace(".", "", 1).isdigit() else 0)
+            lines.append(f"{name}: " + " | ".join(f"{level} = {text}" for level, text in ordered))
     return "\n".join(lines)

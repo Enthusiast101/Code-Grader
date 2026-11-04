@@ -283,6 +283,7 @@ def run_configured_analyzers(
                             enable_thinking=None,
                             response_schema=schema,
                             schema_name=stage_name,
+                            fit_context=True,
                         )
                         return parsed
 

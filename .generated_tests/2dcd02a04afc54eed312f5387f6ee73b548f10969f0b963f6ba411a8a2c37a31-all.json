@@ -1,0 +1,61 @@
+[
+  {
+    "expected": "grading sample\n",
+    "id": "instructor-normal",
+    "input": "",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "logical",
+      "memory_safety"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-whitespace",
+    "input": "   \n  \n  ",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored",
+      "whitespace"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-single_char",
+    "input": "a",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "single_char",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-multiple_lines",
+    "input": "line1\nline2\nline3",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "multiline",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-long_line",
+    "input": "a very long line that exceeds typical buffer sizes significantly",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "long_line",
+      "stdin-ignored"
+    ]
+  }
+]

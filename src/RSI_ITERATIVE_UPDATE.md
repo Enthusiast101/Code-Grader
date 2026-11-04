@@ -4,38 +4,25 @@ The C-assignment grading path follows this sequence:
 
 1. Deterministic analyzers collect objective results in a structured evidence ledger.
 2. The configured LLM understands the submitted source, separating actual source behavior from assignment intent.
-3. RSI pass 1 identifies whole-program defects grounded in the source and evidence ledger.
-4. RSI pass 2 receives pass 1's complete response and rechecks it for missed defects, false positives, unsupported claims, and incorrect source locations.
-5. RSI pass 3 repeats the recheck using pass 2's complete response. RSI passes are findings-only.
-6. One separate LLM scoring request evaluates metrics not defined by executed tests, using the assignment, rubric, actual source, validated findings, and analyzer evidence.
-7. Executed correctness/logical tests determine those metric scores by pass rate. Python validates the remaining LLM scores and applies rubric weights; completed deterministic analyzers are fallbacks when an LLM score is unavailable.
+3. RSI pass 1 identifies whole-program defects. Evidence is ordered defects-first so the evidence budget never drops a failed test or analyzer/sanitizer finding.
+4. Each later pass receives the previous complete response plus the defect evidence records no finding cites yet, and must explain or dismiss each. Passes are findings-only.
+5. RSI stops when a pass reproduces the previous findings exactly (`LLM_RSI_STOP_ON_CONVERGENCE`, default true).
+6. Findings are deduplicated per metric and exact line range, then adjudicated: reasoning first, then five checks; a finding survives only if all checks hold.
+7. One scoring request rates, 0-10, only metrics without an authoritative measurement. Executed tests and completed analyzers are authoritative; a runtime metric without a profile stays unmeasured. Python converts levels to points and applies weights.
 
-Each grading stage makes one request. There are no repair/retry generations. Structured stages send an explicit llama.cpp GBNF grammar, activated after `</think>` when reasoning is enabled. This constrains the final response to syntactically valid JSON while allowing bounded model thinking. If the local server is unavailable or rejects a request, the pipeline retains a clearly labelled evidence-based fallback rather than issuing another generation.
+## Structured output
 
-## Reasoning and compression
+- Requests send `response_format: {type: json_schema, json_schema: {name, schema}}`. llama-server ignores a top-level `schema` member for type `json_schema`; that shape was previously used and left every stage unconstrained.
+- Template thinking is disabled for schema-constrained requests so the schema applies from the first token.
+- Each stage allows up to three attempts; repair prompts name the specific problem (for example, missing metrics).
 
-- Model thinking is enabled by default for program understanding, RSI, scoring, and context compression, with a bounded reasoning budget.
-- Context compression uses the same `LLAMA_MODEL` and local `llama-server` as grading; no second model is configured.
-- Same-model compression is invoked only when a review history or semantic section exceeds its configured threshold. It may shorten prose but cannot modify source code, metric identities, finding anchors, line numbers, or evidence IDs.
-- Compressed output is validated before use. If it is not shorter or fails validation, deterministic anchor-preserving compaction is used without a second model request.
+## Context fitting and compression
 
-## Reporting
+- Every grading stage is fitted to the context window using exact token counts from `/tokenize` when available.
+- A quarter of the context (512-4096 tokens) is reserved for the answer, independent of the requested ceiling.
+- Same-model compression runs only when the prompt does not fit; otherwise the prompt, including the previous RSI response, is sent verbatim.
+- Compressed output is validated; deterministic anchor-preserving compaction is the fallback.
 
-The Gradio and text reports show each metric score with a model-authored or fallback explanation limited to 24 words and 160 characters. They omit generic RSI boilerplate and score-basis labels. Successful compiler diagnostics are not reported as syntax defects.
+## Reproducibility
 
-Correctness and logical scores equal the observed pass rate for completed configured tests; any LLM proposal is retained only as audit context. Other metrics use validated LLM scores, with completed analyzer results as fallback. Missing evidence remains unmeasured; the grader does not insert a neutral provisional score.
-
-The FormAI benchmark path remains separate from ordinary assignment grading.
-
-
-## Structured JSON reliability
-
-- Program understanding, each whole-program RSI pass, metric scoring, and same-model compression use the configured grading model with llama.cpp's `/v1/chat/completions` `response_format` JSON Schema contract.
-- These schema-constrained requests explicitly disable the Qwen reasoning prefix so the schema is active from the first assistant token; this avoids the Qwen reasoning-prefix/grammar prefill issue. Legacy unstructured requests may still use the configured reasoning mode.
-- Metric explanations are limited to 18 words and 120 characters (normally no more than 2-3 display lines).
-
-
-## llama.cpp structured-output transport
-
-- Structured grading and same-model compression use the documented `/v1/chat/completions` `response_format: {type: json_schema, json_schema: {name, strict, schema}}` field. They do not send the raw `grammar` field, which is for the completion endpoint and may be ignored by chat-server builds.
-- Template thinking is disabled per structured request so the JSON Schema grammar can start at the first assistant output token; the same configured model is used for all grading and compression requests.
+- Temperature 0, fixed seed, and `cache_prompt: false` (`LLAMA_CACHE_PROMPT`). With prompt caching enabled, identical requests were observed to decode differently on a warm server.

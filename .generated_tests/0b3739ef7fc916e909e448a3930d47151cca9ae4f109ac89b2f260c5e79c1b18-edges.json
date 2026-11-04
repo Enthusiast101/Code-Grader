@@ -1,0 +1,13 @@
+[
+  {
+    "expected": "grading sample\n",
+    "id": "instructor-normal",
+    "input": "",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "logical",
+      "memory_safety"
+    ]
+  }
+]

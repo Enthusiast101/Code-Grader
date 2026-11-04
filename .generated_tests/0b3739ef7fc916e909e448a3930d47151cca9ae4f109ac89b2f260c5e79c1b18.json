@@ -1,0 +1,102 @@
+{
+  "assignment_fingerprint": "0b3739ef7fc916e909e448a3930d47151cca9ae4f109ac89b2f260c5e79c1b18",
+  "assignment_statement": "Without reading input, allocate an integer array, print exactly \"grading sample\" followed by a newline, and exit normally. Keep every allocation valid until its final access and release every successful allocation exactly once; do not read freed memory or leak allocated memory.",
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 0,
+    "requested": 0,
+    "verification_calls": 0,
+    "verified": 0
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "stdin_unused_covered_by_instructor",
+      "pass": 1,
+      "reason": "The assignment reads no stdin and an instructor case already covers empty input, so no additional distinct test input exists.",
+      "rejected_test_count": 0,
+      "requested_test_count": 0,
+      "status": "skipped",
+      "test_count": 0
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "input_range: No input."
+    ],
+    "formatting": [
+      "Print exactly: grading sample"
+    ],
+    "input_format": "No stdin is read.",
+    "output_format": "Print exactly: grading sample",
+    "semantics": [
+      "Keep heap data valid until its last use and release every successful allocation exactly once. The program should print the fixed status line and exit normally."
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were independently rechecked by a second LLM call against the assignment specification. When available, instructor-provided examples guided input and output conventions; they are not an exhaustive oracle.",
+  "oracle_kind": "instructor-examples-plus-two-pass-llm-verification",
+  "problem_contract": {
+    "description": "Keep heap data valid until its last use and release every successful allocation exactly once. The program should print the fixed status line and exit normally.",
+    "input_range": "No input.",
+    "operand_type": "none",
+    "output_rule": "Print exactly: grading sample",
+    "sum_type": "none"
+  },
+  "rejected_generated_cases": [],
+  "schema_version": 3,
+  "spec_summary": "Without reading input, allocate an integer array, print exactly \"grading sample\" followed by a newline, and exit normally. Keep every allocation valid until its final access and release every successful allocation exactly once; do not read freed memory or leak allocated memory.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "malloc(64) allocation",
+      "NULL check on malloc result",
+      "Loop 0 to 63 with multiplication",
+      "malloc(32) allocation",
+      "NULL check on second malloc",
+      "strcpy to message buffer",
+      "printf with format specifier",
+      "free(values)"
+    ],
+    "dropped_contradictory_weak_points": [
+      "NULL check on second malloc"
+    ],
+    "implementation_summary": "Program allocates and initializes an integer array, prints fixed string, then accesses stale memory. No input reading occurs.",
+    "input_parsing_and_validation": [
+      "No input provided",
+      "Input range: none",
+      "Operand type: none",
+      "Output rule: Print exactly 'grading sample' followed by newline",
+      "Sum type: none"
+    ],
+    "likely_weak_points": [
+      "Accessing stale memory after free()",
+      "Loop bounds verification",
+      "Buffer overflow on strcpy",
+      "Use of volatile keyword",
+      "Memory leak on failure path"
+    ],
+    "recommended_test_dimensions": [
+      "Test malloc failure path",
+      "Test loop iteration count",
+      "Test strcpy buffer size",
+      "Test volatile read behavior",
+      "Test multiple allocation failures",
+      "Test mixed success/failure paths"
+    ]
+  },
+  "submission_derived_contract_entries_removed": [],
+  "test_cases": [
+    {
+      "expected": "grading sample\n",
+      "id": "instructor-normal",
+      "input": "",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "logical",
+        "memory_safety"
+      ]
+    }
+  ]
+}

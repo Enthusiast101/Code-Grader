@@ -73,6 +73,90 @@ def assignment_fingerprint(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+MAX_HINT_FIELD_CHARS = 400
+# A small model copies the examples it is shown, so only a few are sent as
+# format hints; duplicate detection still uses every instructor case.
+MAX_HINT_EXAMPLES = 3
+
+
+def _shorten_for_prompt(text: str, limit: int) -> str:
+    """Keep the head and tail of a long value with an explicit omission marker."""
+    if len(text) <= limit:
+        return text
+    head = text[: limit * 2 // 3]
+    tail = text[-(limit // 4):]
+    return f"{head}\n... [{len(text) - len(head) - len(tail)} characters omitted] ...\n{tail}"
+
+
+def _instructor_hint_examples(instructor_examples: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Instructor cases as compact format hints for the model.
+
+    Hints only illustrate input/output conventions. A performance case can be
+    huge (one LIS runtime input is ~97k characters, ~98k tokens), which alone
+    overflows the model context, so long fields are shortened and flagged.
+    Duplicate detection elsewhere still compares the full, untruncated inputs.
+    """
+    hints: list[dict[str, Any]] = []
+    for index, case in enumerate(instructor_examples or [], 1):
+        if not (isinstance(case, dict) and isinstance(case.get("input"), str) and isinstance(case.get("expected"), str)):
+            continue
+        hint = {
+            "id": str(case.get("id", f"instructor-{index}")),
+            "input": _shorten_for_prompt(case["input"], MAX_HINT_FIELD_CHARS),
+            "expected_output": _shorten_for_prompt(case["expected"], MAX_HINT_FIELD_CHARS),
+        }
+        if hint["input"] != case["input"] or hint["expected_output"] != case["expected"]:
+            hint["shortened_for_prompt"] = True
+        hints.append(hint)
+        if len(hints) >= MAX_HINT_EXAMPLES:
+            break
+    return hints
+
+
+_COUNT_THEN_VALUES = re.compile(
+    r"\bread\s+(?:an?\s+integer\s+)?(?P<var>[A-Za-z])\b[^.]*?\bfollowed\s+by\s+(?P=var)\s+"
+    r"(?:[\w-]+\s+){0,3}?(?:integers?|numbers?|values?)\b",
+    re.IGNORECASE,
+)
+
+
+def _declared_count_mismatch(problem: str, test_input: str) -> str | None:
+    """Reject "n, then n values" inputs whose value count differs from n.
+
+    Applies only when the assignment states exactly that shape (for example
+    "Read n (...), followed by n signed 32-bit integers"). A generated case that
+    declares n=20000 but lists 100 values has no defined expected output, and
+    both model stages were observed to accept one.
+    """
+    if not isinstance(problem, str) or not _COUNT_THEN_VALUES.search(problem):
+        return None
+    tokens = test_input.split()
+    if not tokens:
+        return None
+    try:
+        declared = int(tokens[0])
+    except ValueError:
+        return None
+    supplied = len(tokens) - 1
+    if declared >= 0 and supplied != declared:
+        return f"input declares {declared} values but supplies {supplied}"
+    return None
+
+
+def _input_identity(test_input: str, *, exact: bool = False) -> str:
+    """Key used to decide whether two stdin inputs are the same test.
+
+    Programs that read stdin with scanf-style parsing do not distinguish
+    trailing spaces or a final newline, so "5\\n1 2 3" and "5\\n1 2 3\\n" are one
+    test. For assignments that read no stdin, whitespace-only inputs are
+    deliberate robustness cases, so identity stays exact there.
+    """
+    if exact:
+        return test_input
+    lines = test_input.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(line.rstrip() for line in lines).strip("\n")
+
+
 def _validate_candidate(
     value: Any,
     pass_number: int,
@@ -215,6 +299,123 @@ def _validate_candidate(
         "rejected_generated_cases": rejected_cases,
     }
 
+_WORD_PATTERN = re.compile(r"[a-z_][a-z0-9_]*|\d+")
+_NUMBER_PATTERN = re.compile(r"^\d+$")
+# Function words and generic I/O vocabulary that any restatement may use
+# without having copied it from the submitted implementation.
+_GROUNDING_STOPWORDS = frozenset("""
+a an the and or but nor not no of to in on at by for from with without into onto over under
+after before during until while when where which who whom whose that this these those it its
+is are was were be been being has have had do does did done can could shall should will would
+may might must each every all any some both either neither one once twice only exactly same
+than then there their them they as if so such per via also more most less least very
+input inputs output outputs stdin stdout value values number numbers string strings line lines
+text program result results case cases test tests format formatting rule rules type types
+print printed printing return returns returned valid invalid correct correctly use used using
+end start first last fixed required require requires follow followed following newline
+""".split())
+_NEGATION_WORDS = frozenset(
+    "missing no not lacks lack lacking without unchecked never fails fail absent unvalidated "
+    "unguarded ignores ignore omit omits omitted incorrect wrong overflow leak leaks".split()
+)
+
+
+def _grounding_stem(word: str) -> str:
+    for suffix in ("izing", "ized", "izes", "ize", "ions", "ion", "ing", "ed", "es", "s"):
+        if suffix == "s" and word.endswith("ss"):
+            continue
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            word = word[: -len(suffix)]
+            break
+    if word.endswith("e") and len(word) > 3:
+        word = word[:-1]
+    return word
+
+
+def _grounding_terms(text: str) -> set[str]:
+    terms = set()
+    for token in _WORD_PATTERN.findall(text.casefold()):
+        if _NUMBER_PATTERN.match(token):
+            terms.add(token)
+        elif token not in _GROUNDING_STOPWORDS and len(token) > 2:
+            terms.add(_grounding_stem(token))
+    return terms
+
+
+def _submission_derived_terms(text: str, *, spec_terms: set[str], submission_terms: set[str]) -> list[str]:
+    """Terms in text that came from the submission analysis but not the specification."""
+    return sorted((_grounding_terms(text) & submission_terms) - spec_terms)
+
+
+def _remove_submission_derived_contract_entries(
+    inferred: dict[str, Any],
+    *,
+    spec_text: str,
+    submission_analysis: dict[str, Any] | None,
+    fallback_contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Strip contract statements that restate the student's code, not the assignment.
+
+    The generator sees an implementation analysis so it can choose useful test
+    dimensions. The inferred contract, however, is later presented to the
+    grader as assignment-derived, so any entry that uses vocabulary or numeric
+    literals found only in the implementation analysis (loop bounds, buffer
+    sizes, keywords, library calls) is removed deterministically and recorded.
+    """
+    if not isinstance(submission_analysis, dict) or not submission_analysis:
+        return inferred, []
+    submission_text = json.dumps(submission_analysis, ensure_ascii=False)
+    spec_terms = _grounding_terms(spec_text)
+    submission_terms = _grounding_terms(submission_text)
+    cleaned = dict(inferred)
+    removed: list[dict[str, str]] = []
+    for field in ("input_format", "output_format"):
+        value = cleaned.get(field, "")
+        leaked = _submission_derived_terms(str(value), spec_terms=spec_terms, submission_terms=submission_terms)
+        if leaked:
+            removed.append({"field": field, "entry": str(value)[:400], "submission_terms": ", ".join(leaked[:8])})
+            cleaned[field] = str(fallback_contract.get(field, ""))
+    for field in ("constraints", "semantics", "formatting"):
+        kept = []
+        for entry in cleaned.get(field, []):
+            leaked = _submission_derived_terms(entry, spec_terms=spec_terms, submission_terms=submission_terms)
+            if leaked:
+                removed.append({"field": field, "entry": entry[:400], "submission_terms": ", ".join(leaked[:8])})
+            else:
+                kept.append(entry)
+        cleaned[field] = kept
+    if not cleaned.get("semantics"):
+        cleaned["semantics"] = list(fallback_contract.get("semantics", []))
+    return cleaned, removed
+
+
+def _drop_self_contradicting_weak_points(
+    weak_points: list[str], present_behaviour: list[str],
+) -> tuple[list[str], list[str]]:
+    """Drop a 'weakness' that merely restates a check the analysis says is present.
+
+    A weak point that adds no negation (missing, unchecked, leak, ...) and shares
+    nearly all its terms with an observed-behaviour bullet describes code that
+    exists, not a defect, so it must not be shown to the user as a weakness.
+    """
+    observed = [(_grounding_terms(item), set(item.casefold().split())) for item in present_behaviour]
+    kept, dropped = [], []
+    for point in weak_points:
+        terms = _grounding_terms(point)
+        words = set(point.casefold().split())
+        contradicted = False
+        for item_terms, item_words in observed:
+            if not terms or not item_terms:
+                continue
+            overlap = len(terms & item_terms) / len(terms | item_terms)
+            adds_negation = bool((words & _NEGATION_WORDS) - item_words)
+            if overlap >= 0.75 and not adds_negation:
+                contradicted = True
+                break
+        (dropped if contradicted else kept).append(point)
+    return kept, dropped
+
+
 def _assignment_statement_is_actionable(problem: str, problem_contract: dict[str, Any]) -> bool:
     """Do not let the model invent a task from a title or from student source."""
     actionable = {
@@ -339,13 +540,21 @@ def analyze_submission_for_test_generation(
             "submission_understanding_failed",
             "The single implementation-understanding response omitted required fields or returned malformed lists; no retry was performed.",
         )
-    return {
+    analysis = {
         "implementation_summary": summary.strip()[:700],
         **{
             field: [item.strip()[:180] for item in result[field] if item.strip()][:8]
             for field in list_fields
         },
     }
+    kept, dropped = _drop_self_contradicting_weak_points(
+        analysis["likely_weak_points"],
+        analysis["input_parsing_and_validation"] + analysis["control_flow_and_data_types"],
+    )
+    analysis["likely_weak_points"] = kept
+    if dropped:
+        analysis["dropped_contradictory_weak_points"] = dropped
+    return analysis
 
 
 def _outputs_match(generated: str, verified: str) -> bool:
@@ -362,6 +571,7 @@ def _verify_expected_outputs(
     candidate_cases: list[dict[str, Any]],
     instructor_examples: list[dict[str, Any]] | None,
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
+    stdin_unused: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any]]:
     """Independently solve generated inputs without showing the verifier proposed outputs or student code."""
     schema = {
@@ -386,17 +596,7 @@ def _verify_expected_outputs(
         },
         "required": ["verifications"],
     }
-    examples = [
-        {
-            "id": str(case.get("id", f"instructor-{index}")),
-            "input": case["input"],
-            "expected_output": case["expected"],
-        }
-        for index, case in enumerate(instructor_examples or [], 1)
-        if isinstance(case, dict)
-        and isinstance(case.get("input"), str)
-        and isinstance(case.get("expected"), str)
-    ][:20]
+    examples = _instructor_hint_examples(instructor_examples)
     payload = {
         "assignment": problem,
         "problem_contract": problem_contract,
@@ -414,7 +614,15 @@ def _verify_expected_outputs(
             "Do not infer answers from student code or from any prior model output. For every id, state whether the input is valid and unambiguous "
             "under the assignment, and provide the exact expected stdout for a correct solution, including "
             "required spaces and line breaks. If the specification does not determine a unique answer, "
-            "set input_is_valid=false and explain briefly. Return exactly one verification for every id."
+            "set input_is_valid=false and explain briefly. Also set input_is_valid=false when a count "
+            "declared in the input (for example n) does not match the number of values supplied. "
+            "Return exactly one verification for every id."
+            + (
+                " This assignment reads no stdin: every supplied stdin is a valid robustness test that a "
+                "correct program ignores, so input_is_valid is true and expected_output is the same fixed "
+                "output for every id."
+                if stdin_unused else ""
+            )
         ),
     }
     verifier_messages = [
@@ -687,21 +895,18 @@ def generate_assignment_test_spec(
             str(problem_contract.get("formatting") or problem_contract.get("output_rule") or problem)
         ],
     }
-    examples = [
-        {
-            "id": str(case.get("id", f"instructor-{index}")),
-            "input": case["input"],
-            "expected_output": case["expected"],
-        }
-        for index, case in enumerate(instructor_examples or [], 1)
-        if isinstance(case, dict)
-        and isinstance(case.get("input"), str)
-        and isinstance(case.get("expected"), str)
-    ][:20]
+    examples = _instructor_hint_examples(instructor_examples)
+    stdin_unused = _assignment_reads_no_stdin(problem, problem_contract)
+    instructor_inputs = {
+        case["input"] for case in (instructor_examples or [])
+        if isinstance(case, dict) and isinstance(case.get("input"), str)
+    }
     base = {
         "assignment": problem,
+        "assignment_reads_stdin": not stdin_unused,
         "problem_contract": problem_contract,
         "instructor_examples_as_hints": examples,
+        "instructor_case_count": len(instructor_inputs),
         "generation_seed": generation_seed,
         "maximum_cases": max_cases,
         "requested_case_count": max_cases,
@@ -751,22 +956,37 @@ def generate_assignment_test_spec(
         "Use submitted_implementation_analysis only to choose useful test dimensions; never infer "
         "expected outputs from the student's implementation. Instructor examples are guidance for "
         "input grammar and output conventions, not an exhaustive list of cases or requirements. "
-        "First formalize the I/O contract. Generate diverse valid inputs and independently solve each "
+        "First formalize the I/O contract from the assignment and problem_contract alone: "
+        "inferred_contract must never restate details of the submitted implementation (loop bounds, "
+        "buffer or allocation sizes, variable names, keywords, library calls, or initial values) unless "
+        "the assignment itself states them. Generate diverse valid inputs and independently solve each "
         "input from the assignment to provide expected_output. Do not write, propose, or return C code. "
         "Do not invent requirements or guess ambiguous behaviour. If a required rule is genuinely "
         "ambiguous, report it in ambiguities. Include normal, boundary, empty/singleton, negative/zero, "
         "and task-specific cases only when valid. Prefer concise inputs and outputs. Return JSON only."
     )
+    stdin_instruction = (
+        "This assignment reads no stdin, so a correct program must ignore stdin entirely and its "
+        "expected_output is the same fixed output for every test. Generate distinct stdin-robustness "
+        "edge cases that check the program neither reads nor is affected by stdin: for example "
+        "whitespace or newlines only, a single number, several numbers, plain text, a very long line, "
+        "and data that looks like input for a different task. Tag each case 'edge' and 'stdin-ignored'. "
+        if stdin_unused else ""
+    )
     payload = dict(
         base,
-        instruction=(
+        instruction=stdin_instruction + (
             f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
             "id, input, expected_output, and up to three short tags. The input is the exact stdin text for one "
-            "test (not a label such as 'normal' or 'edge'). The empty string is valid only when the "
+            "test (not a label such as 'normal' or 'edge'). When the input declares a count (for example "
+            "n), supply exactly that many values; keep large cases small enough to write out in full. "
+            "The empty string is valid only when the "
             "assignment requires no stdin; whitespace-only text must never stand in for missing required "
             "input. Derive expected_output from the assignment contract, not from the submitted code. "
             "Follow the style shown by instructor "
-            "examples while exploring new inputs. Do not repeat instructor inputs. Do not include "
+            "examples while exploring new inputs. The instructor suite already has instructor_case_count cases; "
+            "every input you return must be new: different values and sizes from the hints, not a copy "
+            "with different whitespace, because copies are discarded. Do not include "
             "C source, coverage narration, or long rationales."
         ),
     )
@@ -787,13 +1007,24 @@ def generate_assignment_test_spec(
         fallback_contract=fallback_contract,
         allow_empty=True,
     )
+    # The inferred contract is later shown to the grader as assignment-derived,
+    # so remove anything the generator copied from the implementation analysis.
+    spec_text = "\n".join([
+        problem,
+        json.dumps(problem_contract, ensure_ascii=False, default=str),
+        json.dumps(examples, ensure_ascii=False),
+        additional_focus,
+    ])
+    candidate["inferred_contract"], removed_entries = _remove_submission_derived_contract_entries(
+        candidate["inferred_contract"],
+        spec_text=spec_text,
+        submission_analysis=submission_analysis,
+        fallback_contract=fallback_contract,
+    )
+    candidate["submission_derived_contract_entries_removed"] = removed_entries
 
     rejected: list[dict[str, str]] = list(candidate.get("rejected_generated_cases", []))
-    instructor_inputs = {
-        case["input"] for case in (instructor_examples or [])
-        if isinstance(case, dict) and isinstance(case.get("input"), str)
-    }
-    used_inputs = set(instructor_inputs)
+    used_inputs = {_input_identity(item, exact=stdin_unused) for item in instructor_inputs}
 
     def retain_contract_valid_cases(
         cases: list[dict[str, Any]],
@@ -805,9 +1036,13 @@ def generate_assignment_test_spec(
             item = dict(case)
             if id_prefix:
                 item["id"] = f"{id_prefix}{index}-{str(item.get('id', 'case'))[:48]}"
-            already_seen = item["input"] in used_inputs
-            used_inputs.add(item["input"])
-            reason = _validate_input_against_contract(item["input"], problem_contract)
+            identity = _input_identity(item["input"], exact=stdin_unused)
+            already_seen = identity in used_inputs
+            used_inputs.add(identity)
+            reason = (
+                _validate_input_against_contract(item["input"], problem_contract)
+                or _declared_count_mismatch(problem, item["input"])
+            )
             if reason:
                 rejected.append({"id": str(item["id"]), "reason": reason})
             elif already_seen:
@@ -841,6 +1076,7 @@ def generate_assignment_test_spec(
             candidate_cases=first_batch,
             instructor_examples=instructor_examples,
             request_json=request_json,
+            stdin_unused=stdin_unused,
         )
         verification_calls += 1
         verification_requested += len(first_batch)
@@ -872,13 +1108,15 @@ def generate_assignment_test_spec(
         repair_payload = dict(
             base,
             requested_replacement_count=missing_count,
-            previously_used_inputs=sorted(used_inputs)[:max_cases],
+            previously_used_inputs=[
+                _shorten_for_prompt(item, MAX_HINT_FIELD_CHARS) for item in sorted(used_inputs)[:max_cases]
+            ],
             previously_rejected_candidates=[
                 {"id": item.get("id", "candidate"), "reason": item.get("reason", "rejected")}
                 for item in rejected[:40]
             ],
             provisional_inferred_contract=candidate["inferred_contract"],
-            instruction=(
+            instruction=stdin_instruction + (
                 f"The first batch did not produce {max_cases} independently verified distinct cases. "
                 f"Generate up to {missing_count} NEW replacement cases. Each must contain an id, exact "
                 "stdin text in input, expected_output, and up to three concise tags. Do not reuse any "
@@ -943,6 +1181,7 @@ def generate_assignment_test_spec(
                         candidate_cases=repair_batch,
                         instructor_examples=instructor_examples,
                         request_json=request_json,
+                        stdin_unused=stdin_unused,
                     )
                     verification_calls += 1
                     verification_requested += len(repair_batch)
@@ -968,6 +1207,7 @@ def generate_assignment_test_spec(
         )
 
     candidate["test_inputs"] = verified_cases[:max_cases]
+    candidate["stdin_unused"] = stdin_unused
     candidate["generation_mode"] = "generate_then_independently_verify_with_bounded_refill"
     candidate["generation_response_count"] = 1 + repair_response_count
     candidate["verification_response_count"] = verification_calls
@@ -1004,7 +1244,48 @@ def generate_assignment_test_spec(
     candidate["generation_passes"] = history
     return candidate, history
 
-def _validate_input_against_contract(test_input: str, problem_contract: dict[str, Any]) -> str | None:
+_NO_STDIN_FIELD = re.compile(
+    r"^\s*(?:none|n/?a|no\s+stdin|no\s+input(?:\s+(?:is\s+)?(?:read|required|needed))?)\s*\.?\s*$",
+    re.IGNORECASE,
+)
+_NO_STDIN_STATEMENT = re.compile(
+    r"\b(?:without\s+reading\s+(?:any\s+)?(?:input|stdin)"
+    r"|(?:reads|takes|requires|needs)\s+no\s+(?:input|stdin)"
+    r"|does\s+not\s+(?:read|take|require|need)\s+(?:any\s+)?(?:input|stdin)"
+    r"|no\s+(?:input|stdin)\s+is\s+(?:read|required|needed))\b",
+    re.IGNORECASE,
+)
+
+
+def _assignment_reads_no_stdin(problem: str, problem_contract: dict[str, Any] | None) -> bool:
+    """Return True only when the assignment explicitly states that stdin is unused.
+
+    For such a task every non-empty stdin is ignored by a correct program, so
+    empty input is the only meaningful test input. Explicit contract flags win
+    over prose; prose detection uses narrow phrases such as "without reading
+    input" so that statements like "if there is no input, print 0" do not match.
+    """
+    contract = problem_contract if isinstance(problem_contract, dict) else {}
+    for key in ("reads_stdin", "stdin_required", "requires_input"):
+        if isinstance(contract.get(key), bool):
+            return not contract[key]
+    for key in ("input_token_count", "expected_token_count", "max_input_tokens"):
+        value = contract.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+            return True
+    for key in ("input", "input_format", "input_range", "stdin"):
+        value = contract.get(key)
+        if isinstance(value, str) and (
+            _NO_STDIN_FIELD.match(value) or _NO_STDIN_STATEMENT.search(value)
+        ):
+            return True
+    return bool(_NO_STDIN_STATEMENT.search(problem or ""))
+
+
+def _validate_input_against_contract(
+    test_input: str,
+    problem_contract: dict[str, Any],
+) -> str | None:
     """Validate stdin against explicit, machine-readable instructor constraints.
 
     Free-form prose cannot be interpreted as a formal grammar. Strict structural
@@ -1115,6 +1396,7 @@ def materialize_test_cases(
         raise TestGenerationError("invalid_spec", "Generated test inputs are missing.")
     merged: list[dict[str, Any]] = []
     seen_inputs: dict[str, str] = {}
+    exact_inputs = bool(generated_spec.get("stdin_unused"))
     seen_ids: set[str] = set()
 
     for index, case in enumerate(instructor_cases or [], 1):
@@ -1122,11 +1404,11 @@ def materialize_test_cases(
             raise TestGenerationError("invalid_instructor_test", f"Instructor test {index} is malformed.")
         test_input = case["input"]
         expected = case["expected"].replace("\r\n", "\n").replace("\r", "\n")
-        if test_input in seen_inputs:
-            if not _outputs_match(seen_inputs[test_input], expected):
+        if _input_identity(test_input, exact=exact_inputs) in seen_inputs:
+            if not _outputs_match(seen_inputs[_input_identity(test_input, exact=exact_inputs)], expected):
                 raise TestGenerationError("conflicting_instructor_tests", f"Instructor examples disagree about expected output for case {case.get('id', index)}.")
             for prior in merged:
-                if prior.get("input") == test_input:
+                if _input_identity(str(prior.get("input")), exact=exact_inputs) == _input_identity(test_input, exact=exact_inputs):
                     origins = prior.setdefault("origin_metrics", [])
                     for origin in case.get("origin_metrics", []):
                         if origin not in origins:
@@ -1140,7 +1422,7 @@ def materialize_test_cases(
         final_id = f"instructor-{case.get('id', f'instructor-{index}')}"
         if final_id in seen_ids:
             raise TestGenerationError("duplicate_test_id", f"Duplicate instructor test ID: {final_id}.")
-        seen_inputs[test_input] = expected
+        seen_inputs[_input_identity(test_input, exact=exact_inputs)] = expected
         seen_ids.add(final_id)
         merged.append({**case, "id": final_id, "input": test_input, "expected": expected, "origin": "instructor"})
 
@@ -1155,14 +1437,14 @@ def materialize_test_cases(
                 rejected_generated_cases.append({"id": case_id, "reason": "verified input/expected_output pair is malformed"})
                 continue
             raise TestGenerationError("invalid_generated_test", f"Generated test {case_id} lacks a string input or expected output.")
-        if test_input in seen_inputs:
-            if not _outputs_match(seen_inputs[test_input], expected):
+        if _input_identity(test_input, exact=exact_inputs) in seen_inputs:
+            if not _outputs_match(seen_inputs[_input_identity(test_input, exact=exact_inputs)], expected):
                 raise TestGenerationError("generated_instructor_disagreement", f"Generated expected output disagrees with an instructor example for test {case_id}.")
             continue
         final_id = f"generated-{case_id}"
         if final_id in seen_ids:
             raise TestGenerationError("duplicate_test_id", f"Generated test ID collides after normalization: {case_id}.")
-        seen_inputs[test_input] = expected
+        seen_inputs[_input_identity(test_input, exact=exact_inputs)] = expected
         seen_ids.add(final_id)
         merged.append({
             "id": final_id,
@@ -1196,6 +1478,9 @@ def write_frozen_suite(
         "spec_summary": generated_spec.get("spec_summary", ""),
         "submission_analysis": generated_spec.get("submission_analysis", {}),
         "inferred_contract": generated_spec.get("inferred_contract", {}),
+        "submission_derived_contract_entries_removed": generated_spec.get(
+            "submission_derived_contract_entries_removed", []
+        ),
         "expected_output_verification": generated_spec.get("verification_summary", {}),
         "oracle_kind": oracle_kind,
         "assignment_statement": assignment_statement,
@@ -1310,6 +1595,8 @@ def prepare_assignment_test_suite(
     max_cases = testing_cfg.get("max_cases", 12)
     if isinstance(max_cases, bool) or not isinstance(max_cases, int) or not 1 <= max_cases <= MAX_GENERATED_CASES:
         raise TestGenerationError("invalid_test_generation_config", f"test_generation.max_cases must be from 1 to {MAX_GENERATED_CASES}.")
+    stdin_unused = _assignment_reads_no_stdin(str(rules.get("problem", "")), rules.get("problem_contract", {}))
+    effective_requested = int(max_cases)
     additional_focus = testing_cfg.get("additional_focus", "")
     if not isinstance(additional_focus, str) or len(additional_focus) > 500:
         raise TestGenerationError("invalid_test_generation_config", "test_generation.additional_focus must be text of at most 500 characters.")
@@ -1324,7 +1611,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v15-empty-stdin-and-bounded-refill",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v20-bounded-hints-input-identity-count-check",
         rsi_passes=1,
         max_cases=int(max_cases),
         temperature=float(temperature),
@@ -1499,8 +1786,10 @@ def prepare_assignment_test_suite(
         "instructor_test_count": len(instructor_cases),
         "total_test_count": len(all_cases),
         "generated_test_count": generated_count,
-        "requested_generated_test_count": int(max_cases),
-        "generated_test_count_shortfall": max(0, int(max_cases) - generated_count),
+        "requested_generated_test_count": effective_requested,
+        "configured_max_generated_cases": int(max_cases),
+        "generated_test_count_shortfall": max(0, effective_requested - generated_count),
+        "stdin_unused": stdin_unused,
         "rejected_generated_test_count": len(frozen.get("rejected_generated_cases", [])),
         "edge_test_count": len(edge_cases),
         "generation_passes": generation_history,

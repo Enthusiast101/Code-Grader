@@ -65,6 +65,7 @@ _RUNTIME_OVERRIDE_KEYS = {
     "TEMPERATURE",
     "LLAMA_REQUEST_TIMEOUT",
     "LLM_REVIEW_MAX_ITERATIONS",
+    "LLM_RSI_STOP_ON_CONVERGENCE",
     "LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS",
     "LLM_GLOBAL_RSI_MAX_TOKENS",
     "LLM_GLOBAL_SCORE_MAX_TOKENS",
@@ -157,6 +158,10 @@ def _resolve_model_from_env(value: str | None) -> str:
 MODEL = _resolve_model_from_env(os.getenv("LLAMA_MODEL"))
 TEMPERATURE = _env_float("LLAMA_TEMPERATURE", 0.0)
 SEED = _env_int("LLAMA_SEED", 42)
+# Reuse of the server's KV cache across requests changes batch boundaries and
+# therefore logits, so identical requests can decode differently even at
+# temperature 0. Disabled by default: grading must be repeatable.
+LLAMA_CACHE_PROMPT = _env_bool("LLAMA_CACHE_PROMPT", False)
 MAX_TOKENS = _env_int("LLAMA_MAX_TOKENS", 3072)
 LLAMA_CONTEXT_SIZE = _env_int("LLAMA_CONTEXT_SIZE", 8192)
 LLAMA_REASONING_ENABLED = _env_bool("LLAMA_REASONING_ENABLED", True)
@@ -211,6 +216,9 @@ LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS = _env_int("LLM_CONTEXT_COMPRESSION_THRE
 LLM_CONTEXT_COMPRESSION_MAX_TOKENS = _env_int("LLM_CONTEXT_COMPRESSION_MAX_TOKENS", 1536)
 LLM_RETRY_ATTEMPTS = 1  # Legacy audit paths also make one request; no repair retries.
 LLM_REVIEW_MAX_ITERATIONS = _env_int("LLM_REVIEW_MAX_ITERATIONS", 3)
+# Stop RSI early when a pass reproduces the previous findings exactly (a fixed
+# point at temperature 0). Set false to always run every configured pass.
+LLM_RSI_STOP_ON_CONVERGENCE = _env_bool("LLM_RSI_STOP_ON_CONVERGENCE", True)
 LLM_DEFAULT_MAX_FINDINGS = _env_int("LLM_DEFAULT_MAX_FINDINGS", 30)
 LLM_FINDING_RECOVERY_ENABLED = _env_bool("LLM_FINDING_RECOVERY_ENABLED", False)
 LLM_FINDING_EXCERPT_CONTEXT_LINES = _env_int("LLM_FINDING_EXCERPT_CONTEXT_LINES", 4)

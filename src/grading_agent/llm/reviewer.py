@@ -35,6 +35,11 @@ REVIEW_MAX_TOKENS = settings.LLM_REVIEW_MAX_TOKENS
 _LAST_FITTED_SOURCE_LINES: ContextVar[set[int] | None] = ContextVar(
     "grading_last_fitted_source_lines", default=None
 )
+# Optional callback told the stage name of every structured model request, so
+# a UI can show which pipeline stage is running. Never affects grading.
+STAGE_LISTENER: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "grading_stage_listener", default=None
+)
 
 
 def _short(value: Any, limit: int = settings.LLM_MAX_REVIEW_STRING_CHARS) -> Any:
@@ -43,15 +48,67 @@ def _short(value: Any, limit: int = settings.LLM_MAX_REVIEW_STRING_CHARS) -> Any
     return value
 
 
+def _positive_count(value: Any) -> bool:
+    if isinstance(value, dict):
+        value = value.get("bytes", value.get("count", 0))
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def _evidence_priority(entry: dict[str, Any]) -> int:
+    """Rank evidence by how much it can change a grading decision.
+
+    0: an observed defect or failure (failed test, analyzer/sanitizer finding,
+       compiler warning/error, a metric below its maximum or not completed).
+    1: assignment context (contract, rubric, preflight, coverage, limitations).
+    2: clean measurements and summaries ("all checks passed").
+    3: model-derived leads and per-line source echoes (the numbered source is
+       already in the prompt, so these duplicate it).
+    A fixed character budget must never drop a defect in favour of a clean
+    summary: that is what hid a confirmed use-after-free from the reviewer.
+    """
+    kind = str(entry.get("kind", ""))
+    facts = entry.get("facts") if isinstance(entry.get("facts"), dict) else {}
+    if kind in {"source_line", "model_audit"}:
+        return 3
+    if kind in {"static_finding", "undefined_behavior_finding", "address_sanitizer_finding"}:
+        return 0
+    if facts.get("passed") is False or facts.get("clean") is False or facts.get("memory_safe") is False:
+        return 0
+    if facts.get("address_sanitizer_finding") is True or facts.get("undefined_behavior_finding") is True:
+        return 0
+    if facts.get("sanitizer_error") is True or facts.get("compiled") is False:
+        return 0
+    for key in ("error_count", "warning_count", "finding_count", "tests_failed", "overflow_tests_failed"):
+        if _positive_count(facts.get(key)):
+            return 0
+    if _positive_count(facts.get("definitely_lost")) or _positive_count(facts.get("indirectly_lost")):
+        return 0
+    passed, total = facts.get("tests_passed"), facts.get("tests_total")
+    if isinstance(passed, int) and isinstance(total, int) and passed < total:
+        return 0
+    if kind == "metric_summary":
+        score = facts.get("score")
+        status = str(facts.get("status", "")).casefold()
+        if status and status != "completed":
+            return 0
+        if isinstance(score, (int, float)) and not isinstance(score, bool) and score < 100:
+            return 0
+        return 2
+    if kind == "model_audit_finding":
+        return 1
+    if kind in {"preflight", "rubric", "inferred_contract", "scope_limitation", "coverage_summary"}:
+        return 1
+    return 2
+
+
 def _compact_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Select compact, useful evidence while preserving all test outcomes."""
-    # First pass preserves configuration, aggregate metric results, and every
-    # test result. Source lines and lower-priority details are added afterward.
+    """Select compact evidence, defects first, within the evidence budget."""
     priority_kinds = {
         "preflight", "rubric", "inferred_contract", "metric_summary", "test_summary", "test_result",
         "compiler_diagnostics", "static_analysis", "static_finding", "model_audit", "model_audit_finding",
         "memory_safety_measurement", "valgrind_result", "sanitizer_result", "runtime_measurement",
         "readability_measurement", "source_metric", "scope_limitation", "coverage_summary",
+        "undefined_behavior_finding", "address_sanitizer_finding",
     }
     selected = [item for item in ledger if item.get("kind") in priority_kinds]
     source_lines = [item for item in ledger if item.get("kind") == "source_line"]
@@ -72,6 +129,9 @@ def _compact_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
     selected_source = [source_by_number[number] for number in sorted(important_numbers) if number in source_by_number]
     selected_source.extend(item for item in source_lines[:8] if item not in selected_source)
     selected.extend(selected_source)
+    # Stable sort: defects first, then context, then clean summaries, keeping
+    # the ledger's own order within each tier.
+    selected.sort(key=_evidence_priority)
 
     result: list[dict[str, Any]] = []
     size = 0
@@ -95,6 +155,8 @@ def _compact_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "overflow_tests_total", "overflow_tests_passed", "overflow_tests_failed",
                 "contract_operand_type", "contract_sum_type", "finding_count",
                 "category", "severity", "code_excerpt", "description",
+                "address_sanitizer_finding", "sanitizer_error", "definitely_lost",
+                "diagnostics", "tests_failed",
             ):
                 if key in facts:
                     limit = settings.LLM_RSI_CODE_EVIDENCE_CHARS if key in {"code", "code_excerpt"} else 160
@@ -240,15 +302,21 @@ def _extract_json_object(
                     try:
                         parsed = json.loads(candidate)
                     except json.JSONDecodeError:
-                        cursor = start + 1
+                        pass
                     else:
                         if isinstance(parsed, dict):
                             objects.append(parsed)
-                        cursor = index + 1
+                    # Only top-level objects are candidates. Never descend into
+                    # a malformed region and return one of its nested members
+                    # (e.g. inferred_contract) as if it were the whole answer.
+                    cursor = index + 1
                     completed = True
                     break
         if not completed:
-            cursor = start + 1
+            # An unterminated object (typically finish_reason=length) encloses
+            # the rest of the text, so nothing after it is top-level. Stop so
+            # the caller reports truncation instead of a nested fragment.
+            break
 
     if not objects:
         return None
@@ -377,6 +445,35 @@ def _compact_evidence_for_context(ledger: Any, max_chars: int) -> list[dict[str,
     return compact
 
 
+_TOKENIZER_UNAVAILABLE_UNTIL = 0.0
+
+
+def _count_tokens(text: str) -> int | None:
+    """Exact prompt length from llama-server's /tokenize endpoint, if reachable.
+
+    Uses its own session so tests that patch ``requests.post`` for chat
+    completions are unaffected. After a failure the endpoint is not retried for
+    a minute, and callers fall back to a conservative character estimate.
+    """
+    global _TOKENIZER_UNAVAILABLE_UNTIL
+    if time.monotonic() < _TOKENIZER_UNAVAILABLE_UNTIL:
+        return None
+    try:
+        with requests.Session() as session:
+            response = session.post(
+                f"{settings.LLAMA_BASE_URL}/tokenize",
+                json={"content": text, "add_special": False},
+                timeout=10,
+            )
+        tokens = response.json().get("tokens") if response.ok else None
+        if isinstance(tokens, list):
+            return len(tokens)
+    except Exception:
+        pass
+    _TOKENIZER_UNAVAILABLE_UNTIL = time.monotonic() + 60.0
+    return None
+
+
 def _fit_grading_messages(
     messages: list[dict[str, str]],
     requested_max_tokens: int,
@@ -399,13 +496,21 @@ def _fit_grading_messages(
     # Even with a 4k-token request, a 256-512 token completion is enough to
     # produce an initial bounded response; unused room remains available up to
     # the requested ceiling.
-    minimum_output_tokens = min(requested, max(128, min(256, context_size // 32)))
+    # Reserve a real answer budget. A structured grading answer cut off by the
+    # context limit is invalid JSON and forces a fallback, which is worse for
+    # consistency than compressing the prompt a little further.
+    # The reserve depends only on the context size, never on the requested
+    # ceiling, so raising the output slider cannot shrink the source context.
+    minimum_output_tokens = max(512, min(context_size // 4, 4096))
 
     def estimated_prompt_tokens(items: list[dict[str, str]]) -> int:
+        exact = _count_tokens("\n".join(str(item.get("content", "")) for item in items))
+        if exact is not None:
+            # Chat-template role markers add a few tokens per message.
+            return exact + 8 * len(items)
         chars = sum(len(str(item.get("content", ""))) for item in items)
-        # C source and JSON tokenize more densely than prose. Two characters
-        # per token is intentionally conservative in the absence of the exact
-        # loaded model tokenizer endpoint.
+        # Fallback when the tokenizer endpoint is unavailable: C source and
+        # JSON tokenize densely, so two characters per token is conservative.
         return int(chars / 2.0) + 16 * len(items)
 
     max_prompt_tokens = max(256, context_size - minimum_output_tokens - margin)
@@ -502,6 +607,24 @@ def _fit_grading_messages(
             ]
         return compacted
 
+    initial_prompt_tokens = estimated_prompt_tokens(fitted)
+    if initial_prompt_tokens <= max_prompt_tokens:
+        # The prompt fits: send it verbatim. In particular the previous RSI
+        # response is passed complete, not as a paraphrase.
+        effective_tokens = min(requested, max(64, context_size - initial_prompt_tokens - margin))
+        return fitted, effective_tokens, {
+            "context_size": context_size,
+            "requested_output_tokens": requested,
+            "effective_output_tokens": effective_tokens,
+            "minimum_output_reserve": minimum_output_tokens,
+            "estimated_prompt_tokens": initial_prompt_tokens,
+            "input_chars": original_chars,
+            "output_chars": original_chars,
+            "compression_methods": [],
+            "prompt_fits_context_estimate": True,
+            "final_safety_margin": margin,
+        }
+
     # Initial pass: compress the preceding review and any oversized payload.
     for index, message in enumerate(fitted):
         if message.get("role") == "system":
@@ -573,6 +696,75 @@ def _fit_grading_messages(
             fitted[index]["content"] = prefix + json.dumps(payload, ensure_ascii=False) + suffix
         if not changed:
             break
+
+    # Shape-agnostic fit for any payload (test generation, output verification,
+    # grading): repeatedly shorten the longest string value in place, keeping
+    # its head and tail and marking the omission, until the prompt fits. No key
+    # is ever dropped, unlike the last-resort path below, which only knows the
+    # grading payload's keys.
+    protected_keys = {"instruction", "corrective_instruction", "task", "assignment", "id", "finding_id"}
+
+    def longest_leaf(node: Any, path: tuple = ()) -> tuple[tuple, int]:
+        best: tuple[tuple, int] = ((), 0)
+        if isinstance(node, dict):
+            items = [(key, value) for key, value in node.items() if key not in protected_keys]
+        elif isinstance(node, list):
+            items = list(enumerate(node))
+        else:
+            return best
+        for key, value in items:
+            if isinstance(value, str):
+                if len(value) > best[1]:
+                    best = (path + (key,), len(value))
+            else:
+                candidate = longest_leaf(value, path + (key,))
+                if candidate[1] > best[1]:
+                    best = candidate
+        return best
+
+    def shorten_middle(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        head, tail = text[: limit * 2 // 3], text[-(limit // 4):]
+        return f"{head}\n... [{len(text) - len(head) - len(tail)} characters omitted to fit the context] ...\n{tail}"
+
+    generic_shortened = False
+    for _ in range(60):
+        prompt_tokens = estimated_prompt_tokens(fitted)
+        if prompt_tokens <= max_prompt_tokens:
+            break
+        # Convert the token overshoot to characters using this prompt's own
+        # measured density, plus a small margin, so values are cut only as far
+        # as needed rather than far below what fits.
+        total_chars = sum(len(str(item.get("content", ""))) for item in fitted)
+        chars_per_token = total_chars / max(1, prompt_tokens)
+        excess_chars = int((prompt_tokens - max_prompt_tokens) * chars_per_token * 1.05) + 120
+        changed = False
+        for index, message in enumerate(fitted):
+            if message.get("role") == "system":
+                continue
+            content = str(message.get("content", ""))
+            prefix, payload, suffix = _extract_embedded_json(content)
+            if payload is None:
+                if len(content) > 2_000:
+                    fitted[index]["content"] = shorten_middle(content, max(1_500, len(content) - excess_chars))
+                    changed = True
+                continue
+            path, length = longest_leaf(payload)
+            if not path or length < 300:
+                continue
+            target = max(240, length - excess_chars)
+            node = payload
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = shorten_middle(node[path[-1]], target)
+            fitted[index]["content"] = prefix + json.dumps(payload, ensure_ascii=False) + suffix
+            changed = True
+        if not changed:
+            break
+        generic_shortened = True
+    if generic_shortened:
+        compression_methods.append("longest_value_shortening")
 
     prompt_tokens = estimated_prompt_tokens(fitted)
     available_output = context_size - prompt_tokens - margin
@@ -743,13 +935,23 @@ def _request_json(
     enable_thinking: bool | None = None,
     response_schema: dict[str, Any] | None = None,
     schema_name: str = "grading_response",
+    fit_context: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Request and parse a JSON final answer from the configured local server.
+
+    ``fit_context`` (or an explicit ``enable_thinking``) fits the prompt into
+    the model context window, compressing only when it would not otherwise fit.
 
     Schema-constrained requests use direct output mode so llama.cpp can apply
     response_format JSON Schema before the first generated token. Unstructured
     legacy callers retain the configured reasoning mode.
     """
+    listener = STAGE_LISTENER.get()
+    if listener is not None:
+        try:
+            listener(str(schema_name))
+        except Exception:
+            pass
     requested_tokens = max_tokens if max_tokens is not None else settings.MAX_TOKENS
     request_messages = [dict(item) for item in messages]
     effective_tokens = requested_tokens
@@ -774,7 +976,7 @@ def _request_json(
             request_messages[system_index]["content"] = (
                 str(request_messages[system_index].get("content", "")) + schema_instruction
             )
-    if enable_thinking is not None:
+    if enable_thinking is not None or fit_context:
         request_messages, effective_tokens, context_stats = _fit_grading_messages(
             request_messages, requested_tokens
         )
@@ -828,16 +1030,22 @@ def _request_json(
         "seed": settings.SEED,
         "max_tokens": effective_tokens,
         "stream": False,
+        # Bit-exact repeatability: see settings.LLAMA_CACHE_PROMPT.
+        "cache_prompt": bool(settings.LLAMA_CACHE_PROMPT),
         "chat_template_kwargs": {"enable_thinking": thinking},
     }
 
     if schema_constrained:
-        # llama.cpp's /v1/chat/completions API uses a direct `schema` member.
-        # The OpenAI-compatible nested `json_schema` wrapper is not the native
-        # llama.cpp wire shape and can be ignored by some server builds.
+        # llama-server reads the schema for type "json_schema" from the nested
+        # OpenAI-style `json_schema.schema` member. A top-level `schema` is only
+        # honoured with type "json_object"; with "json_schema" it is silently
+        # ignored and decoding is unconstrained (verified against build b12019).
         request_body["response_format"] = {
             "type": "json_schema",
-            "schema": response_schema,
+            "json_schema": {
+                "name": re.sub(r"[^A-Za-z0-9_-]", "_", str(schema_name or "response"))[:64],
+                "schema": response_schema,
+            },
         }
     elif bool(settings.runtime_value("LLAMA_JSON_GRAMMAR_ENABLED")):
         request_body["response_format"] = {"type": "json_object"}
@@ -2698,23 +2906,42 @@ def _finding_prevalidation_reason(
 
 
 def _deduplicate_validated_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one finding per root cause; merge the evidence of dropped duplicates.
+
+    The same metric on the exact same line range is one root cause even when a
+    small model restates it once per failing test ("... test case 1", "... test
+    case 2"); counting it repeatedly would over-penalise a single defect.
+    """
     unique: list[dict[str, Any]] = []
     for finding in findings:
         text = " ".join(re.findall(r"[a-z0-9_]+", f"{finding.get('title', '')} {finding.get('description', '')}".casefold()))
-        duplicate = False
+        duplicate_of: dict[str, Any] | None = None
         for prior in unique:
             same_metric = finding.get("metric") == prior.get("metric")
             left, right = finding.get("line_start"), prior.get("line_start")
             same_area = left is not None and right is not None and abs(left - right) <= 2
+            same_range = (
+                left is not None and left == right
+                and finding.get("line_end", left) == prior.get("line_end", right)
+            )
             prior_text = " ".join(re.findall(r"[a-z0-9_]+", f"{prior.get('title', '')} {prior.get('description', '')}".casefold()))
             ratio = SequenceMatcher(None, text, prior_text).ratio()
             tokens_a, tokens_b = set(text.split()), set(prior_text.split())
             overlap = len(tokens_a & tokens_b) / max(1, len(tokens_a | tokens_b))
-            if same_metric and (text == prior_text or (same_area and (ratio >= 0.68 or overlap >= 0.66))):
-                duplicate = True
+            if same_metric and (
+                text == prior_text or same_range
+                or (same_area and (ratio >= 0.68 or overlap >= 0.66))
+            ):
+                duplicate_of = prior
                 break
-        if not duplicate:
-            unique.append(finding)
+        if duplicate_of is None:
+            unique.append(dict(finding))
+        else:
+            merged = list(dict.fromkeys(
+                [str(ref) for ref in duplicate_of.get("evidence_ids", [])]
+                + [str(ref) for ref in finding.get("evidence_ids", [])]
+            ))
+            duplicate_of["evidence_ids"] = merged[:8]
     return unique
 
 
@@ -2969,17 +3196,18 @@ def _global_rsi_response_schema(enabled_metrics: list[dict[str, Any]]) -> dict[s
 
 
 def _metric_score_response_schema(enabled_metrics: list[dict[str, Any]]) -> dict[str, Any]:
-    """Require earned points within each enabled metric's configured maximum."""
+    """Require one integer 0-10 rubric level per metric; Python converts to points.
+
+    A single small integer scale for every metric is far easier for a small
+    model to apply consistently than heterogeneous point caps (10, 20, ...),
+    and it cannot be confused with the 0-100 percentage scale.
+    """
     names = [str(item.get("name")) for item in enabled_metrics if item.get("name")]
-    caps = {
-        str(item.get("name")): float(item.get("max_points", 100.0))
-        for item in enabled_metrics if item.get("name")
-    }
     score_properties = {
         name: {
             "type": "object",
             "properties": {
-                "score": {"type": "number", "minimum": 0, "maximum": caps[name]},
+                "score": {"type": "integer", "minimum": 0, "maximum": 10},
                 "rationale": {"type": "string", "maxLength": 420},
                 "zero_score_reason": {"type": "string", "maxLength": 160},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -3009,6 +3237,7 @@ def _call_grading_json(
     schema_name: str = "grading_response",
     validator: Callable[[dict[str, Any]], bool] | None = None,
     max_attempts: int | None = None,
+    invalid_reason: Callable[[dict[str, Any]], str] | None = None,
 ) -> tuple[dict[str, Any] | None, list[str], list[float], int]:
     """Request structured output with bounded self-correction retries."""
     diagnostics: list[str] = []
@@ -3031,6 +3260,7 @@ def _call_grading_json(
             parsed, raw = _request_json(
                 working, max_tokens=max_tokens, enable_thinking=None,
                 response_schema=response_schema, schema_name=schema_name,
+                fit_context=True,
             )
         except (requests.RequestException, RuntimeError, ValueError) as exc:
             parsed, raw = None, f"{type(exc).__name__}: {exc}"
@@ -3044,10 +3274,16 @@ def _call_grading_json(
             reason = str(raw)[:900]
         else:
             excerpt = json.dumps(parsed, ensure_ascii=False)[:700]
+            specific = ""
+            if invalid_reason is not None:
+                try:
+                    specific = str(invalid_reason(parsed) or "").strip()
+                except Exception:
+                    specific = ""
             reason = (
+                (specific + " ") if specific else
                 "JSON object failed stage-specific validation; required fields, types, ranges, or evidence anchors are invalid. "
-                f"Response excerpt: {excerpt}"
-            )
+            ) + f"Response excerpt: {excerpt}"
         diagnostics.append(f"{schema_name} attempt {attempt}/{max_attempts}: {reason or 'invalid response'}")
         if attempt < max_attempts:
             repair_contract = (
@@ -3066,29 +3302,39 @@ def _call_grading_json(
     return None, diagnostics, latencies, len(latencies)
 
 
-def _finding_validation_schema() -> dict[str, Any]:
+def _finding_validation_schema(finding_ids: list[str] | None = None) -> dict[str, Any]:
+    """One verdict per candidate, reasoning first, then explicit checks.
+
+    llama.cpp emits keys in schema order, so ``reason`` comes before the
+    booleans: the model states what it verified before committing to them.
+    The accept/reject outcome is derived from the checks in Python; a free
+    "decision" label was observed contradicting the model's own checks
+    ("reject" with every check true, meaning "the code is rejected").
+    """
     decision_schema = {
         "type": "object",
         "properties": {
-            "finding_id": {"type": "string"},
-            "decision": {"type": "string", "enum": ["accept", "reject", "uncertain"]},
+            "finding_id": {"type": "string", **({"enum": list(finding_ids)} if finding_ids else {})},
+            "reason": {"type": "string", "minLength": 12, "maxLength": 240},
             "source_line_valid": {"type": "boolean"},
             "contract_relevant": {"type": "boolean"},
             "claim_supported": {"type": "boolean"},
             "logical_consistency": {"type": "boolean"},
             "evidence_valid": {"type": "boolean"},
-            "reason": {"type": "string", "minLength": 12, "maxLength": 500},
         },
         "required": [
-            "finding_id", "decision", "source_line_valid", "contract_relevant",
-            "claim_supported", "logical_consistency", "evidence_valid", "reason",
+            "finding_id", "reason", "source_line_valid", "contract_relevant",
+            "claim_supported", "logical_consistency", "evidence_valid",
         ],
     }
+    decisions: dict[str, Any] = {"type": "array", "items": decision_schema}
+    if finding_ids:
+        decisions.update({"minItems": len(finding_ids), "maxItems": len(finding_ids)})
     return {
         "type": "object",
         "properties": {
-            "decisions": {"type": "array", "items": decision_schema},
-            "summary": {"type": "string", "maxLength": 500},
+            "decisions": decisions,
+            "summary": {"type": "string", "maxLength": 300},
         },
         "required": ["decisions", "summary"],
     }
@@ -3445,7 +3691,11 @@ def _adjudicate_rsi_findings(
         "Do not mark a specific failed test as invalid merely because an aggregate metric summary "
         "is generic; inspect the test_result record containing input, expected, and actual values. "
         "Missing/empty assignment text is a grading limitation, not a student-code finding. "
-        "Return one decision for every finding ID exactly once. Return JSON only."
+        "Return one verdict for every finding ID exactly once. For each, first write the reason "
+        "(what you checked in the source and evidence), then set each check to true only if it holds: "
+        "source_line_valid (the cited lines contain the construct), contract_relevant, claim_supported, "
+        "logical_consistency, evidence_valid (cited IDs exist and support the claim). A finding is "
+        "kept only when every check is true. Return JSON only."
     )
     expected_ids = {str(item.get("id")) for item in unresolved_candidates}
 
@@ -3461,7 +3711,7 @@ def _adjudicate_rsi_findings(
             if finding_id not in expected_ids or finding_id in ids:
                 return False
             ids.append(finding_id)
-            if row.get("decision") not in {"accept", "reject", "uncertain"}:
+            if "decision" in row and row.get("decision") not in {"accept", "reject", "uncertain"}:
                 return False
             for field in ("source_line_valid", "contract_relevant", "claim_supported", "logical_consistency", "evidence_valid"):
                 if not isinstance(row.get(field), bool):
@@ -3479,8 +3729,13 @@ def _adjudicate_rsi_findings(
         # Validation is a compact one-decision-per-finding task. A bounded token
         # budget and two attempts prevent a single adjudication from dominating
         # grading latency; deterministic proof above handles exact test/source cases.
-        max_tokens=min(700, settings.runtime_value("LLM_GLOBAL_RSI_MAX_TOKENS")),
-        response_schema=_finding_validation_schema(),
+        # Room for every verdict: a truncated answer is invalid JSON and would
+        # discard all candidates, including tool-confirmed ones.
+        max_tokens=min(
+            settings.runtime_value("LLM_GLOBAL_RSI_MAX_TOKENS"),
+            200 + 180 * len(expected_ids),
+        ),
+        response_schema=_finding_validation_schema(sorted(expected_ids)),
         schema_name="post_rsi_finding_validation",
         validator=valid_response,
         max_attempts=2,
@@ -3511,7 +3766,8 @@ def _adjudicate_rsi_findings(
     )
     for item in unresolved_candidates:
         row = decision_by_id[str(item.get("id"))]
-        valid = row.get("decision") == "accept" and all(row.get(flag) is True for flag in required_flags)
+        # The checks decide; the optional label is kept only for the audit trail.
+        valid = all(row.get(flag) is True for flag in required_flags)
         if valid:
             accepted.append({**item, "validation_status": "accepted", "validation_reason": str(row.get("reason", ""))[:500]})
         else:
@@ -3731,7 +3987,7 @@ def _normalise_metric_scores(
         score = item.get("score", item.get("value", item.get("rating")))
         if score is None and isinstance(item.get("score_band"), str):
             percentage_midpoint = score_from_band(item["score_band"])
-            score = (percentage_midpoint * maximum / 100.0) if percentage_midpoint is not None else None
+            score = (percentage_midpoint / 10.0) if percentage_midpoint is not None else None
         if isinstance(score, str):
             try:
                 score = float(score.strip())
@@ -3739,9 +3995,11 @@ def _normalise_metric_scores(
                 score = None
         if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
             continue
-        score = float(score)
-        if not 0.0 <= score <= maximum:
+        level = float(score)
+        if not 0.0 <= level <= 10.0:
             continue
+        # The model returns a 0-10 rubric level; points are derived here.
+        score = level * maximum / 10.0
         basis = str(item.get("basis", "limited_evidence"))
         if basis not in _RSI_BASIS_VALUES:
             basis = "limited_evidence"
@@ -3782,6 +4040,7 @@ def _normalise_metric_scores(
             "score": round(score, 2),
             "score_points": round(score, 2),
             "max_points": maximum,
+            "llm_level_0_10": round(level, 2),
             "score_scale": "configured_metric_points",
             "rationale": rationale,
             "zero_score_reason": zero_reason[:160],
@@ -3856,6 +4115,57 @@ def _all_configured_tests_failed(result: Any) -> bool:
     return total > 0 and failed == total
 
 
+def _rubric_metric_criteria(rules: dict[str, Any]) -> dict[str, str]:
+    rubric = rules.get("rubric", rules.get("rubrics", {}))
+    metrics = rubric.get("metrics", rubric) if isinstance(rubric, dict) else {}
+    result: dict[str, str] = {}
+    if isinstance(metrics, dict):
+        for name, value in metrics.items():
+            if isinstance(value, str):
+                result[str(name)] = value
+            elif isinstance(value, dict) and isinstance(value.get("criterion"), str):
+                result[str(name)] = value["criterion"]
+    return result
+
+
+def _rubric_metric_levels(rules: dict[str, Any]) -> dict[str, dict[str, str]]:
+    rubric = rules.get("rubric", rules.get("rubrics", {}))
+    metrics = rubric.get("metrics", rubric) if isinstance(rubric, dict) else {}
+    result: dict[str, dict[str, str]] = {}
+    if isinstance(metrics, dict):
+        for name, value in metrics.items():
+            levels = value.get("levels") if isinstance(value, dict) else None
+            if isinstance(levels, dict):
+                result[str(name)] = {str(k): str(v) for k, v in levels.items()}
+    return result
+
+
+_MEASUREMENT_ONLY_ANALYZERS = frozenset({"runtime_profile"})
+_DETERMINISTIC_SCORE_ANALYZERS = frozenset({
+    "io_tests", "edge_case_runner", "runtime_profile", "memory_safety", "compiler_diagnostics",
+})
+
+
+def _deterministically_measured(metric: dict[str, Any], report: dict[str, Any]) -> bool:
+    """True when a completed analyzer score will override any model score.
+
+    Mirrors the precedence in scoring.overall.apply_metric_scores: the model is
+    not asked to score metrics whose final value it cannot change.
+    """
+    analyzer = str(metric.get("analyzer", ""))
+    result = report.get(str(metric.get("name")), {})
+    if analyzer not in _DETERMINISTIC_SCORE_ANALYZERS or not isinstance(result, dict):
+        return False
+    if str(result.get("status", "")).casefold() != "completed":
+        return False
+    score = result.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return False
+    if analyzer in {"io_tests", "edge_case_runner"}:
+        return _has_configured_tests(result)
+    return True
+
+
 def _score_metrics_after_rsi(
     report: dict[str, Any],
     rules: dict[str, Any],
@@ -3872,6 +4182,29 @@ def _score_metrics_after_rsi(
     enabled_names = [str(item.get("name")) for item in enabled]
     if not enabled_names:
         return {}, [], [], 0
+    all_enabled = enabled
+    # Ask the model only for metrics it can actually decide; fewer outputs per
+    # request make each rating more consistent for a small model.
+    # Runtime is an execution measurement; it cannot be read off the source
+    # (complexity covers that), so without a completed profile it stays
+    # unmeasured instead of receiving an invented model score.
+    unmeasurable = [
+        item for item in all_enabled
+        if str(item.get("analyzer")) in _MEASUREMENT_ONLY_ANALYZERS
+        and not _deterministically_measured(item, report)
+    ]
+    enabled = [
+        item for item in all_enabled
+        if not _deterministically_measured(item, report) and item not in unmeasurable
+    ]
+    measured_names = [
+        str(item.get("name")) for item in all_enabled
+        if item not in enabled and item not in unmeasurable
+    ]
+    unmeasurable_names = [str(item.get("name")) for item in unmeasurable]
+    scored_names = [str(item.get("name")) for item in enabled]
+    criteria = _rubric_metric_criteria(rules)
+    rubric_levels = _rubric_metric_levels(rules)
 
     source_text = str(report.get("source_code") or "")
     numbered_source, source_truncated, source_visible_lines = _bounded_numbered_source(
@@ -3888,7 +4221,11 @@ def _score_metrics_after_rsi(
         "problem_contract": problem_contract,
         "assignment_derived_inferred_contract": _grading_context_value(inferred_contract),
         "assignment_contract_is_actionable": contract_is_specific,
-        "instructor_rubric": _grading_context_value(rules.get("rubric", rules.get("rubrics", {}))),
+        # Only per-metric criteria: the rubric's own "scale" block (0-100
+        # points) contradicts the 0-10 rating this request asks for.
+        "instructor_rubric_criteria": _grading_context_value(
+            {name: criteria[name] for name in scored_names if name in criteria}
+        ),
         "source_line_count": len(source_text.splitlines()),
         "source_was_truncated": source_truncated,
         "source_visible_line_ranges": _compress_line_numbers(source_visible_lines),
@@ -3896,19 +4233,17 @@ def _score_metrics_after_rsi(
         "program_understanding": program_understanding or {},
         "final_validated_findings": final_review.get("findings", [])[:settings.runtime_value("LLM_GLOBAL_MAX_FINDINGS")],
         "review_summary": str(final_review.get("overall_assessment", ""))[:450],
-        "rubric_and_analyzer_summaries": [_compact_metric_context(metric, report) for metric in enabled],
+        "rubric_and_analyzer_summaries": [_compact_metric_context(metric, report) for metric in all_enabled],
         "evidence_ledger": _compact_ledger(ledger),
-        "enabled_metric_names": enabled_names,
-        "metric_max_points": {
-            str(metric.get("name")): float(metric.get("max_points", 100.0))
-            for metric in enabled
-        },
+        "metrics_to_rate": scored_names,
+        "metrics_already_measured_by_tools": measured_names,
     }
     system = (
         "You are the final expert evaluator for this C assignment. Read the submitted numbered "
-        "source itself and assign earned points directly to every enabled metric. Each score "
-        "must be between zero and that metric's configured maximum point cap. Return consolidated "
-        "metric points only; do not return a separate normalized rating. Use the assignment, "
+        "source itself and rate every metric listed in metrics_to_rate with one integer level "
+        "from 0 to 10 using the rubric levels below (10 = fully meets the criterion). Do not "
+        "return points or percentages; Python converts levels to points. Metrics already "
+        "measured by tools are listed for context only and must not be rated. Use the assignment, "
         "instructor rubric, validated findings, and analyzer evidence. Do not "
         "invent requirements. Missing test data or runtime measurements are not failed tests. "
         "Never infer expected assignment behavior from the submitted source. If assignment_contract_is_actionable is false and no configured tests exist, Python will mark correctness/logical unmeasured. Do not penalize missing scanf return checks or malformed-input handling unless the assignment requires it. "
@@ -3919,13 +4254,35 @@ def _score_metrics_after_rsi(
         "appropriate nonzero score. For every metric return a concise, source-specific rationale "
         "in 2–3 concise, metric-specific sentences (roughly 30–60 words). Include zero_score_reason as an empty string "
         "when not applicable and confidence as a number from 0 to 1. Return exactly one JSON "
-        "object with scores containing every enabled metric exactly once. No Markdown.\n\n"
+        "object with scores containing every metric in metrics_to_rate exactly once. No Markdown.\n\n"
         + rubric_prompt_block(
-            rules.get("rubric", rules.get("rubrics", {}))
-            if isinstance(rules.get("rubric", rules.get("rubrics", {})), dict) else None,
-            payload["metric_max_points"],
+            {"metrics": {name: criteria.get(name, "") for name in scored_names}},
+            None,
+            levels={name: rubric_levels[name] for name in scored_names if name in rubric_levels},
         )
     )
+    unmeasured_scores = {
+        name: {
+            "name": name, "score": None, "basis": "insufficient_evidence", "evidence_ids": [],
+            "origin": "insufficient_evidence_fallback",
+            "rationale": "No completed runtime measurement is available; runtime cannot be inferred from source, so this metric is unmeasured.",
+        }
+        for name in unmeasurable_names
+    }
+    if not enabled:
+        # Every metric has an authoritative measurement; no rating is needed.
+        return (
+            {
+                name: unmeasured_scores.get(name) or _fallback_metric_score(name, report, final_review.get("findings", []))
+                for name in enabled_names
+            },
+            ["Metric scoring request skipped: no enabled metric needed a model rating."],
+            [], 0,
+        )
+
+    def missing_scored(item: dict[str, Any]) -> list[str]:
+        return [name for name in scored_names if name not in _normalise_metric_scores(item, enabled, ledger)]
+
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -3934,7 +4291,12 @@ def _score_metrics_after_rsi(
         messages, max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
         response_schema=_metric_score_response_schema(enabled),
         schema_name="rubric_metric_scores",
-        validator=lambda item: bool(_normalise_metric_scores(item, enabled, ledger)),
+        validator=lambda item: not missing_scored(item),
+        invalid_reason=lambda item: (
+            "These metrics were missing or not an integer level from 0 to 10: "
+            + ", ".join(missing_scored(item))
+            + ". Return every metric in metrics_to_rate with an integer score from 0 to 10."
+        ),
     )
     raw = "; ".join(request_diagnostics)
     found = _normalise_metric_scores(parsed, enabled, ledger)
@@ -3975,11 +4337,13 @@ def _score_metrics_after_rsi(
                 f"{metric_name} was marked unmeasured: no actionable assignment contract or configured tests were available."
             )
 
+    scores.update(unmeasured_scores)
     missing = [name for name in enabled_names if name not in scores]
+    omitted = [name for name in missing if name in scored_names]
     if parsed is None:
         diagnostics.append("Metric scoring request returned no valid JSON; one deterministic fallback was used: " + str(raw)[:500])
-    elif missing:
-        diagnostics.append("Metric scoring response omitted: " + ", ".join(missing))
+    elif omitted:
+        diagnostics.append("Metric scoring response omitted: " + ", ".join(omitted))
     for name in missing:
         if name == "correctness" and not contract_is_specific and not _all_configured_tests_failed(report.get(name)):
             scores[name] = {
@@ -3990,6 +4354,12 @@ def _score_metrics_after_rsi(
             }
         else:
             scores[name] = _fallback_metric_score(name, report, final_review.get("findings", []))
+            if name in measured_names:
+                analyzer = next((str(m.get("analyzer")) for m in all_enabled if str(m.get("name")) == name), "analyzer")
+                scores[name]["rationale"] = (
+                    f"Measured by the completed {analyzer} analyzer; that measurement is authoritative, "
+                    "so no model rating was requested."
+                )
         scores[name]["rationale"] = compact_rationale(scores[name].get("rationale"), max_words=60, max_chars=420)
     return scores, diagnostics, latency, score_attempts
 
@@ -4134,6 +4504,31 @@ def evaluate_metrics_with_llm(
         for start, end in payload.get("source_visible_line_ranges", [])
     ]) if payload.get("source_visible_line_ranges") else set()
     final_user_content = ""
+    # Concrete defect evidence the reviewer can see. Each RSI pass after the
+    # first is given the records no finding explains yet, so every pass has a
+    # specific job instead of re-approving its own previous answer.
+    sent_evidence_ids = {
+        str(item.get("id")) for item in payload.get("evidence_ledger", []) if isinstance(item, dict)
+    }
+    defect_evidence = [
+        item for item in ledger
+        if isinstance(item, dict)
+        and str(item.get("id")) in sent_evidence_ids
+        and item.get("kind") not in {"metric_summary", "test_summary"}
+        and _evidence_priority(item) == 0
+    ]
+    unexplained_evidence: list[dict[str, Any]] = list(defect_evidence)
+    converged_at: int | None = None
+    stop_on_convergence = bool(settings.runtime_value("LLM_RSI_STOP_ON_CONVERGENCE"))
+
+    def finding_signature(review: dict[str, Any] | None) -> list[tuple[Any, ...]]:
+        return sorted(
+            (
+                str(item.get("metric")), item.get("line_start"), item.get("line_end"),
+                str(item.get("severity")), " ".join(str(item.get("title", "")).casefold().split()),
+            )
+            for item in (review or {}).get("findings", []) if isinstance(item, dict)
+        )
 
     # Stages 2-4: each RSI request receives the complete previous model response.
     for iteration in range(1, max_iterations + 1):
@@ -4142,7 +4537,10 @@ def evaluate_metrics_with_llm(
                 f"ITERATION 1/{max_iterations} — INITIAL WHOLE-PROGRAM REVIEW. "
                 "Identify concrete defects and omissions by comparing what the assignment "
                 "requires with what the complete source actually does. Trace relevant control "
-                "flow, data flow, allocations, frees, and input/output behavior. Findings only."
+                "flow, data flow, allocations, frees, and input/output behavior. The evidence "
+                "ledger lists observed failures and analyzer/sanitizer defects first: explain each "
+                "one with a finding that cites its evidence ID and the responsible source lines. "
+                "Findings only."
             )
             previous_block = ""
         else:
@@ -4155,6 +4553,20 @@ def evaluate_metrics_with_llm(
                 "Keep, correct, remove, or add findings only when justified. Do not merely agree "
                 "with your previous response. Return a complete replacement findings object."
             )
+            if unexplained_evidence:
+                instruction += (
+                    " UNEXPLAINED DEFECT EVIDENCE — these records report an observed failure or "
+                    "defect, but no finding in your previous response cites them. For each, add or "
+                    "correct a finding that cites the ID and the source lines responsible, or explain "
+                    "in unresolved_questions why it is not a defect of the submission: "
+                    + json.dumps(
+                        [
+                            {"id": item.get("id"), "statement": str(item.get("statement", ""))[:220]}
+                            for item in unexplained_evidence[:12]
+                        ],
+                        ensure_ascii=False,
+                    )
+                )
             previous_block = (
                 "\n\nYOUR IMMEDIATELY PRECEDING COMPLETE MODEL RESPONSE (recheck this):\n"
                 + json.dumps(previous_response, ensure_ascii=False)
@@ -4220,6 +4632,15 @@ def evaluate_metrics_with_llm(
                 f"RSI iteration {iteration}: excluded {len(rejected_this_pass)} candidate finding(s) during deterministic consistency checks."
             )
 
+        unchanged = (
+            iteration > 1 and not fallback_used
+            and finding_signature(accepted) == finding_signature(previous_response)
+        )
+        cited = {
+            str(ref) for item in accepted.get("findings", []) if isinstance(item, dict)
+            for ref in item.get("evidence_ids", [])
+        }
+        unexplained_evidence = [item for item in defect_evidence if str(item.get("id")) not in cited]
         latest_valid = accepted
         # Chain the complete, prevalidated response so later RSI passes are
         # asked to reconsider only findings that survived source-level checks.
@@ -4233,7 +4654,19 @@ def evaluate_metrics_with_llm(
             "findings_count": len(accepted["findings"]),
             "findings": accepted["findings"],
             "request_latencies_seconds": latencies,
+            "unchanged_from_previous_pass": unchanged,
+            "unexplained_defect_evidence_ids": [str(item.get("id")) for item in unexplained_evidence],
         })
+        if unchanged and stop_on_convergence and iteration < max_iterations:
+            # At temperature 0 a pass that reproduces its input with nothing
+            # left to reconcile has reached a fixed point; further identical
+            # passes add latency and only occasional noise.
+            converged_at = iteration
+            diagnostics.append(
+                f"RSI converged at iteration {iteration}: findings unchanged from the previous pass."
+                + (" Some defect evidence remains uncited." if unexplained_evidence else "")
+            )
+            break
 
     # Recover an exact, common numeric defect even when the small review model
     # omitted it: integer-typed operands assigned to float/double, corroborated by
@@ -4329,18 +4762,17 @@ def evaluate_metrics_with_llm(
     for name in enabled_names:
         if final_metrics.get(name, {}).get("origin") == "llm":
             continue
-        deterministic_result = report.get(name, {})
-        if (
-            name in {"correctness", "logical"}
-            and isinstance(deterministic_result, dict)
-            and str(deterministic_result.get("status", "")).casefold() == "completed"
-            and _has_configured_tests(deterministic_result)
-        ):
-            # Test-defined metrics have an authoritative deterministic score
-            # in the aggregation stage; a model score is optional.
+        metric_rule = next((item for item in enabled if str(item.get("name")) == name), {})
+        if _deterministically_measured(metric_rule, report):
+            # Completed analyzers and executed tests are authoritative in the
+            # aggregation stage, so the model is not asked to rate them.
             continue
         metrics_without_llm.append(name)
     completed_global_iterations = sum(item.get("status") in {"completed", "completed_with_fallback"} for item in iteration_history)
+    # A converged run performed every pass that could change the result.
+    rsi_complete = completed_global_iterations == max_iterations or (
+        converged_at is not None and completed_global_iterations == converged_at
+    )
     fallback_iterations = sum(item.get("status") == "completed_with_fallback" for item in iteration_history)
     metrics_output: list[dict[str, Any]] = []
     for name in enabled_names:
@@ -4368,7 +4800,7 @@ def evaluate_metrics_with_llm(
             "evidence_ids": score_item.get("evidence_ids", []),
             "iterations_requested": max_iterations,
             "iterations_completed": completed_global_iterations,
-            "iteration_status": "completed" if completed_global_iterations == max_iterations else "partial",
+            "iteration_status": "completed" if rsi_complete else "partial",
             "iteration_history": [{
                 "stage": "post_rsi_metric_scoring",
                 "score_points": round(points, 2) if points is not None else None,
@@ -4384,7 +4816,7 @@ def evaluate_metrics_with_llm(
         if not isinstance(item, dict) or item.get("decision") != "duplicate_of_validated_finding"
     ]
     partial = (
-        completed_global_iterations != max_iterations
+        not rsi_complete
         or bool(metrics_without_llm)
         or understanding_incomplete
         or fallback_iterations > 0
@@ -4468,6 +4900,7 @@ def evaluate_metrics_with_llm(
         "metric_scoring": report["llm_rsi_metric_scoring"],
         "iterations_requested": max_iterations,
         "iterations_completed": completed_global_iterations,
+        "rsi_converged_at_iteration": converged_at,
         "iterations_with_fallback": fallback_iterations,
         "iterations": iteration_history,
         "metrics": metrics_output,

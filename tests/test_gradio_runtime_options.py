@@ -620,8 +620,9 @@ def test_generate_button_analyzes_submission_then_saves_cases_without_grading(tm
         2, "large magnitudes and mixed signs", False,
     )
 
-    assert "Test cases generated successfully" in status
-    assert "What the LLM understood from the submitted C code" in status
+    assert "Test suite ready" in status
+    assert "Test-design notes from the submitted C code" in status
+    assert "not grading findings" in status
     assert "Addition may overflow signed int." in status
     assert generated_state["status"] == "completed"
     assert generated_state["requested_generated_test_count"] == 2

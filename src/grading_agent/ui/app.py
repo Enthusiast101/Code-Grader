@@ -1,6 +1,8 @@
 """Local Gradio interface for C assignment grading and FormAI-v2 evaluation."""
 from __future__ import annotations
 
+import contextvars
+import html
 import json
 import logging
 import math
@@ -11,6 +13,7 @@ from argparse import Namespace
 from pathlib import Path
 import shutil
 import uuid
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import gradio as gr
@@ -26,26 +29,34 @@ logger = logging.getLogger("grading_agent.ui")
 OCEAN_UI_CSS = """
 .gradio-container {max-width: 1480px !important; margin: 0 auto !important;}
 #app-header {padding: 0.5rem 0 0.2rem 0;}
-#grade-button {min-height: 3.1rem; font-size: 1.05rem;}
-#generate-tests-button {min-height: 3.1rem; font-size: 1.05rem;}
-.compact-note {opacity: 0.78;}
-#grading-progress:empty {display: none;}
-.grade-progress-card {display: flex; gap: 1rem; align-items: flex-start; margin: 0.8rem 0 1rem; padding: 1rem 1.1rem; border: 1px solid rgba(25, 140, 160, .3); border-radius: 16px; background: linear-gradient(120deg, rgba(14, 116, 144, .1), rgba(20, 184, 166, .08)); overflow: hidden;}
-.grade-progress-card.is-done {border-color: rgba(16, 140, 100, .35); background: linear-gradient(120deg, rgba(16, 140, 100, .1), rgba(20, 184, 166, .08));}
-.grade-progress-icon {width: 2.4rem; height: 2.4rem; flex: 0 0 2.4rem; display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(140deg, #0891b2, #0f766e); font-size: 1.15rem; box-shadow: 0 0 0 6px rgba(8, 145, 178, .1);}
-.is-done .grade-progress-icon {background: linear-gradient(140deg, #059669, #0f766e);}
-.grade-progress-body {flex: 1; min-width: 0;}
-.grade-progress-title {font-weight: 700; margin: 0 0 .2rem;}
-.grade-progress-heading {display: flex; align-items: center; justify-content: space-between; gap: 1rem;}
-.grade-progress-elapsed {font-variant-numeric: tabular-nums; white-space: nowrap; font-size: .88rem; opacity: .78;}
-.grade-progress-description {opacity: .76; margin: 0 0 .75rem; font-size: .92rem;}
-.grade-progress-track {height: .38rem; border-radius: 99px; overflow: hidden; background: rgba(100, 116, 139, .18);}
-.grade-progress-track span {display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #06b6d4, #14b8a6, #38bdf8); animation: grade-progress-slide 1.7s ease-in-out infinite;}
-.is-done .grade-progress-track span {width: 100%; animation: none; background: linear-gradient(90deg, #10b981, #14b8a6);}
-.grade-progress-stages {display: flex; flex-wrap: wrap; gap: .45rem; margin: 0 0 .75rem;}
-.grade-progress-stage {padding: .2rem .55rem; border: 1px solid rgba(14, 116, 144, .18); border-radius: 99px; background: rgba(255, 255, 255, .35); font-size: .78rem; opacity: .85;}
-@keyframes grade-progress-slide {0% {transform: translateX(-120%);} 100% {transform: translateX(360%);}}
-@media (prefers-reduced-motion: reduce) {.grade-progress-track span {animation: none; width: 65%;}}
+#grade-button, #generate-tests-button {min-height: 3.1rem; font-size: 1.05rem; font-weight: 600;}
+.compact-note, .compact-note p {opacity: 0.8; font-size: .9rem;}
+.input-panel {gap: .5rem !important;}
+.input-panel h3 {margin: 0 0 .1rem !important; font-size: 1.05rem;}
+
+/* Stage-aware progress card (test generation and grading). */
+.progress-host:empty {display: none;}
+.progress-card {margin: .6rem 0 .8rem; padding: 1rem 1.1rem; border-radius: 14px;
+  border: 1px solid var(--border-color-accent, var(--color-accent)); background: var(--block-background-fill);}
+.progress-card.is-done {border-color: #059669;}
+.progress-card.is-failed {border-color: #dc2626;}
+.progress-head {display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap;}
+.progress-title {font-weight: 700;}
+.progress-meta {font-size: .88rem; opacity: .8; font-variant-numeric: tabular-nums; white-space: nowrap;}
+.progress-detail {margin: .25rem 0 .7rem; font-size: .92rem; opacity: .85;}
+.progress-track {height: .5rem; border-radius: 99px; overflow: hidden; background: var(--border-color-primary);}
+.progress-fill {height: 100%; border-radius: inherit; background: var(--color-accent); transition: width .6s ease;
+  background-image: linear-gradient(90deg, transparent 0, rgba(255,255,255,.35) 50%, transparent 100%);
+  background-size: 200% 100%; animation: progress-shimmer 1.6s linear infinite;}
+.is-done .progress-fill {background-color: #059669; animation: none; background-image: none;}
+.is-failed .progress-fill {background-color: #dc2626; animation: none; background-image: none;}
+.progress-stages {display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 0; padding: 0; list-style: none;}
+.progress-stages li {padding: .18rem .6rem; border-radius: 999px; font-size: .8rem; border: 1px solid var(--border-color-primary); opacity: .65;}
+.progress-stages li.done {opacity: .9; border-color: #059669;}
+.progress-stages li.done::before {content: "✓ "; color: #059669; font-weight: 700;}
+.progress-stages li.current {opacity: 1; font-weight: 600; border-color: var(--color-accent); color: var(--color-accent);}
+@keyframes progress-shimmer {0% {background-position: 200% 0;} 100% {background-position: -200% 0;}}
+@media (prefers-reduced-motion: reduce) {.progress-fill {animation: none; transition: none;}}
 """
 
 
@@ -751,6 +762,7 @@ def generate_test_cases_for_submission(
                     enable_thinking=None,
                     response_schema=schema,
                     schema_name=stage_name,
+                    fit_context=True,
                 )
                 if parsed is None:
                     detail = str(diagnostic or "No final assistant content was returned.")
@@ -792,7 +804,10 @@ def generate_test_cases_for_submission(
         if not isinstance(metric_paths, dict) or not metric_paths:
             raise ValueError("No execution metrics were bound to the generated test suite.")
         submission_analysis = result.get("submission_analysis")
-        if (
+        analysis_skipped_reason = str(result.get("submission_analysis_skipped_reason") or "").strip()
+        if analysis_skipped_reason:
+            submission_analysis = {}
+        elif (
             not isinstance(submission_analysis, dict)
             or not isinstance(submission_analysis.get("implementation_summary"), str)
             or not submission_analysis.get("implementation_summary", "").strip()
@@ -802,7 +817,11 @@ def generate_test_cases_for_submission(
             "status": "completed",
             "source_sha256": _sha256_text(source_code),
             "rules_sha256": _sha256_text(raw_rules),
-            "requested_generated_test_count": int(max_generated_cases),
+            "requested_generated_test_count": int(
+                result.get("requested_generated_test_count", max_generated_cases)
+            ),
+            "configured_max_generated_cases": int(max_generated_cases),
+            "stdin_unused": bool(result.get("stdin_unused", False)),
             "additional_test_focus": additional_test_focus.strip(),
             "assignment_fingerprint": result.get("assignment_fingerprint"),
             "suite_path": str(suite_path),
@@ -839,24 +858,47 @@ def generate_test_cases_for_submission(
                 "",
                 "Ready to grade",
             ])
-        implementation_summary = submission_analysis.get("implementation_summary", "").strip()
-        likely_weak_points = submission_analysis.get("likely_weak_points", [])
-        weak_point_text = "\n".join(
-            f"- {item}" for item in likely_weak_points if isinstance(item, str) and item.strip()
-        ) or "- No specific weakness was identified by the analysis stage."
-        status = (
-            f"## Test cases generated successfully\n\n"
-            f"**{manifest['generated_test_count']} valid LLM-generated cases** + "
-            f"**{manifest['instructor_test_count']} unique instructor cases** = "
-            f"**{manifest['total_test_count']} cases ready for grading.** "
-            f"{manifest['rejected_generated_test_count']} invalid generated candidates were discarded.\n\n"
-            "### What the LLM understood from the submitted C code\n\n"
-            f"{implementation_summary}\n\n"
-            f"**Potential weaknesses suggested by source analysis (verify against the code):**\n{weak_point_text}\n\n"
-            "Expected outputs were generated from the assignment specification and independently rechecked "
-            "by a second LLM call. Instructor-provided examples were used as hints for input and output conventions. "
-            "Review the combined suite below, then click **Grade Submission**."
-        )
+        generated_count = manifest["generated_test_count"]
+        rejected_count = manifest["rejected_generated_test_count"]
+        parts = [
+            "## Test suite ready\n\n"
+            f"**{generated_count} LLM-generated** + **{manifest['instructor_test_count']} instructor** = "
+            f"**{manifest['total_test_count']} case(s) ready for grading.**"
+            + (f" {rejected_count} invalid generated candidate(s) were discarded." if rejected_count else "")
+            + "\n\n"
+        ]
+        if manifest["stdin_unused"]:
+            parts.append(
+                "**This assignment reads no stdin.** Generated cases are stdin-robustness edge cases: "
+                "a correct program must ignore the supplied input and print the same fixed output.\n\n"
+            )
+        if analysis_skipped_reason:
+            parts.append(
+                "Source analysis was skipped because no test inputs needed to be designed. "
+                "Memory and runtime defects are measured during grading by the configured analyzers.\n\n"
+            )
+        else:
+            implementation_summary = submission_analysis.get("implementation_summary", "").strip()
+            weak_point_text = "\n".join(
+                f"- {item}" for item in submission_analysis.get("likely_weak_points", [])
+                if isinstance(item, str) and item.strip()
+            ) or "- None suggested."
+            parts.append(
+                "### Test-design notes from the submitted C code\n\n"
+                f"{implementation_summary}\n\n"
+                "**Areas the generator was asked to probe** (unverified LLM notes used only to choose test "
+                "inputs; they are not grading findings):\n"
+                f"{weak_point_text}\n\n"
+            )
+        if generated_count:
+            parts.append(
+                "Generated expected outputs were derived from the assignment specification and independently "
+                "rechecked by a second LLM call. "
+            )
+        if manifest["instructor_test_count"]:
+            parts.append("Instructor cases are used exactly as provided. ")
+        parts.append("Review the suite below, then click **Grade Submission**.")
+        status = "".join(parts)
         return status, manifest, preview_rows, gr.update(interactive=True)
     except Exception as exc:
         logger.exception("Test-case generation request failed")
@@ -1119,62 +1161,155 @@ def grade_uploaded_submission(
             shutil.rmtree(stage_dir, ignore_errors=True)
 
 
-def grade_uploaded_submission_with_progress(*args: Any):
-    """Stream a live visual indicator, then the completed grading result."""
-    started = time.monotonic()
+GENERATION_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Preparing", ()),
+    ("Analysing source", ("assignment_submission_understanding",)),
+    ("Generating cases", ("assignment_test_generation",)),
+    ("Verifying outputs", ("assignment_expected_output_verification",)),
+)
+GRADING_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Tests and analyzers", ()),
+    ("Understanding program", ("program_understanding",)),
+    ("Source review", ("whole_program_rsi_findings",)),
+    ("Validating findings", ("post_rsi_finding_validation",)),
+    ("Scoring metrics", ("rubric_metric_scores",)),
+)
 
-    def elapsed_label() -> str:
-        elapsed = max(0, int(time.monotonic() - started))
-        minutes, seconds = divmod(elapsed, 60)
-        hours, minutes = divmod(minutes, 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
 
-    def progress_html(*, done: bool = False, failed: bool = False) -> str:
-        elapsed = elapsed_label()
-        if failed:
-            title = "Grading needs attention"
-            description = "The run stopped before a complete result was produced. See the overview for details."
-            icon, card_class = "!", ""
-            progress = ""
-        elif done:
-            title = "Grading complete"
-            description = "Test variations, analysis, and consolidated metric scoring have finished."
-            icon, card_class = "✓", " is-done"
-            progress = '<div class="grade-progress-track" aria-hidden="true"><span></span></div>'
+def _elapsed_label(started: float) -> str:
+    elapsed = max(0, int(time.monotonic() - started))
+    minutes, seconds = divmod(elapsed, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+
+
+def _progress_card_html(
+    *, title: str, detail: str, stages: Sequence[tuple[str, tuple[str, ...]]],
+    index: int, started: float, state: str = "running",
+) -> str:
+    """Accessible, stage-aware progress card shared by generation and grading."""
+    total = len(stages)
+    if state == "done":
+        percent = 100
+    elif state == "failed":
+        percent = max(8, int(100 * index / total))
+    else:
+        # The current stage is in progress: show it half filled.
+        percent = max(4, min(96, int(100 * (index + 0.5) / total)))
+    chips = []
+    for position, (label, _prefixes) in enumerate(stages):
+        if state == "done" or position < index:
+            css = "done"
+        elif position == index and state == "running":
+            css = "current"
         else:
-            title = "Grading in progress"
-            description = "Preparing generated test variations and evaluating the submission."
-            icon, card_class = "↻", ""
-            progress = (
-                '<div class="grade-progress-stages" aria-label="Pipeline stages">'
-                '<span class="grade-progress-stage">Test variations</span>'
-                '<span class="grade-progress-stage">Sandbox runs</span>'
-                '<span class="grade-progress-stage">Source review</span>'
-                '<span class="grade-progress-stage">Metric points</span></div>'
-                '<div class="grade-progress-track" aria-hidden="true"><span></span></div>'
-            )
-        return (
-            f'<section class="grade-progress-card{card_class}" role="status" aria-live="polite">'
-            f'<div class="grade-progress-icon" aria-hidden="true">{icon}</div>'
-            '<div class="grade-progress-body">'
-            '<div class="grade-progress-heading">'
-            f'<div class="grade-progress-title">{title}</div>'
-            f'<div class="grade-progress-elapsed">Elapsed&nbsp; {elapsed}</div>'
-            '</div>'
-            f'<p class="grade-progress-description">{description}</p>{progress}'
-            '</div></section>'
-        )
+            css = ""
+        chips.append(f'<li class="{css}">{html.escape(label)}</li>')
+    card_class = {"done": " is-done", "failed": " is-failed"}.get(state, "")
+    return (
+        f'<section class="progress-card{card_class}" role="status" aria-live="polite">'
+        '<div class="progress-head">'
+        f'<span class="progress-title">{html.escape(title)}</span>'
+        f'<span class="progress-meta">{percent}% · elapsed {_elapsed_label(started)}</span>'
+        '</div>'
+        f'<p class="progress-detail">{html.escape(detail)}</p>'
+        f'<div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" '
+        f'aria-valuenow="{percent}" aria-label="{html.escape(title)}">'
+        f'<div class="progress-fill" style="width:{percent}%"></div></div>'
+        f'<ul class="progress-stages" aria-label="Stages">{"".join(chips)}</ul>'
+        '</section>'
+    )
 
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="grading-ui") as executor:
-        future = executor.submit(grade_uploaded_submission, *args)
-        yield (progress_html(), *[gr.skip() for _ in range(7)])
+
+def _run_with_stage_progress(
+    fn: Callable[..., tuple],
+    args: tuple,
+    *,
+    stages: Sequence[tuple[str, tuple[str, ...]]],
+    running_title: str,
+    done_title: str,
+    failed_title: str,
+    is_failure: Callable[[tuple], bool],
+    pending_outputs: int,
+    busy_updates: tuple = (),
+    final_updates: tuple = (),
+):
+    """Run ``fn`` in a worker, streaming a progress card driven by real model stages.
+
+    The worker runs in a copied context whose STAGE_LISTENER records the most
+    advanced stage reached; the card reads it once per second. Yields
+    (card, *outputs, *button_updates).
+    """
+    from grading_agent.llm.reviewer import STAGE_LISTENER
+
+    started = time.monotonic()
+    tracker = {"index": 0, "detail": stages[0][0]}
+
+    def listener(stage_name: str) -> None:
+        for position, (label, prefixes) in enumerate(stages):
+            if any(stage_name.startswith(prefix) for prefix in prefixes):
+                if position >= tracker["index"]:
+                    tracker["index"] = position
+                    tracker["detail"] = label
+                return
+
+    worker_context = contextvars.copy_context()
+    worker_context.run(STAGE_LISTENER.set, listener)
+    skipped = tuple(gr.skip() for _ in range(pending_outputs))
+
+    def card(state: str = "running") -> str:
+        if state == "done":
+            return _progress_card_html(title=done_title, detail="All stages finished.", stages=stages,
+                                       index=len(stages), started=started, state="done")
+        if state == "failed":
+            return _progress_card_html(title=failed_title, detail="Stopped during: " + tracker["detail"] + ". See the message below.",
+                                       stages=stages, index=tracker["index"], started=started, state="failed")
+        return _progress_card_html(title=running_title, detail="Current stage: " + tracker["detail"],
+                                   stages=stages, index=tracker["index"], started=started)
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="grader-ui") as executor:
+        future = executor.submit(worker_context.run, fn, *args)
+        yield (card(), *skipped, *busy_updates)
         while not future.done():
             time.sleep(1)
             if not future.done():
-                yield (progress_html(), *[gr.skip() for _ in range(7)])
+                yield (card(), *skipped, *busy_updates)
         result = future.result()
-    failed = isinstance(result[0], str) and result[0].startswith("## Could not complete grading")
-    yield (progress_html(done=not failed, failed=failed), *result)
+    failed = is_failure(result)
+    yield (card("failed" if failed else "done"), *result, *final_updates)
+
+
+def generate_test_cases_with_progress(*args: Any):
+    """Generate the test suite while showing stage-aware progress."""
+    yield from _run_with_stage_progress(
+        generate_test_cases_for_submission, args,
+        stages=GENERATION_STAGES,
+        running_title="Generating test cases",
+        done_title="Test suite ready",
+        failed_title="Test-case generation needs attention",
+        is_failure=lambda result: isinstance(result[0], str) and result[0].startswith("## Test-case generation failed"),
+        # Outputs: status, suite state, table, grade button, generate button.
+        # While running, the grade and generate buttons are both disabled; the
+        # final result sets the grade button itself and re-enables generate.
+        pending_outputs=3,
+        busy_updates=(gr.update(interactive=False), gr.update(interactive=False)),
+        final_updates=(gr.update(interactive=True),),
+    )
+
+
+def grade_uploaded_submission_with_progress(*args: Any):
+    """Grade the submission while showing stage-aware progress."""
+    yield from _run_with_stage_progress(
+        grade_uploaded_submission, args,
+        stages=GRADING_STAGES,
+        running_title="Grading in progress",
+        done_title="Grading complete",
+        failed_title="Grading needs attention",
+        is_failure=lambda result: isinstance(result[0], str) and result[0].startswith("## Could not complete grading"),
+        pending_outputs=7,
+        busy_updates=(gr.update(interactive=False), gr.update(interactive=False)),
+        final_updates=(gr.update(interactive=True), gr.update(interactive=True)),
+    )
 
 
 def _prediction_stage_counts(prediction_path: Path) -> dict[str, int]:
@@ -1357,81 +1492,104 @@ def build_app() -> gr.Blocks:
     with gr.Blocks(title="Code Grader") as demo:
         gr.Markdown(
             "# Code Grader\n"
-            "Upload your C submission and assignment rules. Generate additional test cases if needed, or grade with the instructor-configured tests.",
+            "Upload the C submission and the assignment rules, optionally generate extra test cases, then grade.",
             elem_id="app-header",
         )
         with gr.Tab("Grade a C submission"):
-            with gr.Row():
-                source_file = gr.File(label="C source file", file_types=[".c"], type="filepath")
-                rules_file = gr.File(label="Instructor rules JSON", file_types=[".json"], type="filepath")
-            source_status = gr.Markdown("Paste C code or upload a `.c` file.", elem_classes=["compact-note"])
             source_editor_hash = gr.State("")
-            source_editor = gr.Code(
-                label="Submission source", language="c", interactive=True,
-                lines=24, max_lines=42, value="", elem_id="submission-source",
-            )
-            with gr.Row():
+            rules_editor_source_hash = gr.State("")
+            generated_suite_state = gr.State({})
+
+            # Submission and rules side by side; each editor is collapsed
+            # behind its own bar so the page stays short until needed.
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=1, min_width=300, elem_classes=["input-panel"]):
+                    gr.Markdown("### Submission")
+                    source_file = gr.File(label="C source file", file_types=[".c"], type="filepath", height=140)
+                    source_status = gr.Markdown("Paste C code or upload a `.c` file.", elem_classes=["compact-note"])
+                    with gr.Accordion("C source (view / edit)", open=False):
+                        source_editor = gr.Code(
+                            label="Submission source", language="c", interactive=True,
+                            lines=22, max_lines=40, value="", elem_id="submission-source",
+                        )
+                with gr.Column(scale=1, min_width=300, elem_classes=["input-panel"]):
+                    gr.Markdown("### Assignment rules")
+                    rules_file = gr.File(label="Instructor rules JSON", file_types=[".json"], type="filepath", height=140)
+                    rules_status = gr.Markdown("Upload rules JSON to load an editable copy.", elem_classes=["compact-note"])
+                    with gr.Accordion("rules.json (view / edit)", open=False):
+                        rules_editor = gr.Code(
+                            label="Rules JSON", language="json", interactive=True,
+                            lines=22, max_lines=40, value="",
+                        )
+                        gr.Markdown(
+                            "Rules and test-case paths resolve from the repository root.",
+                            elem_classes=["compact-note"],
+                        )
+
+            # Parameters: editable, grouped, collapsed by default.
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=1, min_width=300):
+                    with gr.Accordion("Execution settings", open=False):
+                        time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1,
+                                               label="Per-test timeout (seconds)")
+                        memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
+                        docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
+                        run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
+                with gr.Column(scale=2, min_width=300):
+                    with gr.Accordion("LLM and context options", open=False):
+                        with gr.Row():
+                            model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
+                            llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature",
+                                                           info="0 gives repeatable grades.")
+                            llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10,
+                                                       label="LLM timeout (seconds)")
+                        with gr.Row():
+                            rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS,
+                                                          step=1, label="RSI iterations", info="Stops early when a pass changes nothing.")
+                            max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
+                            thinking_ui = gr.Checkbox(value=True, label="Enable model thinking",
+                                                      info="Structured grading stages run without thinking so the JSON schema applies.")
+                        with gr.Row():
+                            understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64,
+                                                                label="Understanding token budget")
+                            rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
+                            scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
+                        with gr.Row():
+                            source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024,
+                                                        label="Maximum source characters")
+                            evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512,
+                                                          label="Maximum evidence characters")
+                        with gr.Row():
+                            context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED,
+                                                                 label="Enable same-model compression",
+                                                                 info="Used only when a prompt would not fit the context.")
+                            compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS,
+                                                                 step=256, label="Compression threshold")
+
+            # Step: optional test generation.
+            with gr.Row(equal_height=False):
                 max_generated_cases = gr.Slider(
                     0, 60, value=0, step=1, label="Generated test case target",
-                    info="Requests up to this many additional LLM-generated cases. Invalid candidates are discarded; existing instructor cases are kept and included too.",
+                    info="Up to this many additional LLM-generated cases. Invalid candidates are discarded; instructor cases are always kept.",
+                    scale=1, min_width=300,
                 )
                 additional_test_focus = gr.Textbox(
                     label="Test variation focus (optional)",
                     placeholder="For example: duplicate values, zero values, and boundary sizes",
-                    lines=2, max_lines=3, max_length=500,
+                    lines=2, max_lines=3, max_length=500, scale=1, min_width=300,
                 )
             with gr.Row():
-                gr.Markdown("Generate additional cases (optional):")
-                generate_button = gr.Button(
-                    "Generate Test Cases", variant="primary", elem_id="generate-tests-button"
-                )
-            rules_editor_source_hash = gr.State("")
-            with gr.Accordion("Assignment rules", open=False):
-                rules_status = gr.Markdown("Upload rules JSON to load an editable copy.", elem_classes=["compact-note"])
-                rules_editor = gr.Code(
-                    label="Rules JSON", language="json", interactive=True,
-                    lines=18, max_lines=36, value="",
-                )
-                gr.Markdown(
-                    "Rules and testcase paths resolve from the repository root.",
-                    elem_classes=["compact-note"],
-                )
-            with gr.Accordion("Execution settings", open=False):
-                with gr.Row():
-                    time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1, label="Per-test timeout (seconds)")
-                    memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
-                    docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
-                    run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
-            with gr.Accordion("LLM and context options", open=True):
-                with gr.Row():
-                    rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS, step=1, label="RSI iterations")
-                    llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature")
-                    llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10, label="LLM timeout (seconds)")
-                with gr.Row():
-                    model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
-                    thinking_ui = gr.Checkbox(value=True, label="Enable model thinking")
-                with gr.Row():
-                    max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
-                    source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024, label="Maximum source characters")
-                    evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512, label="Maximum evidence characters")
-                with gr.Row():
-                    understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64, label="Understanding token budget")
-                    rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
-                    scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
-                with gr.Row():
-                    context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED, label="Enable same-model compression")
-                    compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS, step=256, label="Compression threshold")
-            generated_suite_state = gr.State({})
+                generate_button = gr.Button("Generate Test Cases", variant="secondary", elem_id="generate-tests-button", scale=1)
+                grade_button = gr.Button("Grade Submission", variant="primary", elem_id="grade-button", interactive=True, scale=1)
+            generation_progress = gr.HTML(value="", elem_classes=["progress-host"])
             generation_status = gr.Markdown(
                 "No generated test cases requested. Grading can run with instructor-configured tests."
             )
-            grade_button = gr.Button(
-                "Grade Submission", variant="secondary", elem_id="grade-button", interactive=True,
-            )
-            grading_progress = gr.HTML(value="", elem_id="grading-progress")
+            grading_progress = gr.HTML(value="", elem_id="grading-progress", elem_classes=["progress-host"])
+
             with gr.Tabs():
                 with gr.Tab("Overview"):
-                    grade_summary = gr.Markdown()
+                    grade_summary = gr.Markdown("Results appear here after grading.")
                     metrics_table = gr.Dataframe(
                         headers=["Metric", "Points awarded", "Status", "Assessment"],
                         datatype=["str", "str", "str", "str"],
@@ -1439,13 +1597,12 @@ def build_app() -> gr.Blocks:
                         label="Metric results", max_chars=360,
                     )
                 with gr.Tab("Test cases"):
-                    with gr.Accordion("Generated and graded test cases", open=False):
-                        test_cases_table = gr.Dataframe(
-                            headers=["Case", "Origin", "Tags", "Input", "Expected", "Actual", "Result"],
-                            datatype=["str", "str", "str", "str", "str", "str", "str"],
-                            value=[], interactive=False, wrap=True, show_search="filter",
-                            label="Case details", max_chars=1200,
-                        )
+                    test_cases_table = gr.Dataframe(
+                        headers=["Case", "Origin", "Tags", "Input", "Expected", "Actual", "Result"],
+                        datatype=["str", "str", "str", "str", "str", "str", "str"],
+                        value=[], interactive=False, wrap=True, show_search="filter",
+                        label="Generated and graded test cases", max_chars=1200,
+                    )
                 with gr.Tab("Findings"):
                     findings_table = gr.Dataframe(
                         headers=["Severity", "Metric", "Lines", "Finding", "Evidence"],
@@ -1454,62 +1611,29 @@ def build_app() -> gr.Blocks:
                         label="Validated source findings", max_chars=420,
                     )
                 with gr.Tab("Submitted source"):
-                    graded_source = gr.Code(
-                        label="Exact C source graded", language="c", interactive=False,
-                        lines=24, max_lines=48,
-                    )
+                    graded_source = gr.Code(label="Exact C source graded", language="c", interactive=False,
+                                            lines=24, max_lines=48)
                 with gr.Tab("Report files"):
                     with gr.Row():
                         report_json = gr.File(label="JSON report")
                         report_text = gr.File(label="Readable report")
+
+            invalidation_outputs = [generation_status, generated_suite_state, test_cases_table, grade_button]
             source_file.change(
-                load_source_editor_from_upload,
-                inputs=[source_file],
-                outputs=[source_editor, source_editor_hash, source_status],
-                show_progress="hidden",
-            ).then(
-                invalidate_generated_test_suite,
-                inputs=[max_generated_cases],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="hidden",
-            )
-            source_editor.change(
-                invalidate_generated_test_suite,
-                inputs=[max_generated_cases],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="hidden",
-            )
+                load_source_editor_from_upload, inputs=[source_file],
+                outputs=[source_editor, source_editor_hash, source_status], show_progress="hidden",
+            ).then(invalidate_generated_test_suite, inputs=[max_generated_cases], outputs=invalidation_outputs, show_progress="hidden")
+            source_editor.change(invalidate_generated_test_suite, inputs=[max_generated_cases], outputs=invalidation_outputs, show_progress="hidden")
             rules_file.change(
-                load_rules_editor_from_upload,
-                inputs=[rules_file],
-                outputs=[rules_editor, time_limit, memory_limit, rules_status, rules_editor_source_hash],
-                show_progress="hidden",
-            ).then(
-                invalidate_generated_test_suite,
-                inputs=[max_generated_cases],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="hidden",
-            )
-            rules_editor.change(
-                invalidate_generated_test_suite,
-                inputs=[max_generated_cases],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="hidden",
-            )
-            max_generated_cases.change(
-                invalidate_generated_test_suite,
-                inputs=[max_generated_cases],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="hidden",
-            )
-            additional_test_focus.change(
-                invalidate_generated_test_suite,
-                inputs=[max_generated_cases],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="hidden",
-            )
+                load_rules_editor_from_upload, inputs=[rules_file],
+                outputs=[rules_editor, time_limit, memory_limit, rules_status, rules_editor_source_hash], show_progress="hidden",
+            ).then(invalidate_generated_test_suite, inputs=[max_generated_cases], outputs=invalidation_outputs, show_progress="hidden")
+            rules_editor.change(invalidate_generated_test_suite, inputs=[max_generated_cases], outputs=invalidation_outputs, show_progress="hidden")
+            max_generated_cases.change(invalidate_generated_test_suite, inputs=[max_generated_cases], outputs=invalidation_outputs, show_progress="hidden")
+            additional_test_focus.change(invalidate_generated_test_suite, inputs=[max_generated_cases], outputs=invalidation_outputs, show_progress="hidden")
+
             generate_button.click(
-                generate_test_cases_for_submission,
+                generate_test_cases_with_progress,
                 inputs=[
                     source_file, source_editor, source_editor_hash,
                     rules_file, rules_editor, rules_editor_source_hash,
@@ -1517,9 +1641,8 @@ def build_app() -> gr.Blocks:
                     llm_temperature_ui, model_name_ui, llm_timeout_ui,
                     max_generated_cases, additional_test_focus, thinking_ui,
                 ],
-                outputs=[generation_status, generated_suite_state, test_cases_table, grade_button],
-                show_progress="full",
-                scroll_to_output=True,
+                outputs=[generation_progress, generation_status, generated_suite_state, test_cases_table, grade_button, generate_button],
+                show_progress="hidden",
             )
             grade_button.click(
                 grade_uploaded_submission_with_progress,
@@ -1534,8 +1657,9 @@ def build_app() -> gr.Blocks:
                     max_generated_cases, additional_test_focus,
                     generated_suite_state,
                 ],
-                outputs=[grading_progress, grade_summary, metrics_table, test_cases_table, findings_table, graded_source, report_json, report_text],
-                show_progress="hidden", scroll_to_output=True,
+                outputs=[grading_progress, grade_summary, metrics_table, test_cases_table, findings_table,
+                         graded_source, report_json, report_text, grade_button, generate_button],
+                show_progress="hidden",
             )
 
         with gr.Tab("FormAI-v2 combined benchmark"):
@@ -1559,9 +1683,7 @@ def build_app() -> gr.Blocks:
                 memory_limit = gr.Dropdown(list(settings.UI_DOCKER_MEMORY_CHOICES), value=settings.UI_DEFAULT_MEMORY_LIMIT, label="Docker memory limit")
                 cpu_limit = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU limit (cores)")
                 sample_count = gr.Number(
-                    value=settings.UI_DEFAULT_FORM_AI_SAMPLE_COUNT,
-                    minimum=0,
-                    precision=0,
+                    value=settings.UI_DEFAULT_FORM_AI_SAMPLE_COUNT, minimum=0, precision=0,
                     label="Number of samples (0 = all)",
                     info="Select a reproducible random subset; seed is configured in config/settings.py.",
                 )
@@ -1579,6 +1701,11 @@ def build_app() -> gr.Blocks:
     return demo
 
 
+def app_theme() -> gr.themes.Base:
+    """The Ocean theme; fonts left at its defaults."""
+    return gr.themes.Ocean()
+
+
 def main() -> None:
     logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT_APP)
     app = build_app()
@@ -1586,7 +1713,7 @@ def main() -> None:
         server_name=settings.UI_HOST,
         server_port=settings.UI_PORT,
         show_error=settings.UI_SHOW_ERROR,
-        theme=gr.themes.Ocean(),
+        theme=app_theme(),
         css=OCEAN_UI_CSS,
     )
 

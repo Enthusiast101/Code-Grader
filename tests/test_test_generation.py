@@ -251,7 +251,7 @@ def test_all_invalid_candidates_get_one_bounded_refill_then_independent_verifica
     initial = sample_response()
     initial["test_inputs"] = [
         {"id": "normal_case", "input": "", "expected_output": "5\n", "tags": ["normal"]},
-        {"id": "boundary_case", "input": " \n", "expected_output": "3\n", "tags": ["edge"]},
+        {"id": "boundary_case", "input": "x\n", "expected_output": "3\n", "tags": ["edge"]},
     ]
     calls = []
     verification_calls = 0
@@ -278,7 +278,8 @@ def test_all_invalid_candidates_get_one_bounded_refill_then_independent_verifica
             return verifier_response(payload["test_inputs_to_solve"])
         if stage == "assignment_test_generation_repair":
             assert payload["requested_replacement_count"] == 2
-            assert payload["previously_used_inputs"] == ["", " \n"]
+            # Inputs are tracked by identity (trailing whitespace ignored for stdin tasks).
+            assert payload["previously_used_inputs"] == ["", "x"]
             assert schema["properties"]["test_inputs"]["maxItems"] == 2
             assert "expected_output" not in json.dumps(payload["previously_rejected_candidates"])
             return {
@@ -904,3 +905,247 @@ def test_strict_mode_refuses_to_regenerate_a_missing_frozen_suite(tmp_path):
             generation_seed=42,
             temperature=0.0,
         )
+
+
+NO_STDIN_PROBLEM = (
+    'Without reading input, allocate an integer array, print exactly "grading sample" '
+    "followed by a newline, and exit normally."
+)
+
+
+@pytest.mark.parametrize(
+    "problem, contract, expected",
+    [
+        (NO_STDIN_PROBLEM, {}, True),
+        ("Print READY.", {"input_range": "No input."}, True),
+        ("Print READY.", {"input_format": "none"}, True),
+        ("Print READY.", {"reads_stdin": False}, True),
+        ("Print READY.", {"max_input_tokens": 0}, True),
+        ("Read two integers and print their sum.", {}, False),
+        ("Read n values; if there is no input, print 0.", {}, False),
+        (NO_STDIN_PROBLEM, {"reads_stdin": True}, False),
+    ],
+)
+def test_assignment_reads_no_stdin_detection(problem, contract, expected):
+    from grading_agent.testing.test_generation import _assignment_reads_no_stdin
+
+    assert _assignment_reads_no_stdin(problem, contract) is expected
+
+
+def _fixed_output_verifier(payload):
+    return {"verifications": [
+        {"id": item["id"], "input": item["input"], "input_is_valid": True,
+         "expected_output": "grading sample\n", "reason": "stdin is ignored."}
+        for item in payload["test_inputs_to_solve"]
+    ]}
+
+
+def test_no_stdin_task_generates_stdin_robustness_edge_cases():
+    generated = {
+        "spec_summary": "Print a fixed line.",
+        "ambiguities": [],
+        "inferred_contract": {
+            "input_format": "No standard input is read.",
+            "output_format": "grading sample and a newline.",
+            "constraints": [],
+            "semantics": ["Print a fixed line."],
+            "formatting": ["One line."],
+        },
+        "test_inputs": [
+            {"id": "empty", "input": "", "expected_output": "grading sample\n", "tags": ["edge"]},
+            {"id": "number", "input": "0\n", "expected_output": "grading sample\n", "tags": ["edge", "stdin-ignored"]},
+            {"id": "long", "input": "x" * 500 + "\n", "expected_output": "grading sample\n", "tags": ["edge", "stdin-ignored"]},
+        ],
+    }
+    seen = {}
+
+    def request(messages, schema, stage):
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_test_generation_single_pass":
+            seen["generation"] = payload
+            return generated
+        seen["verification"] = payload
+        return _fixed_output_verifier(payload)
+
+    spec, _ = generate_assignment_test_spec(
+        problem=NO_STDIN_PROBLEM,
+        problem_contract={"input_range": "No input."},
+        request_json=request,
+        max_cases=12,
+        instructor_examples=[{"id": "normal", "input": "", "expected": "grading sample\n"}],
+    )
+
+    assert seen["generation"]["assignment_reads_stdin"] is False
+    assert "stdin-robustness" in seen["generation"]["instruction"]
+    assert "every supplied stdin is a valid robustness test" in seen["verification"]["instruction"]
+    # The instructor already covers empty stdin; the other robustness inputs are kept.
+    assert [case["input"] for case in spec["test_inputs"]] == ["0\n", "x" * 500 + "\n"]
+    assert spec["stdin_unused"] is True
+
+
+def test_no_stdin_task_still_generates_and_analyses_source(tmp_path):
+    from grading_agent.testing.test_generation import prepare_assignment_test_suite
+
+    testset = tmp_path / "teacher.json"
+    testset.write_text(json.dumps([
+        {"id": "normal", "input": "", "expected": "grading sample\n"},
+    ]), encoding="utf-8")
+    rules = {
+        "problem": NO_STDIN_PROBLEM,
+        "problem_contract": {"input_range": "No input."},
+        "project_root": str(tmp_path),
+        "metrics": [{
+            "name": "correctness",
+            "analyzer": "io_tests",
+            "enabled": True,
+            "params": {"testset_path": "teacher.json", "resolved_testset_path": str(testset)},
+        }],
+        "test_generation": {"enabled": True, "seed": 42, "max_cases": 4},
+    }
+    stages = []
+
+    def request(messages, schema, stage):
+        stages.append(stage)
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_submission_understanding_single_pass":
+            return {
+                "implementation_summary": "Allocates two buffers, prints a fixed line, then reads freed memory.",
+                "input_parsing_and_validation": ["No stdin is read."],
+                "control_flow_and_data_types": ["malloc of values", "free(values) before values[20]"],
+                "likely_weak_points": ["values[20] is read after free(values)."],
+                "recommended_test_dimensions": ["Feed unexpected stdin; output must not change."],
+            }
+        if stage == "assignment_test_generation_single_pass":
+            return {
+                "spec_summary": "Print a fixed line.", "ambiguities": [],
+                "inferred_contract": {
+                    "input_format": "No standard input is read.", "output_format": "grading sample line.",
+                    "constraints": [], "semantics": ["Print a fixed line."], "formatting": ["One line."],
+                },
+                "test_inputs": [
+                    {"id": "spaces", "input": "   \n", "expected_output": "grading sample\n", "tags": ["edge"]},
+                    {"id": "text", "input": "hello\n", "expected_output": "grading sample\n", "tags": ["edge"]},
+                ],
+            }
+        return _fixed_output_verifier(payload)
+
+    result = prepare_assignment_test_suite(
+        rules,
+        sandbox=None,
+        request_json=request,
+        project_root=tmp_path,
+        model_id="qwen-test",
+        submission_source='#include <stdio.h>\nint main(void) { puts("grading sample"); }\n',
+    )
+
+    assert stages[0] == "assignment_submission_understanding_single_pass"
+    assert result["stdin_unused"] is True
+    assert result["generated_test_count"] == 2
+    assert result["requested_generated_test_count"] == 4
+    assert result["total_test_count"] == 3
+    assert result["submission_analysis"]["implementation_summary"]
+
+
+def test_contract_entries_copied_from_submission_analysis_are_removed():
+    from grading_agent.testing.test_generation import _remove_submission_derived_contract_entries
+
+    analysis = {
+        "implementation_summary": "Program allocates and initializes an integer array, prints fixed string.",
+        "control_flow_and_data_types": ["malloc(64) allocation", "Loop 0 to 63 with multiplication"],
+        "likely_weak_points": ["Buffer overflow on strcpy", "Use of volatile keyword"],
+    }
+    inferred = {
+        "input_format": "No standard input is read.",
+        "output_format": "Print grading sample and a newline.",
+        "constraints": ["Memory must be freed exactly once", "No buffer overflows", "No use of volatile"],
+        "semantics": [
+            "Output must be exactly 'grading sample' followed by a newline",
+            "Loop must iterate 0 to 63",
+            "Array elements must be initialized to 0",
+        ],
+        "formatting": ["Fixed newline at end"],
+    }
+    cleaned, removed = _remove_submission_derived_contract_entries(
+        inferred,
+        spec_text=NO_STDIN_PROBLEM + " Release every allocation exactly once; do not read freed memory.",
+        submission_analysis=analysis,
+        fallback_contract={"semantics": ["fallback"]},
+    )
+    assert cleaned["constraints"] == ["Memory must be freed exactly once"]
+    assert cleaned["semantics"] == ["Output must be exactly 'grading sample' followed by a newline"]
+    assert cleaned["formatting"] == ["Fixed newline at end"]
+    assert {item["entry"] for item in removed} == {
+        "No buffer overflows", "No use of volatile",
+        "Loop must iterate 0 to 63", "Array elements must be initialized to 0",
+    }
+
+
+def test_contract_is_untouched_without_submission_analysis():
+    from grading_agent.testing.test_generation import _remove_submission_derived_contract_entries
+
+    inferred = {"input_format": "Two ints.", "output_format": "Sum.", "constraints": ["n <= 63"],
+                "semantics": ["Loop over values"], "formatting": []}
+    cleaned, removed = _remove_submission_derived_contract_entries(
+        inferred, spec_text="Read two integers.", submission_analysis=None, fallback_contract={},
+    )
+    assert cleaned == inferred and removed == []
+
+
+def test_weak_point_restating_present_check_is_dropped_but_missing_check_kept():
+    from grading_agent.testing.test_generation import _drop_self_contradicting_weak_points
+
+    kept, dropped = _drop_self_contradicting_weak_points(
+        ["NULL check on second malloc", "Missing NULL check on second malloc", "Memory leak on failure path"],
+        ["NULL check on second malloc", "free(values)"],
+    )
+    assert dropped == ["NULL check on second malloc"]
+    assert kept == ["Missing NULL check on second malloc", "Memory leak on failure path"]
+
+
+def test_huge_instructor_case_is_shortened_in_prompt_hints():
+    from grading_agent.testing.test_generation import _instructor_hint_examples
+
+    huge = {"id": "runtime", "input": "18000\n" + " ".join(str(n) for n in range(18000, 0, -1)) + "\n", "expected": "1\n"}
+    hints = _instructor_hint_examples([huge, {"id": "small", "input": "3\n1 2 3\n", "expected": "3\n"}])
+    assert len(hints[0]["input"]) < 600
+    assert "characters omitted" in hints[0]["input"]
+    assert hints[0]["shortened_for_prompt"] is True
+    assert hints[1] == {"id": "small", "input": "3\n1 2 3\n", "expected_output": "3\n"}
+
+
+def test_generated_input_differing_only_by_trailing_whitespace_is_a_duplicate():
+    generated = sample_response()
+    generated["test_inputs"] = [
+        # Same test as the instructor case, without the trailing newline, and wrong.
+        {"id": "dup", "input": "2 3", "expected_output": "6\n", "tags": ["normal"]},
+        {"id": "new", "input": "-4 7\n", "expected_output": "3\n", "tags": ["negative"]},
+    ]
+
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            return generated
+        payload = json.loads(messages[1]["content"])
+        assert [item["id"] for item in payload["test_inputs_to_solve"]] == ["new"]
+        return verifier_response(payload["test_inputs_to_solve"])
+
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=2,
+        instructor_examples=[{"id": "teacher", "input": "2 3\n", "expected": "5\n"}],
+    )
+    assert [case["id"] for case in spec["test_inputs"]] == ["new"]
+    assert any(item["id"] == "dup" and "duplicate" in item["reason"] for item in spec["rejected_generated_cases"])
+
+
+def test_declared_count_must_match_supplied_values_for_n_then_values_tasks():
+    from grading_agent.testing.test_generation import _declared_count_mismatch
+
+    lis = "Read n (1 <= n <= 20000), followed by n signed 32-bit integers. Print the LIS length."
+    truncated = "20000\n" + " ".join(str(value) for value in range(100))
+    assert "declares 20000 values but supplies 100" in _declared_count_mismatch(lis, truncated)
+    assert _declared_count_mismatch(lis, "3\n1 2 3\n") is None
+    # Other input shapes are not checked by this rule.
+    knapsack = "Read n and capacity W, then n positive item weights and n nonnegative item values."
+    assert _declared_count_mismatch(knapsack, "2 5\n1 2\n") is None

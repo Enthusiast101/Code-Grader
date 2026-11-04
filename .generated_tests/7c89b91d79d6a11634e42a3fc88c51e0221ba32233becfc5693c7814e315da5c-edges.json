@@ -1,0 +1,20 @@
+[
+  {
+    "expected": "1.00\n",
+    "id": "instructor-negative-values",
+    "input": "4\n-2 -1 2 5\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "7.00\n",
+    "id": "instructor-single-value",
+    "input": "1\n7\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  }
+]
