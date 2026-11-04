@@ -737,7 +737,9 @@ def generate_assignment_test_spec(
     # A single bounded refill prevents one malformed/invalid batch from
     # aborting generation. Every replacement goes through the same strict
     # structural checks and independent expected-output verification.
-    missing_count = max(0, max_cases - len(verified_cases))
+    # max_cases is a ceiling. A partial but independently verified batch is
+    # usable; refill only when the entire first batch yielded no verified pair.
+    missing_count = max_cases if not verified_cases else 0
     if missing_count:
         repair_count = 1
         repair_payload = dict(

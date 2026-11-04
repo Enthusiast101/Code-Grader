@@ -201,7 +201,10 @@ def test_empty_or_whitespace_stdin_is_preserved_for_independent_verification(std
         }],
     }
 
+    calls = []
+
     def request(messages, schema, stage):
+        calls.append(stage)
         if stage == "assignment_test_generation_single_pass":
             input_schema = schema["properties"]["test_inputs"]["items"]["properties"]["input"]
             assert "minLength" not in input_schema
@@ -221,9 +224,13 @@ def test_empty_or_whitespace_stdin_is_preserved_for_independent_verification(std
         problem="Print READY and a newline without reading any standard input.",
         problem_contract={},
         request_json=request,
-        max_cases=1,
+        max_cases=3,
     )
 
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_expected_output_verification_single_pass",
+    ]
     assert spec["test_inputs"][0]["input"] == stdin_text
     assert spec["test_inputs"][0]["expected_output"] == "READY\n"
 
@@ -304,7 +311,7 @@ def test_all_invalid_candidates_get_one_bounded_refill_then_independent_verifica
     assert len(history) == 2
 
 
-def test_refill_failure_keeps_already_verified_cases():
+def test_refill_failure_is_reported_with_diagnostics():
     calls = []
 
     def request(messages, schema, stage):
@@ -317,9 +324,9 @@ def test_refill_failure_keeps_already_verified_cases():
                 {
                     "id": case["id"],
                     "input": case["input"],
-                    "input_is_valid": case["id"] == "basic",
-                    "expected_output": "5\n" if case["id"] == "basic" else "",
-                    "reason": "" if case["id"] == "basic" else "Rejected by the assignment verifier.",
+                    "input_is_valid": False,
+                    "expected_output": "",
+                    "reason": "Rejected by the assignment verifier.",
                 }
                 for case in payload["test_inputs_to_solve"]
             ]}
@@ -327,17 +334,14 @@ def test_refill_failure_keeps_already_verified_cases():
             raise RuntimeError("temporary model endpoint failure")
         raise AssertionError(f"Unexpected stage: {stage}")
 
-    spec, history = generate_assignment_test_spec(
-        problem="Read two integers and print their sum.",
-        problem_contract={},
-        request_json=request,
-        max_cases=2,
-    )
+    with pytest.raises(TestGenerationError, match="temporary model endpoint failure"):
+        generate_assignment_test_spec(
+            problem="Read two integers and print their sum.",
+            problem_contract={},
+            request_json=request,
+            max_cases=2,
+        )
 
-    assert [case["id"] for case in spec["test_inputs"]] == ["basic"]
-    assert spec["generation_response_count"] == 1
-    assert history[1]["status"] == "failed"
-    assert "temporary model endpoint failure" in history[1]["error"]
     assert calls == [
         "assignment_test_generation_single_pass",
         "assignment_expected_output_verification_single_pass",
