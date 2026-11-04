@@ -46,6 +46,7 @@ def verifier_response(cases):
         values = [int(token) for token in case["input"].split()]
         verifications.append({
             "id": case["id"],
+            "input": case["input"],
             "input_is_valid": True,
             "expected_output": f"{sum(values)}\n",
             "reason": "",
@@ -153,9 +154,9 @@ def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
         payload = json.loads(messages[1]["content"])
         return {
             "verifications": [
-                {"id": "basic", "input_is_valid": True, "expected_output": "5\n", "reason": ""},
-                {"id": "negative", "input_is_valid": True, "expected_output": "999\n", "reason": ""},
-                {"id": "ambiguous", "input_is_valid": False, "expected_output": "", "reason": "Input is not valid under the assignment."},
+                {"id": "basic", "input": "2 3\n", "input_is_valid": True, "expected_output": "5\n", "reason": ""},
+                {"id": "negative", "input": "-4 7\n", "input_is_valid": True, "expected_output": "999\n", "reason": ""},
+                {"id": "ambiguous", "input": "not-a-number\n", "input_is_valid": False, "expected_output": "", "reason": "Input is not valid under the assignment."},
             ]
         }
 
@@ -181,7 +182,7 @@ def test_missing_verifier_result_fails_closed():
         if stage == "assignment_test_generation_single_pass":
             return sample_response()
         return {"verifications": [
-            {"id": "basic", "input_is_valid": True, "expected_output": "5\n", "reason": ""}
+            {"id": "basic", "input": "2 3\n", "input_is_valid": True, "expected_output": "5\n", "reason": ""}
         ]}
 
     with pytest.raises(TestGenerationError, match="omitted test negative"):
