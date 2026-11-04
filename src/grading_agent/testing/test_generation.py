@@ -416,6 +416,16 @@ def _verify_expected_outputs(
             )
         checks[case_id] = item
 
+    expected_ids = {str(case["id"]) for case in candidate_cases}
+    if set(checks) != expected_ids:
+        missing = sorted(expected_ids - set(checks))
+        unexpected = sorted(set(checks) - expected_ids)
+        raise TestGenerationError(
+            "expected_output_verification_failed",
+            "The independent verifier returned a mismatched set of test IDs "
+            f"(missing={missing[:5]}, unexpected={unexpected[:5]}). No generated outputs were accepted.",
+        )
+
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
     for case in candidate_cases:
