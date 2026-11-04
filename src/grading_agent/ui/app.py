@@ -738,13 +738,25 @@ def generate_test_cases_for_submission(
             )
 
             def generation_request(messages, schema, stage_name):
-                parsed, _raw = _request_json(
+                parsed, diagnostic = _request_json(
                     messages,
                     max_tokens=generation_token_budget,
                     enable_thinking=None,
                     response_schema=schema,
                     schema_name=stage_name,
                 )
+                if parsed is None:
+                    detail = str(diagnostic or "No final assistant content was returned.")
+                    detail = " ".join(detail.split())[:1_200]
+                    logger.error(
+                        "Structured LLM response was not valid JSON (stage=%s): %s",
+                        stage_name,
+                        detail,
+                    )
+                    raise RuntimeError(
+                        f"{stage_name} did not return a valid JSON object. "
+                        f"llama-server diagnostic: {detail}"
+                    )
                 return parsed
 
             with DockerSandbox(

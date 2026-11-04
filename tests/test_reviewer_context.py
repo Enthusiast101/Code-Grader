@@ -151,6 +151,58 @@ class ReviewerContextTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
 
 
+
+    @patch("grading_agent.llm.reviewer.requests.post")
+    def test_schema_constrained_requests_disable_thinking_even_when_enabled(self, post):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}]
+        }).encode()
+        response.url = "http://127.0.0.1:8080/v1/chat/completions"
+        post.return_value = response
+
+        from grading_agent.config import settings
+        schema = {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        }
+        with settings.runtime_overrides({"LLAMA_REASONING_ENABLED": True}):
+            parsed, _ = _request_json(
+                [{"role": "user", "content": "Return JSON only."}],
+                max_tokens=128,
+                response_schema=schema,
+            )
+
+        body = post.call_args.kwargs["json"]
+        self.assertEqual(parsed, {"ok": True})
+        self.assertEqual(body["response_format"]["schema"], schema)
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(body["reasoning_format"], "none")
+
+    @patch("grading_agent.llm.reviewer.requests.post")
+    def test_unconstrained_requests_keep_configured_thinking_enabled(self, post):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}]
+        }).encode()
+        response.url = "http://127.0.0.1:8080/v1/chat/completions"
+        post.return_value = response
+
+        from grading_agent.config import settings
+        with settings.runtime_overrides({"LLAMA_REASONING_ENABLED": True}):
+            parsed, _ = _request_json(
+                [{"role": "user", "content": "Return JSON."}],
+                max_tokens=128,
+            )
+
+        body = post.call_args.kwargs["json"]
+        self.assertEqual(parsed, {"ok": True})
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": True})
+        self.assertEqual(body["reasoning_format"], settings.LLAMA_REASONING_FORMAT)
+
     @patch("grading_agent.llm.reviewer._request_json")
     def test_rsi_uses_one_bounded_request_per_metric(self, request_json):
         rules = {"problem": "sample", "metrics": [

@@ -784,10 +784,13 @@ def _request_json(
         bool(settings.runtime_value("LLAMA_REASONING_ENABLED"))
         if enable_thinking is None else bool(enable_thinking)
     )
-    # Keep the model's configured reasoning/thinking mode enabled even for
-    # schema-constrained calls. The JSON schema governs the final answer; it
-    # must not silently disable the model reasoning configuration.
-    thinking = requested_thinking
+    # llama.cpp does not reliably enforce response_format JSON Schema while
+    # template reasoning is enabled (notably with Qwen-family templates):
+    # the grammar may be ignored or applied to the reasoning channel instead
+    # of the final assistant content. Structured stages need constrained JSON,
+    # so disable thinking for those requests only. Ordinary review requests
+    # retain the configured thinking mode.
+    thinking = requested_thinking and not schema_constrained
     request_body = {
         "model": settings.runtime_value("MODEL"),
         "messages": request_messages,
