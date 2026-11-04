@@ -481,9 +481,11 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
             f"**Generated cases:** {generated_count}/{requested_count} requested · "
             f"{instructor_count} instructor cases"
         )
-        oracle_source = generation.get("reference_solution_source")
-        if oracle_source and oracle_source != "llm_generated":
-            summary.append("**Expected-output oracle:** trusted instructor reference")
+        verification = generation.get("expected_output_verification", {})
+        if isinstance(verification, dict) and verification:
+            summary.append(
+                f"**Expected-output verification:** {verification.get('verified', 0)} pair(s) independently rechecked by a second LLM call"
+            )
         shortfall = int(generation.get("generated_test_count_shortfall", 0) or 0)
         if shortfall:
             summary.append(f"**Generation note:** {shortfall} requested cases were not produced.")
@@ -815,7 +817,7 @@ def generate_test_cases_for_submission(
             "total_test_count": int(result.get("total_test_count", len(cases))),
             "edge_test_count": int(result.get("edge_test_count", 0)),
             "rejected_generated_test_count": int(result.get("rejected_generated_test_count", 0)),
-            "reference_solution_source": result.get("reference_solution_source"),
+            "expected_output_verification": result.get("expected_output_verification"),
             "oracle_kind": result.get("oracle_kind"),
             "oracle_caveat": result.get("oracle_caveat"),
             "source_analysis": submission_analysis,
@@ -856,8 +858,9 @@ def generate_test_cases_for_submission(
             "### What the LLM understood from the submitted C code\n\n"
             f"{implementation_summary}\n\n"
             f"**Potential weaknesses suggested by source analysis (verify against the code):**\n{weak_point_text}\n\n"
-            "Expected outputs were produced by the reference solution. Review the combined suite below, "
-            "then click **Grade Submission**."
+            "Expected outputs were generated from the assignment specification and independently rechecked "
+            "by a second LLM call. Instructor-provided examples were used as hints for input and output conventions. "
+            "Review the combined suite below, then click **Grade Submission**."
         )
         return status, manifest, preview_rows, gr.update(interactive=True)
     except Exception as exc:
@@ -1038,7 +1041,7 @@ def grade_uploaded_submission(
                 "requested_generated_test_count": int(generated_suite_state.get("requested_generated_test_count", 0)),
                 "total_test_count": int(generated_suite_state.get("total_test_count", 0)),
                 "edge_test_count": int(generated_suite_state.get("edge_test_count", 0)),
-                "reference_solution_source": generated_suite_state.get("reference_solution_source"),
+                "expected_output_verification": generated_suite_state.get("expected_output_verification"),
                 "oracle_kind": generated_suite_state.get("oracle_kind"),
                 "oracle_caveat": generated_suite_state.get("oracle_caveat"),
                 "source_analysis": generated_suite_state.get("source_analysis", {}),
