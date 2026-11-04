@@ -88,6 +88,49 @@ def test_generation_uses_one_pass_and_does_not_recheck_prior_response():
     assert len(spec["test_inputs"]) == 2
 
 
+
+def test_missing_model_reference_uses_one_reference_only_recovery_request():
+    initial = sample_response()
+    initial.pop("reference_solution_c")
+    reference = (
+        '#include <stdio.h>\\n'
+        'int main(void) { long long a, b; '
+        'if (scanf("%lld%lld", &a, &b) != 2) return 1; '
+        'printf("%lld\\\\n", a + b); return 0; }\\n'
+    )
+    calls = []
+
+    def request(messages, schema, stage):
+        calls.append(stage)
+        if stage == "assignment_test_generation_single_pass":
+            assert "reference_solution_c" in schema["properties"]
+            return initial
+        assert stage == "assignment_reference_solution_recovery_single_pass"
+        assert set(schema["properties"]) == {"reference_solution_c"}
+        payload = json.loads(messages[1]["content"])
+        assert payload["assignment"] == "Read two integers and print their sum."
+        assert "submission_source" not in payload
+        assert "submitted_implementation_analysis" not in payload
+        return {"reference_solution_c": reference}
+
+    spec, history = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={"sum_type": "int64"},
+        request_json=request,
+        max_cases=2,
+    )
+
+    assert calls == [
+        "assignment_test_generation_single_pass",
+        "assignment_reference_solution_recovery_single_pass",
+    ]
+    assert spec["reference_solution_c"] == reference
+    assert spec["reference_solution_source"] == "model_reference_recovery"
+    assert spec["reference_recovery_count"] == 1
+    assert history[0]["reference_recovery_used"] is True
+    assert len(spec["test_inputs"]) == 2
+
+
 def test_trusted_reference_generation_uses_one_call_and_filters_invalid_candidates():
     calls = []
 
