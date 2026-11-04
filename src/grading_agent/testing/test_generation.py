@@ -1039,7 +1039,7 @@ def prepare_assignment_test_suite(
         if frozen.get("assignment_fingerprint") != fingerprint:
             raise TestGenerationError("suite_fingerprint_mismatch", "Frozen suite fingerprint does not match the current assignment.")
         if frozen.get("schema_version") != 3:
-            raise TestGenerationError("suite_schema_version_mismatch", "Frozen suite uses an obsolete reference-program schema; regenerate it with the two-pass expected-output verifier.")
+            raise TestGenerationError("suite_schema_version_mismatch", "Frozen suite uses an obsolete schema; regenerate it with the two-pass expected-output verifier.")
         all_cases = frozen.get("test_cases")
         if (
             not isinstance(all_cases, list)
