@@ -139,7 +139,7 @@ def _validate_candidate(
     reference_too_large = isinstance(reference, str) and len(reference) > MAX_REFERENCE_SOURCE_CHARS
     if reference_missing or reference_too_large:
         if allow_missing_reference_solution:
-            # Validate the contract and test inputs first. A separate, narrowly
+            # Validate the response structure first. A separate, narrowly
             # scoped request will provide only the independent reference code.
             reference = ""
             reference_source = "model_reference_pending"
