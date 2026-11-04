@@ -139,6 +139,46 @@ def test_generation_proposes_pairs_then_second_llm_independently_verifies_them()
     assert history[0]["verification"]["method"] == "independent_second_llm_call"
 
 
+
+@pytest.mark.parametrize(
+    "bad_input, expected_reason",
+    [
+        (None, "input is missing or is not text"),
+        ("   ", "input is empty or whitespace-only"),
+        ("x" * 20_001, "input exceeds 20000 characters"),
+    ],
+)
+def test_invalid_generated_input_is_rejected_without_discarding_valid_cases(bad_input, expected_reason):
+    generated = sample_response()
+    generated["test_inputs"][0]["id"] = "normal"
+    generated["test_inputs"][0]["input"] = bad_input
+
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            input_schema = schema["properties"]["test_inputs"]["items"]["properties"]["input"]
+            assert input_schema["minLength"] == 1
+            return generated
+        payload = json.loads(messages[1]["content"])
+        # Only the surviving, well-formed case reaches independent verification.
+        assert payload["test_inputs_to_solve"] == [
+            {"id": "negative", "input": "-4 7\\n"}
+        ]
+        return verifier_response(payload["test_inputs_to_solve"])
+
+    spec, history = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=2,
+    )
+
+    assert [case["id"] for case in spec["test_inputs"]] == ["negative"]
+    assert spec["rejected_generated_cases"] == [
+        {"id": "normal", "reason": expected_reason}
+    ]
+    assert history[0]["rejected_test_count"] == 1
+
+
 def test_independent_verifier_rejects_wrong_output_and_ambiguous_input():
     generated = sample_response()
     generated["test_inputs"].append({
