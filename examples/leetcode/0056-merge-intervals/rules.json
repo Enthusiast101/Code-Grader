@@ -12,6 +12,7 @@
     "language": "c",
     "source_file": "examples/leetcode/0056-merge-intervals/submission.c"
   },
+  "reference_solution": "examples/leetcode/0056-merge-intervals/reference_solution.c",
   "metrics": [
     {
       "name": "correctness",

@@ -13,6 +13,7 @@
     "language": "c",
     "source_file": "examples/leetcode/0200-number-of-islands/submission.c"
   },
+  "reference_solution": "examples/leetcode/0200-number-of-islands/reference_solution.c",
   "metrics": [
     {
       "name": "correctness",

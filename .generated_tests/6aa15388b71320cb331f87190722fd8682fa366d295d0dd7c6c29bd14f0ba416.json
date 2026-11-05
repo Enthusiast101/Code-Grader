@@ -1,0 +1,295 @@
+{
+  "assignment_fingerprint": "6aa15388b71320cb331f87190722fd8682fa366d295d0dd7c6c29bd14f0ba416",
+  "assignment_statement": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "expected_output_oracle": {
+    "attempts": 1,
+    "instructor_cases_mismatched": 0,
+    "instructor_cases_passed": 10,
+    "instructor_cases_unrunnable": 0,
+    "kind": "llm_reference",
+    "program_sha256": "cfd32964743790c0d9bf8af6189556cba7c372ebae42dcdd3db763d80b115e92",
+    "trusted": true,
+    "validated_against_instructor_cases": 10
+  },
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 0,
+    "requested": 2,
+    "verification_calls": 0,
+    "verified": 2
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 6,
+      "requested_test_count": 6,
+      "status": "recovered_or_refilled",
+      "test_count": 0,
+      "verification": {
+        "comparison": "trimmed exact text with normalized line endings",
+        "method": "independent_second_llm_call",
+        "rejected": 0,
+        "requested": 0,
+        "verified": 0
+      }
+    },
+    {
+      "mode": "bounded_replacement_generation",
+      "pass": 2,
+      "rejected_test_count": 4,
+      "requested_test_count": 6,
+      "status": "completed",
+      "test_count": 2,
+      "verification": {
+        "comparison": "expected output computed by executing the reference program",
+        "method": "llm_reference",
+        "rejected": 0,
+        "requested": 2,
+        "verified": 2
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "1 <= R, C <= 30",
+      "Grid values are 0 or 1",
+      "Path count fits signed 64-bit integer",
+      "Start or end blocked => 0 paths",
+      "No blocked cells => 1 path"
+    ],
+    "formatting": [
+      "%lld",
+      "%lld",
+      "%lld",
+      "%lld",
+      "%lld",
+      "%lld"
+    ],
+    "input_format": "R C followed by R lines of C integers (0 or 1) separated by whitespace",
+    "output_format": "One signed 64-bit integer representing the number of valid paths from top-left to bottom-right, followed by a newline",
+    "semantics": [
+      "Base case: dp[0][0] = 1 if start is open, else 0"
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were computed by running a model-written reference program that first reproduced all 10 instructor test case(s).",
+  "oracle_kind": "llm-reference-program-validated-on-instructor-cases",
+  "problem_contract": {
+    "description": "Count right/down paths from the top-left to bottom-right cell without entering cells marked 1. A blocked start or destination yields zero.",
+    "input_range": "1 <= rows, cols <= 30; each cell is 0 (open) or 1 (blocked); path count fits signed 64-bit.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "output_rule": "One signed 64-bit integer: number of valid paths; newline terminated.",
+    "sum_type": "signed 64-bit integer where applicable"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "all-open",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "all-blocked",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "start-blocked",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "end-blocked",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "2x2-open",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "3x3-open",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "refill-1-start-blocked",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "refill-2-end-blocked",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "refill-4-single-open",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "refill-5-all-open",
+      "reason": "duplicate of an instructor or earlier generated input"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "Uses signed 64-bit integer (long long) for DP table and output.",
+      "Loops through rows and columns sequentially.",
+      "Conditional logic checks i==0 && j==0 to skip initialization.",
+      "Adds top and left DP values if neighbor is not blocked.",
+      "Prints result followed by newline."
+    ],
+    "implementation_summary": "The program reads R, C and a grid of 0s and 1s. It initializes a DP table and iterates to compute paths from top-left to bottom-right, adding contributions from top and left neighbors. It assumes blocked cells are 1 and valid paths are 0.",
+    "input_parsing_and_validation": [
+      "Validates R and C are within [1, 30] and grid values are strictly 0 or 1.",
+      "Checks that input format matches expected scanf calls.",
+      "Returns 1 on any validation failure or out-of-bounds dimensions.",
+      "Handles non-integer inputs by failing the scanf check.",
+      "Assumes grid is fully populated before DP computation starts."
+    ],
+    "likely_weak_points": [
+      "DP recurrence incorrectly adds paths through blocked cells.",
+      "Does not verify that blocked cells are actually 1.",
+      "Does not verify that blocked cells are actually 0.",
+      "Does not handle cases where start or end is blocked.",
+      "Does not validate that all cells are within bounds.",
+      "Does not check for negative or non-integer inputs."
+    ],
+    "recommended_test_dimensions": [
+      "Test with all cells blocked (expected 0 paths).",
+      "Test with all cells open (expected 1 path).",
+      "Test with start blocked (expected 0 paths).",
+      "Test with end blocked (expected 0 paths).",
+      "Test with a single open cell (expected 1 path).",
+      "Test with a 30x30 grid of all open cells.",
+      "Test with a 30x30 grid of all blocked cells.",
+      "Test with a 30x30 grid with a single blocked cell."
+    ]
+  },
+  "submission_derived_contract_entries_removed": [
+    {
+      "entry": "DP recurrence: dp[i][j] = dp[i-1][j] + dp[i][j-1] if cell[i][j] == 0",
+      "field": "semantics",
+      "submission_terms": "recurrenc"
+    },
+    {
+      "entry": "DP recurrence: dp[i][j] = 0 if cell[i][j] == 1",
+      "field": "semantics",
+      "submission_terms": "recurrenc"
+    }
+  ],
+  "test_cases": [
+    {
+      "expected": "2\n",
+      "id": "instructor-center-obstacle",
+      "input": "3 3\n0 0 0\n0 1 0\n0 0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "memory_safety"
+      ]
+    },
+    {
+      "expected": "2\n",
+      "id": "instructor-empty-2x2",
+      "input": "2 2\n0 0\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-top-right-blocked",
+      "input": "2 2\n0 1\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-single-open-cell",
+      "input": "1 1\n0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-single-blocked-cell",
+      "input": "1 1\n1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-blocked-start",
+      "input": "2 2\n1 0\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-blocked-destination",
+      "input": "2 2\n0 0\n0 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-one-row-barrier",
+      "input": "1 3\n0 1 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-one-column-barrier",
+      "input": "3 1\n0\n1\n0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "6\n",
+      "id": "instructor-no-obstacles-3x3",
+      "input": "3 3\n0 0 0\n0 0 0\n0 0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-refill-3-all-blocked",
+      "input": "3 3\n1 1 1\n1 1 1\n1 1 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "3x3",
+        "all-blocked"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "20\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-refill-6-complex-path",
+      "input": "4 4\n0 0 0 0\n0 0 0 0\n0 0 0 0\n0 0 0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "4x4",
+        "all-open"
+      ]
+    }
+  ]
+}

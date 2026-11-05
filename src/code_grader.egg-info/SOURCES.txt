@@ -49,6 +49,7 @@ src/grading_agent/scoring/memory_safety.py
 src/grading_agent/scoring/overall.py
 src/grading_agent/scoring/score_bands.py
 src/grading_agent/testing/__init__.py
+src/grading_agent/testing/oracle.py
 src/grading_agent/testing/test_generation.py
 src/grading_agent/ui/__init__.py
 src/grading_agent/ui/app.py
@@ -70,6 +71,7 @@ tests/test_io_analyzer_status.py
 tests/test_llama_server_context.py
 tests/test_memory_safety_scoring.py
 tests/test_modularity_simple_task.py
+tests/test_oracle.py
 tests/test_overall_scoring.py
 tests/test_preflight.py
 tests/test_pristine_llm_path.py

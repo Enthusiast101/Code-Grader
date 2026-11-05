@@ -1,0 +1,26 @@
+[
+  {
+    "description": "",
+    "expected": "0\n",
+    "expected_output_source": "llm_reference_agreed_with_independent_check",
+    "id": "generated-test_1",
+    "input": "3 0 0 0",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "all_zero",
+      "small"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1000000\n",
+    "expected_output_source": "llm_reference_agreed_with_independent_check",
+    "id": "generated-test_3",
+    "input": "3 1000000 0 1000000",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "one_peak",
+      "small"
+    ]
+  }
+]

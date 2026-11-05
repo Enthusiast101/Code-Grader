@@ -496,7 +496,8 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
         verification = generation.get("expected_output_verification", {})
         if isinstance(verification, dict) and verification:
             summary.append(
-                f"**Expected-output verification:** {verification.get('verified', 0)} pair(s) independently rechecked by a second LLM call"
+                f"**Expected-output verification:** {verification.get('verified', 0)} generated pair(s) accepted"
+                + (f" — {generation.get('oracle_caveat')}" if generation.get("oracle_caveat") else "")
             )
         shortfall = int(generation.get("generated_test_count_shortfall", 0) or 0)
         if shortfall:
@@ -779,17 +780,40 @@ def generate_test_cases_for_submission(
                     )
                 return parsed
 
-            result = prepare_assignment_test_suite(
-                normalized_rules,
-                sandbox=None,
-                request_json=generation_request,
-                project_root=PROJECT_ROOT,
-                model_id=model_name,
-                generation_seed=settings.SEED,
-                temperature=float(temperature),
-                submission_source=source_code,
-                submission_filename=staged_source.name,
-            )
+            # A sandbox lets reference programs run so expected outputs are
+            # computed, not guessed. Without Docker, generation still works
+            # and the result is flagged as not execution-checked.
+            oracle_sandbox_manager = None
+            oracle_sandbox = None
+            try:
+                from grading_agent.sandbox.docker_sandbox import DockerSandbox
+                oracle_sandbox_manager = DockerSandbox(
+                    memory_limit=f'{normalized_rules["memory_limit_mb"]}m',
+                    cpu_limit=float(docker_cpu_limit),
+                )
+                oracle_sandbox = oracle_sandbox_manager.__enter__()
+            except Exception as exc:
+                logger.warning("Sandbox unavailable for reference execution during test generation: %s", exc)
+                oracle_sandbox_manager = None
+                oracle_sandbox = None
+            try:
+                result = prepare_assignment_test_suite(
+                    normalized_rules,
+                    sandbox=oracle_sandbox,
+                    request_json=generation_request,
+                    project_root=PROJECT_ROOT,
+                    model_id=model_name,
+                    generation_seed=settings.SEED,
+                    temperature=float(temperature),
+                    submission_source=source_code,
+                    submission_filename=staged_source.name,
+                )
+            finally:
+                if oracle_sandbox_manager is not None:
+                    try:
+                        oracle_sandbox_manager.__exit__(None, None, None)
+                    except Exception:
+                        logger.warning("Could not close the test-generation sandbox cleanly.")
             result["request_events"] = generation_request_events
 
         if result.get("status") != "completed":
@@ -892,10 +916,9 @@ def generate_test_cases_for_submission(
                 f"{weak_point_text}\n\n"
             )
         if generated_count:
-            parts.append(
-                "Generated expected outputs were derived from the assignment specification and independently "
-                "rechecked by a second LLM call. "
-            )
+            caveat = str(manifest.get("oracle_caveat") or "").strip()
+            unexecuted = "NOT confirmed by executing" in caveat
+            parts.append(("**Warning:** " if unexecuted else "") + (caveat or "Generated expected outputs were checked.") + " ")
         if manifest["instructor_test_count"]:
             parts.append("Instructor cases are used exactly as provided. ")
         parts.append("Review the suite below, then click **Grade Submission**.")
@@ -1165,6 +1188,7 @@ def grade_uploaded_submission(
 GENERATION_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Preparing", ()),
     ("Analysing source", ("assignment_submission_understanding",)),
+    ("Building reference", ("assignment_reference_program",)),
     ("Generating cases", ("assignment_test_generation",)),
     ("Verifying outputs", ("assignment_expected_output_verification",)),
 )

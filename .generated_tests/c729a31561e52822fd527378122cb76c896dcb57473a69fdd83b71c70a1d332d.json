@@ -1,0 +1,166 @@
+{
+  "assignment_fingerprint": "c729a31561e52822fd527378122cb76c896dcb57473a69fdd83b71c70a1d332d",
+  "assignment_statement": "Read n (1 <= n <= 20000), followed by n bar heights (each 0 <= h <= 1000000). Print the total volume of rain water trapped between the bars, as one integer followed by a newline. The total can exceed a 32-bit integer.",
+  "expected_output_oracle": {
+    "attempts": 1,
+    "kind": "llm_reference",
+    "program_sha256": "5f23bcf73d6688efb6d4e5dc0009f336bcd9f3bf186a777fac4b3e5671ea628f",
+    "trusted": false,
+    "validated_against_instructor_cases": 0
+  },
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 3,
+    "requested": 5,
+    "verification_calls": 1,
+    "verified": 2
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 3,
+      "requested_test_count": 5,
+      "status": "completed",
+      "test_count": 2,
+      "verification": {
+        "comparison": "reference program output must equal the independent check (trimmed, normalized newlines)",
+        "method": "llm_reference_plus_independent_check",
+        "rejected": 3,
+        "requested": 5,
+        "verified": 2
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "n >= 1",
+      "0 <= h[i] <= 1000000",
+      "n <= 20000",
+      "Total volume fits in 64-bit integer",
+      "Time complexity O(n)"
+    ],
+    "formatting": [
+      "Input: space-separated integers",
+      "Output: single integer + newline"
+    ],
+    "input_format": "stdin contains an integer n followed by n integers representing bar heights. Each height is between 0 and 1,000,000. n is between 1 and 20000.",
+    "output_format": "stdout contains a single 64-bit integer representing the total trapped water volume, followed by a newline.",
+    "semantics": [
+      "Water trapped at index i = min(max_left[i], max_right[i]) - h[i]"
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were computed by running a model-written reference program and kept only where an independent model check gave the same answer.",
+  "oracle_kind": "llm-reference-program-agreed-with-independent-check",
+  "problem_contract": {
+    "description": "Classic trapping rain water: water above each bar equals min(max height to the left, max height to the right) minus its height.",
+    "input_range": "1 <= n <= 20000; 0 <= h[i] <= 1000000",
+    "output_rule": "Print the total trapped water as one 64-bit integer followed by a newline.",
+    "required_time_complexity": "O(n)"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "test_2",
+      "reason": "reference program output disagreed with the independent check"
+    },
+    {
+      "id": "test_4",
+      "reason": "reference program output disagreed with the independent check"
+    },
+    {
+      "id": "test_5",
+      "reason": "reference program output disagreed with the independent check"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Read n (1 <= n <= 20000), followed by n bar heights (each 0 <= h <= 1000000). Print the total volume of rain water trapped between the bars, as one integer followed by a newline. The total can exceed a 32-bit integer.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "Two-pointer loop runs while left < right.",
+      "Uses int for pointers and max values (32-bit).",
+      "Uses int for total (32-bit), risking overflow.",
+      "Returns int from function, truncating large totals.",
+      "Main returns 1 on scanf failure or invalid count.",
+      "Uses malloc for dynamic allocation.",
+      "No early termination on invalid input.",
+      "No validation of height values during reading."
+    ],
+    "dropped_contradictory_weak_points": [
+      "No validation of non-integer input format."
+    ],
+    "implementation_summary": "Two-pointer scan computes trapped water by maintaining left/right max heights. Updates total when current bar is lower than both bounds, adding the difference. Uses 64-bit int for total.",
+    "input_parsing_and_validation": [
+      "Validates count >= 1 via scanf return check.",
+      "Allocates memory for n integers before reading.",
+      "Reads n integers into array with scanf return checks.",
+      "Handles EOF or malformed input gracefully by freeing memory.",
+      "Does not validate height values beyond 0-1000000 range.",
+      "Does not validate n <= 20000 explicitly in bounds.",
+      "No bounds checking on height array indices.",
+      "No validation of non-integer input format."
+    ],
+    "likely_weak_points": [
+      "Overflow if total exceeds 32-bit range.",
+      "No validation of negative heights (though spec says 0-1000000).",
+      "No validation of count = 0 or negative.",
+      "No validation of count > 20000.",
+      "No validation of height values > 1000000 (spec says <= 1000000)."
+    ],
+    "recommended_test_dimensions": [
+      "Large n (20000) with all heights = 0.",
+      "Large n with all heights = 1000000.",
+      "n = 1 with height = 0.",
+      "n = 1 with height = 1000000.",
+      "n = 2 with heights = [0, 1000000].",
+      "n = 2 with heights = [1000000, 0].",
+      "n = 3 with heights = [0, 1000000, 0].",
+      "n = 3 with heights = [1000000, 0, 1000000]."
+    ]
+  },
+  "submission_derived_contract_entries_removed": [
+    {
+      "entry": "Sum of water trapped at all indices",
+      "field": "semantics",
+      "submission_terms": "indic"
+    },
+    {
+      "entry": "Two-pointer approach or precomputed max arrays",
+      "field": "semantics",
+      "submission_terms": "array, pointer, two"
+    },
+    {
+      "entry": "Handle edge cases where no water is trapped",
+      "field": "semantics",
+      "submission_terms": "handl"
+    }
+  ],
+  "test_cases": [
+    {
+      "description": "",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference_agreed_with_independent_check",
+      "id": "generated-test_1",
+      "input": "3 0 0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "all_zero",
+        "small"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1000000\n",
+      "expected_output_source": "llm_reference_agreed_with_independent_check",
+      "id": "generated-test_3",
+      "input": "3 1000000 0 1000000",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "one_peak",
+        "small"
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ This fixture adapts the Critical Connections in a Network / graph-bridges proble
 
 - `assignment.md`: task, constraints, input/output contract, expected algorithmic bound.
 - `submission.c`: intentionally buggy C submission. It uses `>=` instead of `>` in Tarjan's bridge predicate.
-- `reference_solution.c`: correct iterative Tarjan implementation; uses an explicit DFS stack to avoid recursion-stack dependence.
+- `reference_solution.c`: correct iterative Tarjan implementation (explicit DFS stack). Named by `reference_solution` in `rules.json`, it computes the expected output of every generated test case in the sandbox and is never shown to the model.
 - `rules.json`: all nine example rubric metrics enabled, with the weights from the assignment PDF.
 - `testcases.json`: ordinary correctness inputs.
 - `edge_cases.json`: cycles, minimum two-vertex input, star, cycle, tail, and articulation-vertex cases.
@@ -27,7 +27,7 @@ examples/leetcode/1192-critical-connections/
 
 Then in Gradio, upload this folder's `rules.json` and `submission.c`. The rules use paths relative to the repository root. The `submission.source_file` field already points to the fixture path; update it if you copy the C source elsewhere. All nine rubric metrics are enabled with the assignment-example weights summing to 1.00. The originality analyzer uses the unrelated baseline corpus by default so it completes with a real comparison. To deliberately test a high-similarity flag, change `metrics[name=originality].params.corpus_dir` to `examples/leetcode/1192-critical-connections/originality_corpus_copied` (this is a synthetic positive control, not evidence of student plagiarism).
 
-Use `assignment.md` as the assignment prompt. Do not upload `instructor_expected_findings.json` or `reference_solution.c` to the blind grader.
+Use `assignment.md` as the assignment prompt. Do not upload `instructor_expected_findings.json` to the blind grader. `reference_solution.c` is only executed, never shown to the model.
 
 ## Validate the reference implementation
 

@@ -12,6 +12,7 @@
     "language": "c",
     "source_file": "examples/leetcode/0239-sliding-window-maximum/submission.c"
   },
+  "reference_solution": "examples/leetcode/0239-sliding-window-maximum/reference_solution.c",
   "metrics": [
     {
       "name": "correctness",

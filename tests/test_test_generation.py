@@ -674,7 +674,7 @@ def test_assignment_fingerprint_and_frozen_suite_are_stable(tmp_path):
         )
 
 
-def test_prepare_suite_uses_two_llm_output_calls_and_never_compiles_a_reference(tmp_path):
+def test_prepare_suite_without_sandbox_uses_two_model_calls_and_flags_unexecuted_outputs(tmp_path):
     from grading_agent.testing.test_generation import prepare_assignment_test_suite
 
     class NoReferenceSandbox:
@@ -721,7 +721,7 @@ def test_prepare_suite_uses_two_llm_output_calls_and_never_compiles_a_reference(
     }
     result = prepare_assignment_test_suite(
         rules,
-        sandbox=NoReferenceSandbox(),
+        sandbox=None,  # no sandbox: the documented two-model fallback (oracle tests cover execution)
         request_json=request,
         project_root=tmp_path,
         model_id="qwen-test",
@@ -738,7 +738,8 @@ def test_prepare_suite_uses_two_llm_output_calls_and_never_compiles_a_reference(
     assert result["expected_output_verification"]["verified"] == 2
     frozen = json.loads(Path(result["suite_path"]).read_text(encoding="utf-8"))
     assert frozen["schema_version"] == 3
-    assert "reference_solution_c" not in frozen
+    assert frozen["expected_output_oracle"]["kind"] == "none"
+    assert "NOT confirmed by executing" in frozen["oracle_caveat"]
     all_cases = json.loads(Path(result["all_testset_path"]).read_text(encoding="utf-8"))
     assert [case["expected"] for case in all_cases] == ["5\n", "3\n"]
 
@@ -810,7 +811,7 @@ def test_prepare_suite_uses_instructor_cases_as_hints_for_all_metrics(tmp_path):
 
     result = prepare_assignment_test_suite(
         rules,
-        sandbox=NoReferenceSandbox(),
+        sandbox=None,  # no sandbox: the documented two-model fallback (oracle tests cover execution)
         request_json=request,
         project_root=tmp_path,
         model_id="qwen-test",
@@ -863,7 +864,7 @@ def test_prepare_suite_fails_if_required_logical_cases_are_not_generated(tmp_pat
     with pytest.raises(TestGenerationError, match="no identifiable edge/boundary"):
         prepare_assignment_test_suite(
             rules,
-            sandbox=NoReferenceSandbox(),
+            sandbox=None,  # no sandbox: the documented two-model fallback (oracle tests cover execution)
             request_json=request,
             project_root=tmp_path,
             model_id="qwen-test",

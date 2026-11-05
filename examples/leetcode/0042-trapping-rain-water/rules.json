@@ -12,6 +12,7 @@
     "language": "c",
     "source_file": "examples/leetcode/0042-trapping-rain-water/submission.c"
   },
+  "reference_solution": "examples/leetcode/0042-trapping-rain-water/reference_solution.c",
   "metrics": [
     {
       "name": "correctness",

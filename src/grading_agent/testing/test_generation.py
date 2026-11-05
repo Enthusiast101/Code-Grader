@@ -867,8 +867,17 @@ def generate_assignment_test_spec(
     instructor_examples: list[dict[str, Any]] | None = None,
     trusted_reference_solution: str | None = None,
     submission_analysis: dict[str, Any] | None = None,
+    oracle: Any = None,
+    oracle_trusted: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Generate input/output pairs and independently verify them.
+
+    With an execution ``oracle`` (see testing.oracle), expected outputs come
+    from running a reference program on each generated input. A trusted oracle
+    (the instructor's reference, or a model-written program that reproduced
+    every instructor case) is final; an untrusted one must agree with the
+    independent model check. Without an oracle, the generator and the
+    independent check must agree.
 
     A single bounded refill may replace rejected or missing candidates. The
     trusted_reference_solution argument remains ignored for compatibility:
@@ -1095,6 +1104,50 @@ def generate_assignment_test_spec(
                 retained.append(item)
         return retained
 
+    def check_batch(batch: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any], int]:
+        """Return (accepted, rejected, summary, model_calls) for one candidate batch."""
+        if oracle is None:
+            accepted, rejected_now, summary = _verify_expected_outputs(
+                problem=problem, problem_contract=problem_contract,
+                inferred_contract=candidate["inferred_contract"], candidate_cases=batch,
+                instructor_examples=instructor_examples, request_json=request_json, stdin_unused=stdin_unused,
+            )
+            for case in accepted:
+                case["expected_output_source"] = "generator_and_independent_check_agreed"
+            return accepted, rejected_now, summary, 1
+        executed: list[dict[str, Any]] = []
+        rejected_now = []
+        for case in batch:
+            outcome = oracle.run(case["input"])
+            if not outcome["ok"]:
+                rejected_now.append({"id": str(case["id"]), "reason": f"reference program rejected this input: {outcome['reason']}"[:300]})
+                continue
+            executed.append({**case, "expected_output": outcome["stdout"], "generator_expected_output": case["expected_output"]})
+        summary = {
+            "method": oracle.kind if oracle_trusted else f"{oracle.kind}_plus_independent_check",
+            "requested": len(batch), "verified": len(executed), "rejected": len(rejected_now),
+            "comparison": "expected output computed by executing the reference program",
+        }
+        if oracle_trusted or not executed:
+            for case in executed:
+                case["expected_output_source"] = oracle.kind
+            return executed, rejected_now, summary, 0
+        accepted, disagreed, check_summary = _verify_expected_outputs(
+            problem=problem, problem_contract=problem_contract,
+            inferred_contract=candidate["inferred_contract"], candidate_cases=executed,
+            instructor_examples=instructor_examples, request_json=request_json, stdin_unused=stdin_unused,
+        )
+        for item in disagreed:
+            item["reason"] = item["reason"].replace(
+                "generated expected_output disagreed with the independent verifier",
+                "reference program output disagreed with the independent check",
+            )
+        for case in accepted:
+            case["expected_output_source"] = f"{oracle.kind}_agreed_with_independent_check"
+        summary.update({"verified": len(accepted), "rejected": len(rejected_now) + len(disagreed),
+                        "comparison": "reference program output must equal the independent check (trimmed, normalized newlines)"})
+        return accepted, rejected_now + disagreed, summary, 1
+
     first_batch = retain_contract_valid_cases(candidate["test_inputs"])
     verified_cases: list[dict[str, Any]] = []
     verification_calls = 0
@@ -1110,16 +1163,8 @@ def generate_assignment_test_spec(
     }
 
     if first_batch:
-        first_batch_verified, first_batch_rejected, first_verification_summary = _verify_expected_outputs(
-            problem=problem,
-            problem_contract=problem_contract,
-            inferred_contract=candidate["inferred_contract"],
-            candidate_cases=first_batch,
-            instructor_examples=instructor_examples,
-            request_json=request_json,
-            stdin_unused=stdin_unused,
-        )
-        verification_calls += 1
+        first_batch_verified, first_batch_rejected, first_verification_summary, calls_used = check_batch(first_batch)
+        verification_calls += calls_used
         verification_requested += len(first_batch)
         verification_rejected += len(first_batch_rejected)
         verified_cases.extend(first_batch_verified)
@@ -1215,16 +1260,8 @@ def generate_assignment_test_spec(
                     id_prefix="refill-",
                 )
                 if repair_batch:
-                    repair_verified, repair_rejected, repair_verification_summary = _verify_expected_outputs(
-                        problem=problem,
-                        problem_contract=problem_contract,
-                        inferred_contract=candidate["inferred_contract"],
-                        candidate_cases=repair_batch,
-                        instructor_examples=instructor_examples,
-                        request_json=request_json,
-                        stdin_unused=stdin_unused,
-                    )
-                    verification_calls += 1
+                    repair_verified, repair_rejected, repair_verification_summary, calls_used = check_batch(repair_batch)
+                    verification_calls += calls_used
                     verification_requested += len(repair_batch)
                     verification_rejected += len(repair_rejected)
                     verified_cases.extend(repair_verified)
@@ -1494,10 +1531,34 @@ def materialize_test_cases(
             "tags": list(case.get("tags", [])),
             "description": str(case.get("description", ""))[:240],
             "origin": "llm_generated_independently_verified",
+            **({"expected_output_source": case["expected_output_source"]} if case.get("expected_output_source") else {}),
         })
     if not merged:
         raise TestGenerationError("empty_suite", "No instructor or independently verified generated cases are available.")
     return merged
+
+def oracle_caveat(record: dict[str, Any] | None) -> str:
+    """One sentence describing where generated expected outputs came from."""
+    record = record if isinstance(record, dict) else {}
+    kind = record.get("kind")
+    if kind == "instructor_reference":
+        text = f"Generated expected outputs were computed by running the instructor's reference solution ({record.get('file', 'reference')}) in the sandbox."
+        return text + (" " + record["warning"] if record.get("warning") else "")
+    if kind == "llm_reference" and record.get("trusted"):
+        return (
+            "Generated expected outputs were computed by running a model-written reference program that first "
+            f"reproduced all {record.get('validated_against_instructor_cases', 0)} instructor test case(s)."
+        )
+    if kind == "llm_reference":
+        return (
+            "Generated expected outputs were computed by running a model-written reference program and kept only "
+            "where an independent model check gave the same answer."
+        )
+    return (
+        "Generated expected outputs were NOT confirmed by executing a reference program; they rely on agreement "
+        "between two model calls. " + str(record.get("reason", "")).strip()
+    ).strip()
+
 
 def write_frozen_suite(
     cache_dir: Path, *, fingerprint: str, cases: list[dict[str, Any]],
@@ -1519,6 +1580,7 @@ def write_frozen_suite(
         "spec_summary": generated_spec.get("spec_summary", ""),
         "submission_analysis": generated_spec.get("submission_analysis", {}),
         "inferred_contract": generated_spec.get("inferred_contract", {}),
+        "expected_output_oracle": generated_spec.get("expected_output_oracle", {}),
         "submission_derived_contract_entries_removed": generated_spec.get(
             "submission_derived_contract_entries_removed", []
         ),
@@ -1526,10 +1588,7 @@ def write_frozen_suite(
         "oracle_kind": oracle_kind,
         "assignment_statement": assignment_statement,
         "problem_contract": problem_contract or {},
-        "oracle_caveat": (
-            "Generated expected outputs were independently rechecked by a second LLM call against the assignment specification. "
-            "When available, instructor-provided examples guided input and output conventions; they are not an exhaustive oracle."
-        ),
+        "oracle_caveat": oracle_caveat(generated_spec.get("expected_output_oracle", {})),
     }
     encoded = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     if path.exists():
@@ -1574,6 +1633,63 @@ def load_frozen_suite(path: Path, expected_fingerprint: str) -> list[dict[str, A
 
 
 
+def _build_expected_output_oracle(
+    *,
+    sandbox: Any,
+    rules: dict[str, Any],
+    reference_source: str,
+    reference_path: str,
+    instructor_cases: list[dict[str, Any]],
+    request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
+) -> tuple[Any, dict[str, Any]]:
+    """Choose the source of truth for generated expected outputs."""
+    from grading_agent.testing.oracle import build_llm_oracle, instructor_oracle
+
+    if sandbox is None:
+        return None, {
+            "kind": "none", "trusted": False,
+            "reason": "No sandbox is available (Docker not running), so no reference program could be executed; "
+                      "expected outputs rely on agreement between two model calls and are not execution-checked.",
+        }
+    if reference_source:
+        oracle = instructor_oracle(sandbox, reference_source, reference_path)
+        build_error = oracle.prepare()
+        if build_error:
+            raise TestGenerationError(
+                "reference_solution_build_failed",
+                f"The instructor reference solution {Path(reference_path).name} did not build: {build_error[:600]}",
+            )
+        check = oracle.check_against(instructor_cases)
+        record = {
+            "kind": "instructor_reference", "trusted": True, "file": Path(reference_path).name,
+            "instructor_cases_passed": len(check["passed"]),
+            "instructor_cases_mismatched": [item["id"] for item in check["mismatched"]],
+            "instructor_cases_unrunnable": [item["id"] for item in check["unrunnable"]],
+        }
+        if check["mismatched"]:
+            record["warning"] = (
+                "The instructor reference disagrees with these instructor test cases: "
+                + ", ".join(item["id"] for item in check["mismatched"][:5])
+                + ". Generated expected outputs follow the reference; check the test files."
+            )
+        return oracle, record
+    oracle, record = build_llm_oracle(
+        sandbox=sandbox,
+        problem=str(rules.get("problem", "")),
+        problem_contract=rules.get("problem_contract", {}) if isinstance(rules.get("problem_contract"), dict) else {},
+        instructor_cases=instructor_cases,
+        hint_examples=_instructor_hint_examples(instructor_cases),
+        request_json=request_json,
+    )
+    if oracle is None:
+        record.setdefault(
+            "reason",
+            "No usable model-written reference program; expected outputs rely on agreement between two "
+            "model calls and are not execution-checked.",
+        )
+    return oracle, record
+
+
 def prepare_assignment_test_suite(
     rules: dict[str, Any],
     *,
@@ -1586,12 +1702,15 @@ def prepare_assignment_test_suite(
     submission_source: str = "",
     submission_filename: str = "submission.c",
 ) -> dict[str, Any]:
-    """Generate, independently verify, freeze, and bind assignment test cases.
+    """Generate, verify, freeze, and bind assignment test cases.
 
-    No reference C program is generated, loaded, compiled, or executed. The
-    first LLM call proposes input/output pairs; a second LLM call independently
-    solves the proposed inputs from the assignment specification. The sandbox
-    is reserved for grading the student's original submission later.
+    Expected outputs of generated inputs come from, in order of authority:
+    the instructor's reference solution (``reference_solution`` in rules.json),
+    run in the sandbox; otherwise a Python reference program the model writes
+    from the assignment (never from the student's code), trusted once it
+    reproduces every instructor case and otherwise required to agree with an
+    independent model check; otherwise, without a sandbox, agreement between
+    the generator and an independent model check (flagged as unexecuted).
     """
     testing_cfg = rules.get("test_generation", {})
     testing_cfg = testing_cfg if isinstance(testing_cfg, dict) else {}
@@ -1652,17 +1771,26 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v22-bounded-generation-output-and-retry",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":execution-oracle-v23",
         rsi_passes=1,
         max_cases=int(max_cases),
         temperature=float(temperature),
         additional_focus=additional_focus,
         submission_source_sha256=submission_source_sha256,
     )
+    reference_path_value = rules.get("resolved_reference_solution")
+    reference_source = ""
+    if reference_path_value:
+        try:
+            reference_source = Path(reference_path_value).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise TestGenerationError("reference_solution_unreadable", f"Could not read the instructor reference solution: {exc}") from exc
     supplemental = {
         "base": fingerprint,
         "instructor_cases": instructor_cases,
-        "expected_output_verification": "independent_second_llm_call",
+        "expected_output_verification": "execution_oracle",
+        # Changing the instructor reference must regenerate the suite.
+        "reference_solution_sha256": hashlib.sha256(reference_source.encode("utf-8")).hexdigest() if reference_source else "",
     }
     try:
         fingerprint = hashlib.sha256(
@@ -1721,6 +1849,14 @@ def prepare_assignment_test_suite(
                 submission_filename=submission_filename,
                 request_json=request_json,
             )
+        oracle, oracle_record = _build_expected_output_oracle(
+            sandbox=sandbox,
+            rules=rules,
+            reference_source=reference_source,
+            reference_path=str(reference_path_value or ""),
+            instructor_cases=instructor_cases,
+            request_json=request_json,
+        )
         spec, generation_history = generate_assignment_test_spec(
             problem=str(rules.get("problem", "")),
             problem_contract=rules.get("problem_contract", {}),
@@ -1731,7 +1867,12 @@ def prepare_assignment_test_suite(
             additional_focus=additional_focus,
             instructor_examples=instructor_cases,
             submission_analysis=submission_analysis,
+            oracle=oracle,
+            oracle_trusted=bool(oracle_record.get("trusted")),
         )
+        spec["expected_output_oracle"] = {key: value for key, value in oracle_record.items() if key != "program"}
+        if oracle_record.get("program"):
+            spec["expected_output_oracle"]["program_sha256"] = hashlib.sha256(oracle_record["program"].encode("utf-8")).hexdigest()
         if submission_analysis is not None:
             spec["submission_analysis"] = submission_analysis
         rejected_generated_cases: list[dict[str, str]] = list(spec.get("rejected_generated_cases", []))
@@ -1757,11 +1898,14 @@ def prepare_assignment_test_suite(
             )
         all_cases = instructor_suite + generated_suite[:int(max_cases)]
         spec["rejected_generated_cases"] = rejected_generated_cases
-        oracle_kind = (
-            "instructor-examples-plus-two-pass-llm-verification"
-            if instructor_cases else
-            "two-pass-llm-verified-expected-outputs"
-        )
+        oracle_record = spec.get("expected_output_oracle", {})
+        oracle_kind = {
+            "instructor_reference": "instructor-reference-solution-executed",
+            "llm_reference": (
+                "llm-reference-program-validated-on-instructor-cases" if oracle_record.get("trusted")
+                else "llm-reference-program-agreed-with-independent-check"
+            ),
+        }.get(str(oracle_record.get("kind")), "two-model-agreement-unexecuted")
         suite_path = write_frozen_suite(
             cache_dir,
             fingerprint=fingerprint,
@@ -1840,8 +1984,9 @@ def prepare_assignment_test_suite(
         "submission_analysis": frozen.get("submission_analysis", {}),
         "inferred_contract": frozen.get("inferred_contract", {}),
         "spec_summary": frozen.get("spec_summary", ""),
-        "oracle_kind": frozen.get("oracle_kind", "two-pass-llm-verified-expected-outputs"),
-        "oracle_caveat": frozen.get("oracle_caveat", "Expected outputs were independently checked by a second LLM call against the assignment specification."),
+        "oracle_kind": frozen.get("oracle_kind", "two-model-agreement-unexecuted"),
+        "oracle_caveat": frozen.get("oracle_caveat", oracle_caveat(frozen.get("expected_output_oracle", {}))),
+        "expected_output_oracle": frozen.get("expected_output_oracle", {}),
         "expected_output_verification": verification_summary,
         "unresolved_ambiguities": frozen.get("generation_ambiguities", []),
     }

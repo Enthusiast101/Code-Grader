@@ -548,6 +548,17 @@ def load_rules(
         **submission,
         "resolved_source_path": str(source_path),
     }
+    # Optional instructor reference solution: the source of truth for the
+    # expected outputs of generated test cases. It is executed only in the
+    # sandbox and never shown to the model.
+    reference_value = rules.get("reference_solution")
+    if reference_value not in (None, ""):
+        reference_path = resolve_project_path(project_root, reference_value, field_name="reference_solution")
+        if reference_path.suffix.lower() not in {".c", ".py"}:
+            raise RuleValidationError("'reference_solution' must be a .c or .py file.")
+        normalized_rules["resolved_reference_solution"] = str(reference_path)
+    else:
+        normalized_rules.pop("resolved_reference_solution", None)
     for metric in normalized_metrics:
         if metric["analyzer"] == "memory_safety":
             run_sanitizers = metric["params"].get("run_sanitizers", True)
