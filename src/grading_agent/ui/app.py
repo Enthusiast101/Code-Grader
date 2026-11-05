@@ -6,10 +6,8 @@ import html
 import json
 import logging
 import math
-import random
 import time
 from concurrent.futures import ThreadPoolExecutor
-from argparse import Namespace
 from pathlib import Path
 import shutil
 import uuid
@@ -18,12 +16,10 @@ from typing import Any
 
 import gradio as gr
 
-from grading_agent.benchmark.formai_evaluate import evaluate_mode
-from grading_agent.benchmark.formai_predict import run as run_formai_prediction
-from grading_agent.benchmark.formai_manifest import validate_benchmark_split, read_source_manifest
 from grading_agent.main import PROJECT_ROOT, grade_with_rules_file
 from grading_agent.config import settings
 from grading_agent.reporting.rationale import compact_rationale, evidence_summary, score_source_label
+from grading_agent.ui.formai_tab import build_formai_tab, preview_allocation
 
 logger = logging.getLogger("grading_agent.ui")
 OCEAN_UI_CSS = """
@@ -132,40 +128,6 @@ def _normalize_legacy_metric_profile(rules: dict[str, Any]) -> dict[str, Any] | 
         "removed_metrics": removed,
         "added_metrics": added,
     }
-
-
-def _write_source_sample(inputs_path: Path, output_path: Path, sample_count: int, seed: int) -> list[str]:
-    """Write a reproducible source-only sample without reading label classes."""
-    all_names = read_source_manifest(inputs_path)
-    if sample_count <= 0 or sample_count >= len(all_names):
-        shutil.copyfile(inputs_path, output_path)
-        return list(all_names)
-    selected = set(random.Random(seed).sample(all_names, sample_count))
-    written: list[str] = []
-    with inputs_path.open("r", encoding="utf-8") as source, output_path.open("w", encoding="utf-8") as target:
-        for line_number, raw_line in enumerate(source, 1):
-            if not raw_line.strip():
-                continue
-            item = json.loads(raw_line)
-            if item.get("file_name") in selected:
-                target.write(raw_line if raw_line.endswith("\n") else raw_line + "\n")
-                written.append(item["file_name"])
-    if set(written) != selected:
-        raise ValueError("Could not materialise the requested source sample exactly.")
-    return written
-
-
-def _write_label_sample(labels_path: Path, output_path: Path, selected_names: list[str]) -> None:
-    """Filter labels only after inference; labels never enter either predictor stage."""
-    payload = json.loads(labels_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, list):
-        raise ValueError("Ground-truth labels must be a JSON array.")
-    by_name = {item.get("file_name"): item for item in payload if isinstance(item, dict)}
-    missing = [name for name in selected_names if name not in by_name]
-    if missing:
-        raise ValueError(f"Selected source programs are missing ground-truth labels: {missing[:5]}")
-    subset = [by_name[name] for name in selected_names]
-    output_path.write_text(json.dumps(subset, indent=2), encoding="utf-8")
 
 
 def _metric_summary_impl(report: dict[str, Any]) -> str:
@@ -1337,182 +1299,6 @@ def grade_uploaded_submission_with_progress(*args: Any):
     )
 
 
-def _prediction_stage_counts(prediction_path: Path) -> dict[str, int]:
-    """Count completed/failed analysis stages for transparent UI feedback."""
-    counts = {
-        "samples": 0, "llm_completed": 0, "llm_failed": 0,
-        "cppcheck_completed": 0, "cppcheck_unavailable": 0,
-        "rsi_completed": 0, "rsi_unavailable": 0,
-        "partial_predictions": 0, "inconclusive_predictions": 0,
-    }
-    with prediction_path.open("r", encoding="utf-8") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(item, dict):
-                continue
-            counts["samples"] += 1
-            if item.get("llm_audit_status") in {"completed", "completed_with_warnings"}:
-                counts["llm_completed"] += 1
-            else:
-                counts["llm_failed"] += 1
-            if item.get("tool_status") == "completed":
-                counts["cppcheck_completed"] += 1
-            elif item.get("tool_status") in {"unavailable", "inconclusive"}:
-                counts["cppcheck_unavailable"] += 1
-            if item.get("rsi_review_status") in {"completed", "completed_with_warnings"}:
-                counts["rsi_completed"] += 1
-            elif item.get("rsi_review_status") in {"unavailable", "skipped"}:
-                counts["rsi_unavailable"] += 1
-            if item.get("prediction_status") == "completed_with_warnings":
-                counts["partial_predictions"] += 1
-            elif item.get("prediction_status") == "inconclusive":
-                counts["inconclusive_predictions"] += 1
-    return counts
-
-
-def run_formai_combined(
-    inputs_upload: Any,
-    labels_upload: Any,
-    mode: str,
-    tool_timeout: float,
-    max_llm_findings: float | int,
-    rsi_iterations: float | int,
-    memory_limit: str,
-    cpu_limit: float,
-    sample_count: float | int = 0,
-):
-    """Run LLM + cppcheck fusion, with optional evidence-review refinement."""
-    try:
-        inputs_path = _upload_path(inputs_upload, "source-only test JSONL")
-        labels_path = _upload_path(labels_upload, "held-out labels JSON")
-        if mode not in {"hybrid", "hybrid_rsi"}:
-            raise ValueError("Choose a combined mode so both LLM and cppcheck are attempted.")
-        # Filename alignment preflight prevents an accidental four-record run
-        # from being reported as a 100-record benchmark. Labels remain isolated
-        # from both prediction stages; only filenames/class counts are checked.
-        manifest = validate_benchmark_split(inputs_path, labels_path)
-        if tool_timeout <= 0 or int(max_llm_findings) < 1 or not 1 <= int(rsi_iterations) <= 3:
-            raise ValueError("Invalid timeout, finding limit, or RSI iteration count.")
-        if not 0.25 <= float(cpu_limit) <= 16:
-            raise ValueError("Docker CPU limit must be between 0.25 and 16 cores.")
-        sample_value = float(sample_count or 0)
-        if not math.isfinite(sample_value) or not sample_value.is_integer():
-            raise ValueError("Sample count must be a whole number (0 means all programs).")
-        requested_samples = int(sample_value)
-        if requested_samples < 0:
-            raise ValueError("Sample count must be zero (all programs) or a positive integer.")
-        if requested_samples > manifest["programs"]:
-            raise ValueError(
-                f"Requested {requested_samples} samples, but the uploaded split contains only {manifest['programs']} programs."
-            )
-
-        run_id = uuid.uuid4().hex[:12]
-        out_dir = settings.FORM_AI_GRADIO_RUNS_DIR / run_id
-        out_dir.mkdir(parents=True, exist_ok=False)
-        prediction_path = out_dir / f"{mode}.jsonl"
-        evaluation_path = out_dir / f"{mode}-evaluation.json"
-        sampled_inputs_path = out_dir / "selected_test_inputs.jsonl"
-        sampled_labels_path = out_dir / "selected_test_labels.json"
-        selected_names = _write_source_sample(
-            inputs_path, sampled_inputs_path, requested_samples, settings.FORM_AI_GRADIO_SAMPLE_SEED
-        )
-        selected_count = len(selected_names)
-        args = Namespace(
-            inputs=sampled_inputs_path,
-            mode=mode,
-            output=prediction_path,
-            max_samples=None,
-            tool_timeout=float(tool_timeout),
-            max_llm_findings=int(max_llm_findings),
-            rsi_iterations=int(rsi_iterations),
-            memory_limit=memory_limit,
-            cpu_limit=float(cpu_limit),
-        )
-        run_formai_prediction(args)
-        # Labels are opened and filtered only after prediction generation.
-        _write_label_sample(labels_path, sampled_labels_path, selected_names)
-        evaluation = evaluate_mode(sampled_labels_path, prediction_path, line_tolerance=settings.FORM_AI_LINE_TOLERANCE)
-        stage_counts = _prediction_stage_counts(prediction_path)
-        stage_counts["expected_records"] = selected_count
-        stage_counts["available_programs"] = manifest["programs"]
-        stage_counts["sampled_programs"] = selected_count
-        stage_counts["missing_prediction_records"] = max(0, selected_count - stage_counts["samples"])
-        if stage_counts["samples"] != selected_count:
-            logger.error(
-                "Incomplete FormAI prediction run: wrote %d of %d selected records.",
-                stage_counts["samples"], selected_count,
-            )
-        run_manifest_path = prediction_path.with_suffix(prediction_path.suffix + ".run.json")
-        prediction_run_manifest = (
-            json.loads(run_manifest_path.read_text(encoding="utf-8"))
-            if run_manifest_path.is_file() else None
-        )
-        evaluation_payload = {
-            "dataset": "FormAI-v2",
-            "mode": mode,
-            "prediction_file": str(prediction_path),
-            "evaluation": evaluation,
-            "stage_counts": stage_counts,
-            "input_manifest": manifest,
-            "sample_selection": {
-                "requested_count": requested_samples,
-                "selected_count": selected_count,
-                "available_count": manifest["programs"],
-                "seed": settings.FORM_AI_GRADIO_SAMPLE_SEED,
-                "strategy": "uniform random sample without replacement from source filenames; labels filtered only after prediction",
-                "selected_file_names": selected_names,
-            },
-            "prediction_run_manifest": prediction_run_manifest,
-            "fusion_policy": "cppcheck findings are retained; LLM candidates in hybrid_rsi require RSI adjudication against exact cited source lines; missing/inconclusive stages cannot be interpreted as safe.",
-        }
-        evaluation_path.write_text(json.dumps(evaluation_payload, indent=2), encoding="utf-8")
-        confusion = evaluation["confusion_matrix"]
-        if evaluation["metrics_finalized"]:
-            metric_text = (
-                f"**Precision / Recall / F1:** {evaluation['precision']} / {evaluation['recall']} / {evaluation['f1_score']}  \\n"
-                f"**Accuracy / Balanced accuracy:** {evaluation['accuracy']} / {evaluation['balanced_accuracy']}  \\n"
-            )
-            evaluation_status = "**Benchmark status:** COMPLETE — metrics finalized for the selected sample."
-        else:
-            partial = evaluation["observed_subset_metrics"]
-            metric_text = (
-                "**Full-test-set metrics:** withheld because predictions are missing or inconclusive.  \\n"
-                f"**Observed-subset precision / recall / F1:** {partial['precision']} / {partial['recall']} / {partial['f1_score']}  \\n"
-                f"**Observed-subset accuracy / balanced accuracy:** {partial['accuracy']} / {partial['balanced_accuracy']}  \\n"
-            )
-            evaluation_status = "**Benchmark status:** INCOMPLETE — do not report observed-subset metrics as final FormAI results."
-        summary = (
-            "## FormAI-v2 combined evaluation\n"
-            f"{evaluation_status}  \\n"
-            f"**Mode:** `{mode}`  \\n"
-            f"**Programs selected:** {selected_count} / {manifest['programs']} available  \\n"
-            f"**Ground-truth programs evaluated:** {evaluation['ground_truth_records']}  \\n"
-            f"**Prediction records emitted:** {evaluation['matched_prediction_records']} / {evaluation['ground_truth_records']}  \\n"
-            f"**Prediction coverage:** {evaluation['prediction_coverage']}  \\n"
-            f"**Classification coverage:** {evaluation['classification_coverage']}  \\n"
-            f"{metric_text}"
-            f"**Observed-subset TP / FP / FN / TN:** {confusion['tp']} / {confusion['fp']} / {confusion['fn']} / {confusion['tn']}  \\n"
-            f"**Missing / inconclusive:** {evaluation['missing_predictions']} / {evaluation['inconclusive_predictions']}  \\n"
-            f"**LLM audits completed:** {stage_counts['llm_completed']}/{stage_counts['expected_records']}  \\n"
-            f"**cppcheck completed:** {stage_counts['cppcheck_completed']}/{stage_counts['expected_records']}  \\n"
-            f"**Evidence reviews completed:** {stage_counts['rsi_completed']}/{stage_counts['expected_records']}  \\n"
-            f"**Partial predictions:** {stage_counts['partial_predictions']}  \\n\n"
-            "Ground-truth classes are not read by the prediction stages; only filenames are checked before execution to ensure both uploads are the same split."
-        )
-        return summary, str(prediction_path), str(evaluation_path)
-    except ValueError as exc:
-        logger.warning("FormAI benchmark preflight failed: %s", exc)
-        return f"## Benchmark could not complete\n`{type(exc).__name__}: {exc}`", None, None
-    except Exception as exc:
-        logger.exception("FormAI Gradio request failed")
-        return f"## Benchmark could not complete\n`{type(exc).__name__}: {exc}`", None, None
-
-
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="Code Grader") as demo:
         gr.Markdown(
@@ -1687,41 +1473,11 @@ def build_app() -> gr.Blocks:
                 show_progress="hidden",
             )
 
-        with gr.Tab("FormAI-v2 combined benchmark"):
-            gr.Markdown(
-                "Choose how many programs to evaluate from the uploaded held-out split. "
-                "A seeded random sample is selected from source filenames; the matching labels are filtered only after prediction generation. "
-                "The source-input and label filenames must match exactly."
-            )
-            with gr.Row():
-                source_inputs = gr.File(label="test_inputs.jsonl (source only)", file_types=[".jsonl"], type="filepath")
-                ground_truth = gr.File(label="test_labels.json (filename preflight + evaluator only)", file_types=[".json"], type="filepath")
-            with gr.Row():
-                benchmark_mode = gr.Radio(
-                    choices=[("Hybrid: LLM + cppcheck", "hybrid"), ("Hybrid + evidence review (RSI)", "hybrid_rsi")],
-                    value=settings.UI_DEFAULT_BENCHMARK_MODE, label="Combined prediction mode",
-                )
-            with gr.Row():
-                tool_timeout = gr.Number(value=settings.UI_DEFAULT_TOOL_TIMEOUT_S, precision=0, label="cppcheck timeout (seconds)")
-                max_findings = gr.Number(value=settings.UI_DEFAULT_MAX_FINDINGS, precision=0, label="Maximum LLM findings")
-                rsi_iterations = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.UI_DEFAULT_RSI_ITERATIONS, step=1, label="RSI iterations")
-                memory_limit = gr.Dropdown(list(settings.UI_DOCKER_MEMORY_CHOICES), value=settings.UI_DEFAULT_MEMORY_LIMIT, label="Docker memory limit")
-                cpu_limit = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU limit (cores)")
-                sample_count = gr.Number(
-                    value=settings.UI_DEFAULT_FORM_AI_SAMPLE_COUNT, minimum=0, precision=0,
-                    label="Number of samples (0 = all)",
-                    info="Select a reproducible random subset; seed is configured in config/settings.py.",
-                )
-            benchmark_button = gr.Button("Run combined evaluation", variant="primary")
-            benchmark_summary = gr.Markdown()
-            with gr.Row():
-                predictions_file = gr.File(label="Prediction JSONL")
-                evaluation_file = gr.File(label="Evaluation JSON")
-            benchmark_button.click(
-                run_formai_combined,
-                inputs=[source_inputs, ground_truth, benchmark_mode, tool_timeout, max_findings, rsi_iterations, memory_limit, cpu_limit, sample_count],
-                outputs=[benchmark_summary, predictions_file, evaluation_file],
-            )
+        formai_controls = build_formai_tab()
+        # Fill the allocation preview for the default slider value on page load.
+        demo.load(preview_allocation, inputs=[formai_controls[0], formai_controls[1], formai_controls[2],
+                                              formai_controls[3], formai_controls[4]],
+                  outputs=[formai_controls[5], formai_controls[6]], show_progress="hidden")
 
     return demo
 

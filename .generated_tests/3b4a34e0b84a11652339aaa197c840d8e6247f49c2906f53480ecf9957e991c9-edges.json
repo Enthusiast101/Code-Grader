@@ -1,0 +1,117 @@
+[
+  {
+    "description": "One interval.",
+    "expected": "1\n5 7\n",
+    "id": "instructor-single",
+    "input": "1\n5 7\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "Shared endpoint must merge (closed intervals).",
+    "expected": "1\n1 5\n",
+    "id": "instructor-touching-pair",
+    "input": "2\n1 4\n4 5\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "Chain of touching intervals.",
+    "expected": "2\n1 4\n6 7\n",
+    "id": "instructor-touching-chain",
+    "input": "4\n1 2\n2 3\n3 4\n6 7\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "Identical intervals.",
+    "expected": "1\n3 6\n",
+    "id": "instructor-duplicates",
+    "input": "3\n3 6\n3 6\n3 6\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "Zero-length intervals; 5 and 6 do not touch.",
+    "expected": "2\n5 5\n6 6\n",
+    "id": "instructor-points",
+    "input": "3\n5 5\n5 5\n6 6\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "Bounds of the coordinate range.",
+    "expected": "1\n0 10000\n",
+    "id": "instructor-full-range",
+    "input": "3\n0 10000\n100 200\n9999 10000\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n0 3\n",
+    "expected_output_source": "instructor_reference",
+    "id": "generated-boundary_overlap",
+    "input": "2\n0 2\n1 3",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "generated"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n0 5\n",
+    "expected_output_source": "instructor_reference",
+    "id": "generated-zero_start",
+    "input": "2\n0 5\n0 3",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "generated"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n0 0\n",
+    "expected_output_source": "instructor_reference",
+    "id": "generated-zero_end",
+    "input": "2\n0 0\n0 0",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "generated"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "10\n0 1\n2 3\n4 5\n6 7\n8 9\n10 11\n12 13\n14 15\n16 17\n18 19\n",
+    "expected_output_source": "instructor_reference",
+    "id": "generated-large_n_disjoint",
+    "input": "10\n0 1\n2 3\n4 5\n6 7\n8 9\n10 11\n12 13\n14 15\n16 17\n18 19\n20 21",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "generated"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n0 10\n",
+    "expected_output_source": "instructor_reference",
+    "id": "generated-large_n_overlapping",
+    "input": "10\n0 10\n0 9\n0 8\n0 7\n0 6\n0 5\n0 4\n0 3\n0 2\n0 1",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "generated"
+    ]
+  }
+]

@@ -44,9 +44,20 @@ def _verify_json_schema_compatible_server(executable: str) -> str:
         )
 
     # Standard llama.cpp output resembles: version: 0.0.0 (build 12005, commit ...).
+    # Release binaries print: version: 12005 (3c809f44).
     build_match = re.search(r"\bbuild\s*[=:]?\s*(\d+)\b", version_text, re.IGNORECASE)
     if not build_match:
         build_match = re.search(r"\bb(\d{4,})\b", version_text, re.IGNORECASE)
+    if not build_match:
+        build_match = re.search(r"\bversion:\s*(\d{4,})\s*\(", version_text, re.IGNORECASE)
+    # Semantic-version packages (e.g. Homebrew 0.9.0, cut from nightly b12110)
+    # postdate b12005; 0.9.0 is the first such release verified to include PR #31380.
+    semver_match = re.search(r"\bversion:?\s*v?(\d+)\.(\d+)\.(\d+)", version_text, re.IGNORECASE)
+    if not build_match and semver_match:
+        semver = tuple(int(part) for part in semver_match.groups())
+        if semver >= (0, 9, 0):
+            logger.info("llama-server JSON-schema compatibility verified: version %s", ".".join(map(str, semver)))
+            return version_text
     commit_match = re.search(r"\bcommit\s+([0-9a-f]{7,40})\b", version_text, re.IGNORECASE)
     known_fixed_commits = ("3c809f44", "1052f7e")
     has_known_fix = bool(

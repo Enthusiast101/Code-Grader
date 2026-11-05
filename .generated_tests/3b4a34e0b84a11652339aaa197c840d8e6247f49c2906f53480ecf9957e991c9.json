@@ -1,0 +1,580 @@
+{
+  "assignment_fingerprint": "3b4a34e0b84a11652339aaa197c840d8e6247f49c2906f53480ecf9957e991c9",
+  "assignment_statement": "Read n (1 <= n <= 10000), then n closed intervals as pairs 'start end' (0 <= start <= end <= 10000) in any order. Merge all overlapping intervals; intervals that share an endpoint overlap. Print the number of merged intervals, then each merged interval 'start end' on its own line in increasing order of start.",
+  "expected_output_oracle": {
+    "file": "reference_solution.c",
+    "instructor_cases_mismatched": [],
+    "instructor_cases_passed": 11,
+    "instructor_cases_unrunnable": [],
+    "kind": "instructor_reference",
+    "trusted": true
+  },
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 1,
+    "requested": 11,
+    "verification_calls": 0,
+    "verified": 10
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 2,
+      "requested_test_count": 12,
+      "status": "completed",
+      "test_count": 10,
+      "verification": {
+        "comparison": "expected output computed by executing the reference program",
+        "method": "instructor_reference",
+        "rejected": 1,
+        "requested": 11,
+        "verified": 10
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "n >= 1",
+      "0 <= start <= end <= 10000",
+      "All inputs are integers",
+      "Output values are integers",
+      "Output lines are sorted by start, then end"
+    ],
+    "formatting": [
+      "Standard C stdout",
+      "No trailing spaces on lines",
+      "One empty line between test cases if specified (not specified here)"
+    ],
+    "input_format": "Read n (1 <= n <= 10000), then n closed intervals as pairs 'start end' (0 <= start <= end <= 10000) in any order. Merge all overlapping intervals; intervals that share an endpoint overlap. Print the number of merged intervals, then each merged interval 'start end' on its own line in increasing order of start.",
+    "output_format": "First line m; then m lines 'start end' sorted by start.",
+    "semantics": [
+      "Merge overlapping intervals: [a,b] and [b,c] merge into [a,c].",
+      "Merge overlapping intervals: [a,b] and [c,d] where c < b merge into [a,d].",
+      "Intervals are closed (inclusive endpoints).",
+      "Output intervals must be sorted by start, then end."
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were computed by running the instructor's reference solution (reference_solution.c) in the sandbox.",
+  "oracle_kind": "instructor-reference-solution-executed",
+  "problem_contract": {
+    "description": "Merge overlapping closed intervals; [a,b] and [b,c] merge into [a,c].",
+    "input_range": "1 <= n <= 10000; 0 <= start <= end <= 10000",
+    "output_rule": "First line m; then m lines 'start end' sorted by start.",
+    "required_time_complexity": "O(n log n)"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "disjoint_unsorted",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "empty_input",
+      "reason": "reference program rejected this input: reference program exited with code 1"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Read n (1 <= n <= 10000), then n closed intervals as pairs 'start end' (0 <= start <= end <= 10000) in any order. Merge all overlapping intervals; intervals that share an endpoint overlap. Print the number of merged intervals, then each merged interval 'start end' on its own line in increasing order of start.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "qsort sorts Interval array by start, then end",
+      "merge_intervals uses qsort + linear scan",
+      "int used for start/end values",
+      "printf prints merged count then pairs"
+    ],
+    "implementation_summary": "Main reads n, allocates Interval arrays, parses n pairs, sorts by start then end, merges overlapping intervals (sharing endpoints), and prints count followed by sorted merged intervals.",
+    "input_parsing_and_validation": [
+      "scanf(\"%d\", &count) != 1 returns 0 on failure",
+      "count < 1 triggers early exit",
+      "scanf(\"%d %d\", ...) returns 1 on failure",
+      "malloc/free NULL checks prevent crash",
+      "scanf returns 2 on success"
+    ],
+    "likely_weak_points": [
+      "i < count loop bounds not checked for i == count",
+      "items[i].start < last->end boundary not checked for i == last",
+      "items[i].end > last->end boundary not checked for i == last",
+      "i < count loop not checked for i == count",
+      "i < merged loop not checked for i == merged",
+      "x->start > y->start boundary not checked for x == y"
+    ],
+    "recommended_test_dimensions": [
+      "n=1, single interval",
+      "n=2, adjacent intervals [0,1] and [1,2]",
+      "n=2, overlapping intervals [0,2] and [1,3]",
+      "n=10000, all intervals identical",
+      "n=10000, all intervals disjoint",
+      "n=10000, all intervals [0,10000]",
+      "n=10000, intervals [0,1] and [10000,10001]",
+      "n=10000, intervals [0,1] and [1,10000]"
+    ]
+  },
+  "submission_derived_contract_entries_removed": [
+    {
+      "entry": "stdin contains an integer n followed by n lines of 'start end' pairs. Each line has two integers. All integers are non-negative. n is between 1 and 10000. start and end are between 0 and 10000.",
+      "field": "input_format",
+      "submission_terms": "two"
+    },
+    {
+      "entry": "First line is the number of merged intervals. Each subsequent line is 'start end' for a merged interval, sorted by start value. If start values are equal, sort by end value.",
+      "field": "output_format",
+      "submission_terms": "equal"
+    },
+    {
+      "entry": "If no intervals are provided (n=0), output 0 and a blank line (or just 0 depending on strictness, but typically 0 with no lines if n=0 is allowed; here n>=1 so",
+      "field": "semantics",
+      "submission_terms": "allow"
+    }
+  ],
+  "submission_syntax_tree": {
+    "allocations_never_freed": [],
+    "branch_conditions": [
+      {
+        "condition": "x->start != y->start",
+        "line": 13
+      },
+      {
+        "condition": "items[i].start < last->end",
+        "line": 28
+      },
+      {
+        "condition": "items[i].end > last->end",
+        "line": 29
+      },
+      {
+        "condition": "(scanf(\"%d\", &count) != 1) || (count < 1)",
+        "line": 42
+      },
+      {
+        "condition": "(items == NULL) || (out == NULL)",
+        "line": 47
+      },
+      {
+        "condition": "scanf(\"%d %d\", &items[i].start, &items[i].end) != 2",
+        "line": 53
+      }
+    ],
+    "called_functions": [
+      "free",
+      "malloc",
+      "merge_intervals",
+      "printf",
+      "qsort",
+      "scanf"
+    ],
+    "complexity_hint": "O(n) from loop nesting including called functions. This is a structural upper bound, not a proof: amortized loops (monotonic stacks or deques, two pointers) nest syntactically but run in O(n) overall.",
+    "edge_case_targets": [
+      {
+        "detail": "i < count",
+        "kind": "loop_comparison_boundary",
+        "line": 26,
+        "suggestion": "inputs where i equals count and differs by one on each side"
+      },
+      {
+        "detail": "items[i].start < last->end",
+        "kind": "loop_comparison_boundary",
+        "line": 28,
+        "suggestion": "inputs where items[i].start equals last->end and differs by one on each side"
+      },
+      {
+        "detail": "items[i].end > last->end",
+        "kind": "loop_comparison_boundary",
+        "line": 29,
+        "suggestion": "inputs where items[i].end equals last->end and differs by one on each side"
+      },
+      {
+        "detail": "i < count",
+        "kind": "loop_comparison_boundary",
+        "line": 52,
+        "suggestion": "inputs where i equals count and differs by one on each side"
+      },
+      {
+        "detail": "i < merged",
+        "kind": "loop_comparison_boundary",
+        "line": 61,
+        "suggestion": "inputs where i equals merged and differs by one on each side"
+      },
+      {
+        "detail": "x->start > y->start",
+        "kind": "comparison_boundary",
+        "line": 14,
+        "suggestion": "inputs where x->start equals y->start and differs by one on each side"
+      },
+      {
+        "detail": "x->start < y->start",
+        "kind": "comparison_boundary",
+        "line": 14,
+        "suggestion": "inputs where x->start equals y->start and differs by one on each side"
+      },
+      {
+        "detail": "x->end > y->end",
+        "kind": "comparison_boundary",
+        "line": 16,
+        "suggestion": "inputs where x->end equals y->end and differs by one on each side"
+      },
+      {
+        "detail": "x->end < y->end",
+        "kind": "comparison_boundary",
+        "line": 16,
+        "suggestion": "inputs where x->end equals y->end and differs by one on each side"
+      },
+      {
+        "detail": "count < 1",
+        "kind": "comparison_boundary",
+        "line": 42,
+        "suggestion": "inputs where count equals 1 and differs by one on each side"
+      },
+      {
+        "detail": "for (i < count)",
+        "kind": "loop_bounds",
+        "line": 26,
+        "suggestion": "zero iterations, exactly one iteration, and the maximum size allowed by the assignment"
+      },
+      {
+        "detail": "for (i < count)",
+        "kind": "loop_bounds",
+        "line": 52,
+        "suggestion": "zero iterations, exactly one iteration, and the maximum size allowed by the assignment"
+      },
+      {
+        "detail": "for (i < merged)",
+        "kind": "loop_bounds",
+        "line": 61,
+        "suggestion": "zero iterations, exactly one iteration, and the maximum size allowed by the assignment"
+      },
+      {
+        "detail": "count < 1",
+        "kind": "constant_boundary",
+        "line": 42,
+        "suggestion": "values 0, 1 and 2 for the compared quantity"
+      },
+      {
+        "detail": "scanf(\"%d\", &count) != 1",
+        "kind": "constant_boundary",
+        "line": 42,
+        "suggestion": "values 0, 1 and 2 for the compared quantity"
+      },
+      {
+        "detail": "scanf(\"%d %d\", &items[i].start, &items[i].end) != 2",
+        "kind": "constant_boundary",
+        "line": 53,
+        "suggestion": "values 1, 2 and 3 for the compared quantity"
+      }
+    ],
+    "effective_loop_depth": 1,
+    "fixed_arrays": [],
+    "functions": [
+      {
+        "calls": [],
+        "line_end": 16,
+        "line_start": 9,
+        "name": "compare_by_start",
+        "params": [
+          "void * a",
+          "void * b"
+        ],
+        "recursive": false,
+        "returns": "int"
+      },
+      {
+        "calls": [
+          "qsort"
+        ],
+        "line_end": 36,
+        "line_start": 21,
+        "name": "merge_intervals",
+        "params": [
+          "Interval * items",
+          "int count",
+          "Interval * out"
+        ],
+        "recursive": false,
+        "returns": "int"
+      },
+      {
+        "calls": [
+          "free",
+          "malloc",
+          "merge_intervals",
+          "printf",
+          "scanf"
+        ],
+        "line_end": 66,
+        "line_start": 39,
+        "name": "main",
+        "params": [],
+        "recursive": false,
+        "returns": "int"
+      }
+    ],
+    "input_calls": [
+      {
+        "format": "\"%d\"",
+        "function": "main",
+        "line": 42,
+        "loop_depth": 0,
+        "name": "scanf",
+        "result_checked": true
+      },
+      {
+        "format": "\"%d %d\"",
+        "function": "main",
+        "line": 53,
+        "loop_depth": 1,
+        "name": "scanf",
+        "result_checked": true
+      }
+    ],
+    "integer_divisions": [],
+    "loops": [
+      {
+        "condition": "i < count",
+        "depth": 1,
+        "kind": "for",
+        "line": 26
+      },
+      {
+        "condition": "i < count",
+        "depth": 1,
+        "kind": "for",
+        "line": 52
+      },
+      {
+        "condition": "i < merged",
+        "depth": 1,
+        "kind": "for",
+        "line": 61
+      }
+    ],
+    "max_loop_depth": 1,
+    "narrow_accumulators": [],
+    "status": "completed",
+    "uses_after_free": []
+  },
+  "test_cases": [
+    {
+      "description": "Statement example.",
+      "expected": "3\n1 6\n8 10\n15 18\n",
+      "id": "instructor-leetcode-sample",
+      "input": "4\n8 10\n1 3\n2 6\n15 18\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "memory_safety"
+      ]
+    },
+    {
+      "description": "Intervals inside a larger one.",
+      "expected": "1\n1 10\n",
+      "id": "instructor-nested",
+      "input": "3\n1 10\n2 3\n4 8\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "description": "No overlaps; output must be sorted.",
+      "expected": "3\n0 2\n10 12\n20 25\n",
+      "id": "instructor-disjoint-unsorted",
+      "input": "3\n20 25\n0 2\n10 12\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "description": "Seeded random intervals.",
+      "expected": "10\n0 56\n61 67\n75 76\n84 88\n89 90\n95 108\n112 115\n117 130\n139 155\n163 200\n",
+      "id": "instructor-random-40",
+      "input": "40\n3 16\n44 56\n153 154\n174 187\n30 44\n139 151\n19 34\n34 34\n142 155\n27 28\n199 200\n75 76\n63 65\n121 130\n15 19\n117 123\n24 27\n112 115\n180 184\n118 121\n95 96\n16 16\n0 4\n20 33\n31 34\n125 126\n95 103\n144 150\n33 42\n84 88\n61 67\n89 90\n97 108\n189 189\n126 129\n190 199\n1 14\n163 176\n64 66\n178 191\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "description": "One interval.",
+      "expected": "1\n5 7\n",
+      "id": "instructor-single",
+      "input": "1\n5 7\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Shared endpoint must merge (closed intervals).",
+      "expected": "1\n1 5\n",
+      "id": "instructor-touching-pair",
+      "input": "2\n1 4\n4 5\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Chain of touching intervals.",
+      "expected": "2\n1 4\n6 7\n",
+      "id": "instructor-touching-chain",
+      "input": "4\n1 2\n2 3\n3 4\n6 7\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Identical intervals.",
+      "expected": "1\n3 6\n",
+      "id": "instructor-duplicates",
+      "input": "3\n3 6\n3 6\n3 6\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Zero-length intervals; 5 and 6 do not touch.",
+      "expected": "2\n5 5\n6 6\n",
+      "id": "instructor-points",
+      "input": "3\n5 5\n5 5\n6 6\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Bounds of the coordinate range.",
+      "expected": "1\n0 10000\n",
+      "id": "instructor-full-range",
+      "input": "3\n0 10000\n100 200\n9999 10000\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Single interval.",
+      "expected": "1\n0 0\n",
+      "id": "instructor-memory-single",
+      "input": "1\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "memory_safety"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 100\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-single_interval",
+      "input": "1\n0 100",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 2\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-adjacent_intervals",
+      "input": "2\n0 1\n1 2",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 5\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-overlapping_intervals",
+      "input": "2\n0 5\n2 4",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 3\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-boundary_overlap",
+      "input": "2\n0 2\n1 3",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 5\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-zero_start",
+      "input": "2\n0 5\n0 3",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 0\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-zero_end",
+      "input": "2\n0 0\n0 0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "10\n0 1\n2 3\n4 5\n6 7\n8 9\n10 11\n12 13\n14 15\n16 17\n18 19\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-large_n_disjoint",
+      "input": "10\n0 1\n2 3\n4 5\n6 7\n8 9\n10 11\n12 13\n14 15\n16 17\n18 19\n20 21",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n0 10\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-large_n_overlapping",
+      "input": "10\n0 10\n0 9\n0 8\n0 7\n0 6\n0 5\n0 4\n0 3\n0 2\n0 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n1 7\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-mixed_overlap",
+      "input": "4\n1 5\n2 4\n3 6\n4 7",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n1 4\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-equal_starts",
+      "input": "3\n1 2\n1 3\n1 4",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    }
+  ]
+}

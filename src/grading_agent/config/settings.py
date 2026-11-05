@@ -122,6 +122,10 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 GRADIO_STAGING_DIR = PROJECT_ROOT / ".gradio_runs"
 GRADIO_REPORTS_DIR = REPORTS_DIR / "gradio"
 FORM_AI_GRADIO_RUNS_DIR = PROJECT_ROOT / "benchmark" / "gradio_runs"
+# Downloaded FormAI archives and their per-program SQLite index (one folder per version).
+FORM_AI_DATA_ROOT = Path(os.getenv("FORM_AI_DATA_ROOT", str(PROJECT_ROOT / "resources")))
+# Each stratified benchmark run writes its sample, predictions and evaluation here.
+FORM_AI_RUNS_DIR = REPORTS_DIR / "formai"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FORMAT_APP = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 LOG_FORMAT_BENCHMARK = "%(asctime)s | %(levelname)s | %(message)s"
@@ -263,7 +267,7 @@ FORM_AI_LINE_TOLERANCE = _env_int("FORM_AI_LINE_TOLERANCE", 2)
 FORM_AI_DEFAULT_MAX_SAMPLES = None  # CLI default: evaluate the complete supplied split.
 FORM_AI_GRADIO_SAMPLE_SEED = _env_int("FORM_AI_GRADIO_SAMPLE_SEED", SEED)
 FORM_AI_GRADIO_DEFAULT_SAMPLE_COUNT = _env_int("FORM_AI_GRADIO_DEFAULT_SAMPLE_COUNT", 0)  # 0 = all
-FORM_AI_PREDICTION_MODES = ("tools_only", "llm_only", "hybrid", "hybrid_rsi")
+FORM_AI_PREDICTION_MODES = ("tools_only", "llm_only", "hybrid", "hybrid_verify", "hybrid_rsi")
 FORM_AI_RSI_METRIC_DEFAULTS = (
     ("structure", "cppcheck_source", 0.5),
     ("memory_safety", "llm_source_audit", 0.5),
@@ -349,3 +353,6 @@ FORM_AI_SPLIT_OUTPUT_DIR = "benchmark/splits"
 FORM_AI_EVALUATION_OUTPUT = "reports/formai-evaluation.json"
 
 UI_DEFAULT_BENCHMARK_MODE = "hybrid_rsi"
+# Slider range for the stratified FormAI benchmark tab (the CLI accepts any size).
+FORM_AI_UI_MAX_SAMPLES = _env_int("FORM_AI_UI_MAX_SAMPLES", 1000)
+FORM_AI_UI_DEFAULT_SAMPLES = _env_int("FORM_AI_UI_DEFAULT_SAMPLES", 20)
