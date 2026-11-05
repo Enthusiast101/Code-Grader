@@ -1,0 +1,71 @@
+[
+  {
+    "expected": "1.00\n",
+    "id": "instructor-negative-values",
+    "input": "4\n-2 -1 2 5\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "7.00\n",
+    "id": "instructor-single-value",
+    "input": "1\n7\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1000000000.00\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-boundary_sum",
+    "input": "1\n1000000000",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary_sum",
+      "loop_bounds"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "-2147483648.00\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-b2-large_negative",
+    "input": "1\n-2147483648",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary_sum",
+      "large_negative",
+      "overflow_check"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "0.00\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-empty_input",
+    "input": "1\n0",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary_sum",
+      "empty_input",
+      "zero_values"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "0.00\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-zero_values",
+    "input": "10\n0 0 0 0 0 0 0 0 0 0",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary_sum",
+      "empty_input",
+      "zero_values"
+    ]
+  }
+]

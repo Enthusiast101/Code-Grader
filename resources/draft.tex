@@ -5,61 +5,48 @@
 % =========================================================
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{microtype}                % better justification and spacing
+\usepackage{microtype}
 \usepackage{cite}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
+\usepackage[table]{xcolor}            % load before tikz to avoid an option clash
 \usepackage{tikz}
-\usetikzlibrary{positioning,fit,backgrounds,arrows.meta}
-\usepackage[table]{xcolor}
+\usetikzlibrary{positioning,fit,backgrounds,arrows.meta,patterns}
+\usepackage{svg}   % SVG icons in Fig. 1: compile with --shell-escape and Inkscape (Overleaf has both)
+\svgsetup{inkscapelatex=false}
+\newcommand{\ico}[1]{\raisebox{-0.28\height}{\includesvg[height=0.42cm]{icons/#1}}}
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{array}
 \usepackage{enumitem}
 \usepackage{listings}
-\usepackage{balance}                  % balances the last page's columns
+\usepackage{balance}
 \usepackage{url}
 \usepackage[colorlinks=true,linkcolor=navy,citecolor=navy,urlcolor=navy]{hyperref}
 
-% -------------------- COLORS --------------------
 \definecolor{navy}{RGB}{25,55,95}
 \definecolor{rowgray}{gray}{0.94}
 \definecolor{headgray}{gray}{0.86}
 
-% -------------------- LISTS --------------------
+\lstset{basicstyle=\ttfamily\footnotesize, backgroundcolor=\color{black!4},
+  frame=single, rulecolor=\color{black!20}, breaklines=true,
+  columns=fullflexible, keepspaces=true, showstringspaces=false,
+  aboveskip=5pt, belowskip=5pt}
+
 \setlist{leftmargin=*, topsep=3pt, partopsep=0pt, itemsep=1.5pt, parsep=0pt}
 \setlist[enumerate,1]{label=\arabic*.}
 
-% -------------------- URL BREAKING --------------------
 \makeatletter
 \g@addto@macro\UrlBreaks{\do\/\do\-\do\_\do\.}
 \makeatother
 \Urlmuskip=0mu plus 1mu
 
-% -------------------- TABLES --------------------
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
-\renewcommand{\arraystretch}{1.18}
+\renewcommand{\arraystretch}{1.15}
 \setlength{\tabcolsep}{4pt}
 
-% -------------------- CODE BLOCKS --------------------
-\lstset{
-  basicstyle=\ttfamily\footnotesize,
-  backgroundcolor=\color{black!4},
-  frame=single,
-  rulecolor=\color{black!20},
-  breaklines=true,
-  columns=fullflexible,
-  keepspaces=true,
-  showstringspaces=false,
-  xleftmargin=2pt,
-  xrightmargin=2pt,
-  aboveskip=5pt,
-  belowskip=5pt
-}
-
-% -------------------- GENERAL SPACING --------------------
 \setlength{\emergencystretch}{1.5em}
 \setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
 \setlength{\floatsep}{8pt plus 2pt minus 2pt}
@@ -71,137 +58,236 @@
 
 \begin{document}
 
-% =========================================================
-% TITLE
-% =========================================================
 \title{Code Checking Assistant: An Automated Code Grading System}
 
 \author{
 \IEEEauthorblockN{Gaurav Chandel}
 \IEEEauthorblockA{\textit{Roll No.\ 2611MC17}\\
-\textit{Dept.\ of Computer Science \& Engineering}\\
-\textit{Indian Institute of Technology Patna}}
+\textit{Dept.\ of CSE, IIT Patna}}
 \and
 \IEEEauthorblockN{Prajodeep Patil}
 \IEEEauthorblockA{\textit{Roll No.\ 2611MC11}\\
-\textit{Dept.\ of Computer Science \& Engineering}\\
-\textit{Indian Institute of Technology Patna}}
+\textit{Dept.\ of CSE, IIT Patna}}
 \and
 \IEEEauthorblockN{Aditya Sharma}
 \IEEEauthorblockA{\textit{Roll No.\ 2611CS11}\\
-\textit{Dept.\ of Computer Science \& Engineering}\\
-\textit{Indian Institute of Technology Patna}}
+\textit{Dept.\ of CSE, IIT Patna}}
 \and
 \IEEEauthorblockN{Anshul Kaushal}
 \IEEEauthorblockA{\textit{Roll No.\ 2611AI10}\\
-\textit{Dept.\ of Computer Science \& Engineering}\\
-\textit{Indian Institute of Technology Patna}}
+\textit{Dept.\ of CSE, IIT Patna}}
 }
 
 \maketitle
 
 % =========================================================
-% ABSTRACT
-% =========================================================
 \begin{abstract}
-The Code Checking Assistant is a Python system for automated assessment of C
-programming submissions. An instructor supplies a \texttt{rules.json} file with
-the assignment statement, a problem contract, and weighted metrics (nine by
-default) worth 100 points in total. The submission is compiled and executed in a locked-down Docker
-sandbox, where independent analyzers collect evidence: GCC diagnostics,
-\texttt{cppcheck}, input/output and edge-case tests, Valgrind Memcheck,
-AddressSanitizer/UndefinedBehaviorSanitizer, runtime profiles, syntax-tree facts
-from \texttt{pycparser}, source metrics, and token-shingle similarity. When the
-instructor's tests are not enough, the system generates more test inputs and
-computes their expected outputs by running a reference program in the sandbox:
-the instructor's solution when one is given, otherwise a program the model writes
-from the assignment and that must reproduce the instructor's cases. A local Qwen3.5-2B model served by \texttt{llama.cpp} describes the
-program, runs up to three recursive self-improvement (RSI) review passes that
-must cite a deterministic evidence ledger, and rates (0--10) only the metrics
-that no executed test or analyzer measured. Python converts the ratings to points
-and computes the grade. Executed test pass rates and completed analyzers are
-authoritative, and a metric without evidence is reported as unmeasured instead of
-being given a neutral or zero score. Requests run at temperature 0 with a fixed
-seed and no prompt cache, and generated test suites are frozen by fingerprint.
-On a stratified 600-program FormAI-v2 sample, the static-tool detector reaches
-63.3\% recall, 95.7\% specificity, and 93.6\% precision, and we report smaller
-LLM-assisted runs with confidence intervals. The source code is available at
+The Code Checking Assistant grades C programming assignments automatically. The
+instructor writes a \texttt{rules.json} file with the task, the input limits, and
+weighted metrics worth 100 points. The student program is compiled and run in a
+locked-down Docker container, where tools collect evidence: compiler warnings,
+\texttt{cppcheck}, test results, Valgrind, sanitizers, syntax-tree checks, code
+metrics, and similarity. The system can also generate new tests and computes
+their expected outputs by running a reference program. A small local language
+model (Qwen3.5-2B) explains the program, reviews it in up to three
+self-improvement (RSI) passes that must cite the collected evidence, and rates
+only the metrics that no test or tool measured. Python computes the final grade,
+and measured results always take priority. On a 600-program sample of the
+FormAI-v2 dataset, the static tools reach 63.3\% recall, 95.7\% specificity, and
+93.6\% precision. On 20 programs tested in all five detection modes, the LLM
+modes raise recall from 40\% to 90\% but also flag most safe programs, and RSI
+makes the findings more precise (76.5\% on labelled lines, against 41.2\% for
+the LLM alone). The code is available at
 \url{https://github.com/Enthusiast101/Code-Grader}.
 \end{abstract}
 
 \begin{IEEEkeywords}
-automated grading, C programming, Docker sandbox, Valgrind, sanitizers, local LLM,
-test generation, FormAI dataset, vulnerability detection
+automated grading, C programming, Docker sandbox, local LLM, test generation,
+FormAI, vulnerability detection
 \end{IEEEkeywords}
 
 % =========================================================
-% I. INTRODUCTION
-% =========================================================
 \section{Introduction}
-
-\subsection{Background}
-Programming assignments are commonly evaluated by compiling programs, executing
-test cases, checking coding requirements, and assessing solution quality. Manual
-evaluation takes considerable time, particularly for large numbers of
-submissions. The Code Checking Assistant automates much of this process. It
-accepts a student C program and instructor-defined grading rules, runs the
-configured checks, calculates a score out of 100, and writes a structured JSON
-report and a student-facing text report.
-
-The approach combines conventional program analysis with a locally hosted
-language model. Conventional tools compile, execute, and analyze the program, and
-their measurements decide every metric they can measure. The language model
-explains the evidence, finds defects that the tools do not report, and rates the
-qualitative metrics (such as readability) that no tool measures directly.
+Grading programming assignments by hand is slow and can be inconsistent. A
+grader must compile each program, run tests, look for memory errors, and judge
+code quality. The Code Checking Assistant automates these steps for C programs.
+It takes a student program and the instructor's rules, runs the checks, and
+produces a score out of 100 with a JSON report and a readable text report.
 
 \subsection{Problem Statement}
-Manual checking of C assignments is time-consuming and can lead to inconsistent
-feedback. A useful automated system should identify compilation errors, detect
-execution and memory errors, evaluate the configured requirements, and give the
-same score each time the same submission is graded. The main challenges are to
-automate these tasks without letting student programs affect the host machine,
-and to use a language model without letting unsupported model claims change the
-grade.
+An automatic grader should find compile errors, wrong outputs, and memory
+errors, check the instructor's requirements, and give the same score every time
+it grades the same program. There are two main difficulties. First, student code must never harm the host
+machine, so all compiling and running must happen in a sandbox. Second, a
+language model can help, but an unsupported model claim must never change a
+grade. Our approach is that tools measure everything they can, and the model only
+fills the gaps.
 
-\subsection{Project Objectives}
-The project builds an automated C-code grader that:
+\subsection{Objectives}
+The project builds a grader that:
 \begin{enumerate}
-    \item accepts a student C source file and an instructor \texttt{rules.json} with weighted metrics, limits, and test files;
-    \item compiles and executes the submission inside a restricted Docker sandbox;
-    \item checks correctness with instructor tests and with generated tests whose expected outputs come from executing a reference program;
-    \item collects compiler, static-analysis, sanitizer, Valgrind, runtime, structural, and similarity evidence;
-    \item records every fact in an evidence ledger with stable IDs, and keeps raw tool logs in the report;
-    \item uses a local LLM for program understanding, a bounded RSI defect review, and rubric ratings of metrics that have no measured score;
-    \item calculates the final grade in Python, with measured results taking precedence over model ratings;
-    \item produces reproducible JSON and text reports; and
-    \item measures vulnerability detection against the FormAI-v2 dataset.
+  \item accepts a C program and an instructor \texttt{rules.json} with weighted
+        metrics, limits, and test files;
+  \item compiles and runs the program inside a restricted Docker container;
+  \item checks correctness with instructor tests and with generated tests whose
+        expected outputs come from running a reference program;
+  \item collects compiler, static-analysis, sanitizer, Valgrind, runtime,
+        structure, and similarity evidence;
+  \item stores every fact in an evidence ledger with fixed IDs, and keeps the raw
+        tool logs;
+  \item uses a local LLM to explain the program, to review it in a few bounded
+        passes, and to rate only the metrics that no tool measured;
+  \item computes the grade in Python, with measured results taking priority;
+        and
+  \item measures how well it finds vulnerabilities on the FormAI-v2 dataset.
 \end{enumerate}
 
 % =========================================================
-% II. ARCHITECTURE
-% =========================================================
-\section{System Architecture}
+\section{System Overview}
 
-\subsection{Overview}
-The system is organized around a Python coordinator
-(\path{grading_agent/main.py}) and independent analyzer modules registered in an
-analyzer registry. A grading run proceeds as follows:
-\begin{enumerate}
-    \item \textbf{Rule loading:} \path{rule_loader.py} validates \texttt{rules.json}: assignment statement, problem contract, time and memory limits, metric names, analyzers, weights, point caps, and test-file paths.
-    \item \textbf{Sandbox and preflight:} a Docker container is started, tool versions are recorded, and the submission is compiled once and smoke-run on one test. A compile failure or crash marks execution metrics as inconclusive.
-    \item \textbf{Test suite:} instructor test files are loaded, and generated tests are added when enabled (Section~\ref{sec:testgen}).
-    \item \textbf{Analyzers:} each enabled metric's analyzer runs independently. An analyzer failure becomes an \texttt{unavailable} record for that metric and does not stop the other analyzers.
-    \item \textbf{Evidence ledger:} analyzer output, syntax-tree facts, and source lines become ledger entries with stable IDs.
-    \item \textbf{LLM review:} program understanding, up to three RSI passes, deterministic prevalidation, model adjudication, and rubric ratings.
-    \item \textbf{Scoring and reporting:} Python picks each metric's score by evidence priority, sums the points, and writes the JSON and text reports.
-\end{enumerate}
-A Gradio interface (\path{ui/app.py}) wraps this pipeline in two tabs:
-\emph{Grade a C submission}, with separate \emph{Generate Test Cases} and
-\emph{Grade Submission} actions, and \emph{FormAI benchmark}. A command-line
-entry point (\path{grade.py}) runs the same pipeline.
+Fig.~\ref{fig:flow} shows the two ways the system is used. In \emph{grading
+mode}, the steps run in this order: the rule loader checks the rules, the
+program's syntax tree (AST) is built, the program is compiled in the sandbox,
+the test suite is prepared, the analyzers run, their results go into the
+evidence ledger, the LLM reviews the program, and Python computes the score. The
+AST facts are used by test generation, the ledger, and the LLM. In
+\emph{benchmark mode}, FormAI programs are given to the predictor as source code
+only, and the true labels are read only after every prediction is saved. Both modes can be run from
+a Gradio web interface or from the command line.
+
+\begin{figure*}[!t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize\ttfamily,
+  >={Stealth[length=5pt]},
+  node distance=0.55cm,
+  % hatched pastel box, in the style of the original sketch
+  hbox/.style={draw=black!80, thick, align=center, minimum height=0.9cm, inner sep=5pt,
+               preaction={fill=#1!8}, pattern=north east lines, pattern color=#1!30},
+  hbox/.default=gray,
+  flow/.style={->, thick, draw=black!80},
+  dashed arrow/.style={->, thick, dashed, draw=black!45},
+  lbl/.style={font=\scriptsize\ttfamily, text=black!70},
+  mode/.style={font=\small\bfseries\ttfamily, text=black!55},
+]
+\coordinate (c)  at (0,0);     % grading spine
+\coordinate (lx) at (-3.3,0);  % static column
+\coordinate (rx) at (3.3,0);   % dynamic column
+\coordinate (bx) at (-10.3,0); % benchmark lane
+
+% =============== Grading mode ===============
+\node[hbox=orange, minimum width=2.8cm] (start) at (c) {\ico{start}\hspace{5pt}Start};
+\node[mode, above=3pt of start] {Grading mode};
+\node[hbox=teal, text width=4.6cm, below=of start] (input)
+  {\ico{rules}\hspace{5pt}\textbf{rules.json} + C code\\[-1pt]{\scriptsize + test files, optional reference solution}};
+\node[hbox=blue, text width=4.6cm, below=of input] (loader)
+  {\ico{loader}\hspace{5pt}\textbf{Rule loader}\\[-1pt]{\scriptsize validates rules; weights $w_i$ sum to 1}};
+\node[hbox=blue, text width=4.6cm, below=of loader] (sand)
+  {\ico{sandbox}\hspace{5pt}\textbf{Docker sandbox}\\[-1pt]{\scriptsize no network, read-only; preflight compile + smoke run}};
+\node[hbox=cyan, text width=3.4cm, left=0.8cm of sand] (ast)
+  {\ico{ast}\hspace{5pt}\textbf{Syntax tree (AST)}\\[-1pt]{\scriptsize pycparser: functions, loops, comparisons, I/O, malloc/free, arrays}};
+\node[hbox=yellow, text width=5.2cm, anchor=north] (suite) at ([yshift=-1.0cm]sand.south -| rx)
+  {\ico{tests}\hspace{5pt}\textbf{Test suite}\\[-1pt]{\scriptsize instructor tests + generated inputs (LLM, AST boundary cases); expected outputs from a reference program; frozen}};
+
+\node[hbox=red, text width=4.8cm, below=of suite] (dynamic)
+  {\ico{dynamic}\hspace{5pt}\textbf{Dynamic Analyzers}\\[-1pt]{\scriptsize run every test in the sandbox}};
+\node[hbox=red, text width=4.8cm] (static) at (lx |- dynamic)
+  {\ico{static}\hspace{5pt}\textbf{Static Analyzers}\\[-1pt]{\scriptsize read the source only}};
+
+\node[hbox=blue, text width=4.8cm, align=left, minimum height=2.55cm, anchor=north] (slist) at ([yshift=-0.55cm]static.south)
+  {1. Syntax {\scriptsize(GCC warnings)$^{*}$}\\
+   2. Structure {\scriptsize(cppcheck)$^{*\dagger}$}\\
+   3. Modularity$^{\dagger}$\\
+   4. Complexity {\scriptsize(lizard)$^{\dagger}$}\\
+   5. Readability$^{\dagger}$\\
+   6. Similarity {\scriptsize(token shingles)}};
+\node[hbox=blue, text width=4.8cm, align=left, minimum height=2.55cm, anchor=north] (dlist) at ([yshift=-0.55cm]dynamic.south)
+  {1. Correctness {\scriptsize(I/O tests)}\\
+   2. Logical {\scriptsize(edge cases)}\\
+   3. Memory safety\\
+   \hspace*{1.2em}{\scriptsize -fanalyzer, Valgrind, ASan/UBSan}\\
+   4. Runtime profile {\scriptsize(optional)}};
+
+\node[hbox=gray, text width=7.6cm, anchor=north] (ledger) at ([yshift=-0.7cm]slist.south -| c)
+  {\ico{logs}\hspace{5pt}\textbf{Evidence ledger}\\[-1pt]{\scriptsize stable IDs for failed tests, tool findings, AST facts and source lines; raw logs kept}};
+\node[hbox=violet, text width=6.6cm, below=0.7cm of ledger] (llm)
+  {\ico{llm}\hspace{5pt}\textbf{LLM review} {\scriptsize(Qwen3.5-2B, temperature 0)}\\[-1pt]
+   {\scriptsize understanding $\rightarrow$ RSI $\rightarrow$ prevalidation $\rightarrow$ adjudication $\rightarrow$ 0-10 levels for $\dagger$ metrics only}};
+\node[hbox=yellow, text width=3.2cm, right=2.4cm of llm] (rsi)
+  {\ico{rsi}\hspace{5pt}\textbf{Evidence-based RSI}\\[-1pt]{\scriptsize at most 3 passes; stops at a fixed point}};
+\node[hbox=magenta, text width=6.6cm, below=0.8cm of llm] (score)
+  {\ico{score}\hspace{5pt}\textbf{Deterministic final score}\\[1pt]
+   $G = 100\sum_i w_i\, s_i$\\[-1pt]{\scriptsize measured scores first; any unmeasured metric $\Rightarrow$ no grade}};
+\node[hbox=green, text width=5.6cm, below=of score] (report)
+  {\ico{report}\hspace{5pt}\textbf{Final report}\\[-1pt]{\scriptsize JSON + text: points and their origin, findings, hashes}};
+
+% =============== Benchmark mode (left lane) ===============
+\node[hbox=gray, text width=3.2cm] (formai) at (bx |- input)
+  {\ico{dataset}\hspace{5pt}\textbf{FormAI-v2}\\[-1pt]{\scriptsize ESBMC-labelled C programs}};
+\node[mode] at (bx |- start) {Benchmark mode};
+\node[hbox=gray, text width=3.2cm] (index) at (bx |- sand)
+  {\textbf{SQLite index}\\[-1pt]{\scriptsize stratified sample (label $\times$ family), fixed seed}};
+\node[hbox=violet, text width=3.2cm] (pred) at (bx |- slist)
+  {\ico{llm}\hspace{5pt}\textbf{Predictor}\\[-1pt]{\scriptsize source only: cppcheck + AST checks, LLM audit, RSI check (hybrid\_rsi)}};
+\node[hbox=green, text width=3.2cm] (eval) at (bx |- score)
+  {\ico{chart}\hspace{5pt}\textbf{FormAI evaluation}\\[-1pt]{\scriptsize precision, recall, F1, specificity; $\pm$2-line location}};
+
+% =============== Arrows: grading ===============
+\draw[flow] (start) -- (input);
+\draw[flow] (input) -- (loader);
+\draw[flow] (loader) -- (sand);
+\draw[flow] (loader.west) -| (ast.north);
+\coordinate (fork) at ([yshift=-0.5cm]sand.south);
+\draw[flow] (sand.south) -- (fork) -| (static.north);
+\draw[flow] (fork) -| (suite.north);
+\draw[flow] (suite) -- (dynamic);
+\draw[flow] (static) -- (slist);
+\draw[flow] (dynamic) -- (dlist);
+\draw[flow] (slist.south) -- (slist.south |- ledger.north);
+\draw[flow] (dlist.south) -- (dlist.south |- ledger.north);
+\coordinate (astx) at ([xshift=-0.4cm]ast.west);
+\draw[flow] (ast.west) -- (astx) |- node[pos=0.8, above, lbl] {AST facts} (ledger.172);
+\draw[flow] (ledger) -- (llm);
+\draw[flow] (llm) -- node[right, lbl] {0-10 levels} (score);
+\draw[flow] (ledger.188) -- ++(-0.6,0) |- node[pos=0.25, left, lbl, align=right] {measured\\ scores} (score.west);
+\draw[flow] (score) -- (report);
+% RSI loop
+\draw[flow] ([yshift=5pt]llm.east) -- node[above, lbl] {findings + IDs} ([yshift=5pt]rsi.west);
+\draw[flow] ([yshift=-5pt]rsi.west) -- node[below, lbl] {revised} ([yshift=-5pt]llm.east);
+\draw[dashed arrow] (ledger.east) -| node[pos=0.3, above, lbl] {uncited evidence} (rsi.north);
+
+% =============== Arrows: benchmark ===============
+\draw[flow] (formai) -- (index);
+\draw[flow] (index) -- node[right, lbl] {source only} (pred);
+\draw[flow] (pred) -- node[right, lbl] {predictions} (eval);
+\draw[dashed arrow] (astx |- pred.east) -- node[above, lbl, align=center] {AST\\[-2pt] checks} (pred.east);
+\draw[dashed arrow] (index.west) -- ++(-0.5,0) |- node[pos=0.25, left, lbl, align=right] {ground truth,\\ read after all\\ predictions} (eval.west);
+\end{tikzpicture}%
+}
+\caption{System flowchart. \emph{Grading mode:} the rule loader validates the
+rules, the syntax tree (AST) is extracted, and the program is compiled in the
+Docker sandbox. Tests are then built and the analyzers run ($^{*}$: run inside
+the sandbox). All results go into the evidence ledger, which the LLM review and
+its RSI passes must cite. The LLM gives levels only for the metrics marked
+$\dagger$; all other scores come from tests and tools. The final score is
+$G=100\sum_i w_i s_i$, where $s_i\in[0,1]$ and $w_i=\text{points}_i/100$.
+\emph{Benchmark mode:} FormAI-v2 programs are sampled from the index and given
+to the predictor as source only; the labels are read only after all predictions
+are written.}
+\label{fig:flow}
+\end{figure*}
+
+A Python coordinator (\path{grading_agent/main.py}) runs the steps, and each
+analyzer is a separate module in an analyzer registry. If one analyzer fails, only
+its metric is marked \emph{unavailable}; the other analyzers still run. A Gradio
+web interface has two tabs. \emph{Grade a C submission} has separate
+\emph{Generate Test Cases} and \emph{Grade Submission} buttons, so the instructor
+can review the tests before grading. \emph{FormAI benchmark} runs the dataset
+evaluation. A command-line script (\path{grade.py}) runs the same pipeline.
 
 \subsection{Technologies Used}
-Table~\ref{tab:tech} lists the technology stack.
+Table~\ref{tab:tech} lists the main tools.
 
 \begin{table}[!t]
 \centering
@@ -214,255 +300,136 @@ Table~\ref{tab:tech} lists the technology stack.
 \rowcolor{headgray}
 \textbf{Technology} & \textbf{Purpose} \\
 \midrule
-Python 3.12 & Coordinator, analyzers, scoring, reporting, benchmark; managed with \texttt{uv}. \\
-Docker & Sandbox image \texttt{agent-sandbox:latest} (Debian slim with GCC, \texttt{cppcheck}, Valgrind), run as an unprivileged user. \\
-GCC & C11 compilation with \texttt{-Wall -Wextra -Wpedantic}; sanitizer builds. \\
-Valgrind Memcheck & Per-test leak and memory-error detection. \\
-ASan/UBSan & Per-test memory and undefined-behaviour detection. \\
+Python 3.12 & Coordinator, analyzers, scoring, reports, benchmark; packages managed with \texttt{uv}. \\
+Docker & Sandbox image \texttt{agent-sandbox:latest} (Debian slim with GCC, \texttt{cppcheck}, Valgrind). \\
+GCC & C11 compilation, warnings, \texttt{-fanalyzer}, and sanitizer builds. \\
+Valgrind & Memory errors and leaks for each test run. \\
+ASan/UBSan & Memory and undefined-behaviour errors for each test run. \\
 \texttt{cppcheck} & Static diagnostics for the structure metric and the benchmark. \\
-\texttt{pycparser} & Syntax-tree facts and safety-property checks. \\
-\texttt{lizard} & Cyclomatic complexity and function length (lexical fallback when unavailable). \\
-\texttt{llama.cpp} & \texttt{llama-server} (build b12005 or later) with JSON-schema constrained decoding. \\
-Qwen3.5-2B & Default local model, a 4-bit GGUF build. \\
+\texttt{pycparser} & Syntax tree (AST) facts and safety checks. \\
+\texttt{lizard} & Cyclomatic complexity and function length. \\
+\texttt{llama.cpp} & \texttt{llama-server} (build b12005 or later) with JSON-schema output. \\
+Qwen3.5-2B & Local language model, 4-bit GGUF build. \\
 Gradio & Web interface for grading and benchmarking. \\
-SQLite & Per-program index of the FormAI datasets. \\
+SQLite & Index of the FormAI datasets. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\subsection{External Reference Dataset: FormAI}
-FormAI \cite{formai,formaiv2,formairepo} contains AI-generated C programs labelled
-with the ESBMC bounded model checker \cite{esbmc}. The benchmark mainly uses
-FormAI-v2 (programs written by nine LLMs, verified with ESBMC~7.5); FormAI-v1
-(GPT-3.5 programs, ESBMC~7.3) is also supported. The published files contain one
-record per verified property, so \path{formai_dataset.py} downloads the archives,
-verifies their SHA-256 checksums, and builds a SQLite index with one row per
-program. A program is \textsc{vulnerable} if any record has an ESBMC
-counterexample, \textsc{safe} if every property was verified within the bound, and
-\textsc{unknown} otherwise. Time-outs and parse errors are not evidence of safety,
-so \textsc{unknown} programs are excluded. Of the 310,487 FormAI-v2 programs,
-192,713 are vulnerable, 25,674 safe, and 92,100 unknown, which leaves 218,387
-eligible programs. Each vulnerable line is mapped to one of nine families
-(input buffer overflow, NULL dereference, out of bounds, invalid pointer, memory
-leak, integer overflow, float overflow, division by zero, other).
-
-The archives are stored under \path{resources/} and are not committed. FormAI is
-used only for the security benchmark. It is not a grading-rule file and does not
-replace assignment test cases. Building the index never compiles or runs a FormAI
-program.
-
-\subsection{System Architecture and Project Flowchart}
-Fig.~\ref{fig:flow} shows the workflow. In grading mode, the instructor's rules,
-the student program, and the test cases go through the sandbox, the analyzers, the
-LLM review, and deterministic scoring. In benchmark mode, sampled FormAI sources go
-through the source-level detectors, and the labels are read only after every
-prediction has been written.
-
-\begin{figure*}[!t]
-\centering
-\colorlet{detfill}{navy!8}
-\colorlet{llmfill}{orange!18}
-\colorlet{llmdraw}{orange!70!black}
-\colorlet{datafill}{black!6}
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-  font=\scriptsize,
-  >={Stealth[length=4pt]},
-  box/.style={draw=navy, rounded corners=2pt, align=center, text width=2.5cm,
-              minimum height=1cm, inner sep=3pt, fill=detfill},
-  llm/.style={box, fill=llmfill, draw=llmdraw},
-  data/.style={box, fill=datafill, draw=black!50},
-  flow/.style={->, semithick, draw=black!75},
-  aux/.style={->, semithick, dashed, draw=black!55},
-  lane/.style={draw=black!30, rounded corners=4pt, inner sep=6pt, fill=black!2},
-  lanelabel/.style={font=\footnotesize\bfseries, text=navy, anchor=north west, inner sep=3pt},
-]
-% ---------------- Grading mode, row 1 (left to right) ----------------
-\node[data] (in) at (0,0)
-  {\textbf{Instructor inputs}\\ \texttt{rules.json}, \texttt{submission.c}, test files, optional reference solution};
-\node[box] (rules) at (3.3,0)
-  {\textbf{Rule loader}\\ validates contract, limits, analyzer parameters, 100-point caps};
-\node[box] (sand) at (6.6,0)
-  {\textbf{Docker sandbox}\\ no network, read-only root, CPU/memory/PID limits\\[1pt]
-   \textbf{Preflight}: compile + smoke run};
-\node[llm] (suite) at (9.9,0)
-  {\textbf{Test suite}\\ instructor tests + generated inputs; outputs from a reference program; frozen by fingerprint};
-\node[box, text width=3.4cm] (an) at (13.7,0)
-  {\textbf{Analyzers (one per metric)}\\[1pt]
-   \emph{Execution:} I/O tests, edge cases, Valgrind, ASan/UBSan, runtime\\[1pt]
-   \emph{Source:} GCC, \texttt{cppcheck}, \texttt{-fanalyzer}, syntax tree, modularity, complexity, readability, similarity};
-% ---------------- Grading mode, row 2 (right to left) ----------------
-\node[box, text width=3.4cm] (led) at (13.7,-3.1)
-  {\textbf{Evidence ledger}\\ stable IDs for test results, tool findings, syntax-tree facts, source lines};
-\node[llm, text width=3.1cm, align=left] (rev) at (9.9,-3.1)
-  {\textbf{LLM review}\\
-   1.~program understanding\\
-   2.~RSI, at most 3 passes\\
-   3.~Python prevalidation\\
-   4.~adjudication\\
-   5.~0--10 levels for unmeasured metrics};
-\node[box] (score) at (6.3,-3.1)
-  {\textbf{Deterministic scoring}\\ tests and analyzers first, LLM levels for the rest; unmeasured $\Rightarrow$ no grade};
-\node[data] (rep) at (2.9,-3.1)
-  {\textbf{Reports}\\ JSON + text: points, provenance, findings, hashes, timings};
-% ---------------- Shared local model ----------------
-\node[llm, text width=3.1cm] (model) at (9.9,-5.6)
-  {\textbf{Local LLM}\\ Qwen3.5-2B on \texttt{llama-server}; temperature 0, seed 42, JSON schema};
-% ---------------- Benchmark mode ----------------
-\node[data] (fa) at (0,-8.2)
-  {\textbf{FormAI-v2}\\ archives, SHA-256 verified};
-\node[box] (idx) at (3.3,-8.2)
-  {\textbf{SQLite index}\\ one row per program; \textsc{vulnerable} / \textsc{safe}; \textsc{unknown} excluded};
-\node[box] (samp) at (6.5,-8.2)
-  {\textbf{Stratified sample}\\ label $\times$ family, fixed seed, weight $N_h/n_h$};
-\node[llm, text width=3.1cm] (pred) at (9.9,-8.2)
-  {\textbf{Predictor (source only)}\\ \texttt{tools\_only}: \texttt{cppcheck} + syntax-tree checks;
-   \texttt{llm\_only}, \texttt{hybrid}, \texttt{hybrid\_verify}, \texttt{hybrid\_rsi}};
-\node[data, text width=3.4cm] (eval) at (13.7,-8.2)
-  {\textbf{Evaluation}\\ strict and population-weighted metrics, bootstrap 95\% CI, $\pm$2-line localization};
-% ---------------- Arrows ----------------
-\draw[flow] (in) -- (rules);
-\draw[flow] (rules) -- (sand);
-\draw[flow] (sand) -- (suite);
-\draw[flow] (suite) -- (an);
-\draw[flow] (an) -- node[right, font=\tiny, align=left] {results,\\ raw logs} (led);
-\draw[flow] (led) -- (rev);
-\draw[flow] (rev) -- (score);
-\draw[flow] (score) -- (rep);
-\draw[aux] (model.north) -- (rev.south);
-\draw[aux] (model.south) -- (pred.north);
-\node[font=\tiny, align=left, anchor=west] at (model.east) {also used by\\ test generation};
-\draw[flow] (fa) -- (idx);
-\draw[flow] (idx) -- (samp);
-\draw[flow] (samp) -- node[above, font=\tiny] {source} (pred);
-\draw[flow] (pred) -- (eval);
-\coordinate (lowY) at (0,-9.55);
-\draw[aux] (idx.south) -- (idx.south |- lowY)
-  -| node[pos=0.25, below, font=\tiny] {labels, read only after all predictions are written} (eval.south);
-% ---------------- Lanes ----------------
-\coordinate (laneAtop) at (0,1.6);
-\coordinate (laneBtop) at (0,-6.75);
-\coordinate (laneBbot) at (0,-9.95);
-\begin{scope}[on background layer]
-  \node[lane, fit=(in)(an)(rev)(rep)(laneAtop)] (laneA) {};
-  \node[lanelabel] at (laneA.north west) {Grading mode};
-  \node[lane, fit=(fa)(eval)(pred)(laneBtop)(laneBbot)] (laneB) {};
-  \node[lanelabel] at (laneB.north west) {Benchmark mode (FormAI-v2)};
-\end{scope}
-\end{tikzpicture}%
-}
-\caption{Workflow of the grading pipeline (top) and the FormAI benchmark (bottom).
-Blue boxes are deterministic, orange boxes call the local LLM, and grey boxes are
-data. Dashed arrows show the shared model and the labels, which are withheld until
-every prediction has been written.}
-\label{fig:flow}
-\end{figure*}
-
-\subsection{Local Model and Review Strategy}
-The LLM is a local Qwen3.5-2B model served by \texttt{llama-server} with an
-8192-token context. Every structured stage uses the server's
-\texttt{response\_format} JSON-schema mode, so the decoder can only emit
-schema-valid JSON. Requests use temperature 0, seed 42, and
-\texttt{cache\_prompt=false}, because reusing the KV cache changes batch
-boundaries and can change the output even at temperature 0. The application
-checks the server build before starting it (and \texttt{make check} runs the same
-test), because JSON-schema requests with Qwen
-templates need llama.cpp build b12005 or later. Source code and logs are always
-marked as data, not instructions.
-
-The model has three roles. It describes what the program does, finds defects
-during RSI, and rates metrics that no analyzer measured. It never sets the score
-of a metric that an executed test or a completed authoritative analyzer measured,
-and every finding must cite evidence IDs that exist in the ledger.
+\subsection{Local Model}
+The model is Qwen3.5-2B (4-bit GGUF) served by \texttt{llama-server} with an
+8192-token context. Every request uses temperature 0, seed 42, and no prompt
+cache. The prompt cache is turned off because reusing it can change the output
+even at temperature 0. Every answer must follow a JSON schema, so the server can
+only produce valid JSON. The application checks the server build before it
+starts, because JSON-schema output with Qwen needs build b12005 or later. Student
+code and tool logs are always marked as data, not as instructions.
 
 % =========================================================
-% III. IMPLEMENTATION WORKFLOW
-% =========================================================
-\section{Detailed Implementation Workflow}
+\section{Implementation}
 
-\subsection{Grading Rules}
-A \texttt{rules.json} file contains the assignment statement
-(\texttt{problem}), a \texttt{problem\_contract} (input ranges, operand types,
-output rule), time and memory limits, the submission path, an optional
-\texttt{reference\_solution}, an optional \texttt{test\_generation} block, and a
-list of metrics. Each metric names an analyzer, a point cap, and analyzer
-parameters. The loader resolves paths relative to the project root, keeps paths
-from escaping it, and validates every parameter (timeouts, thresholds, compiler
-flags, \texttt{cppcheck} severities, test-file structure and unique test IDs). It
-sets each metric's weight to its point cap divided by 100 and rejects a
-configuration whose graded, enabled metrics do not total 100 points (weights
-summing to 1.0). The
-repository includes nine teaching assignments (memory errors, a leap-year logic
-error, integer-division averaging, brute-force triplets, a buffer overflow, and
-four dynamic-programming tasks) and five LeetCode-style problems with reference
-solutions. Each comes with a deliberately flawed submission and the defects the
-grader is expected to find.
+\subsection{Rules and Sandbox}
+A \texttt{rules.json} file holds the task text, a problem contract (input
+ranges, types, output format), time and memory limits, an optional reference
+solution, optional test-generation settings, and the list of metrics. Each
+metric names an analyzer, a point value, and analyzer settings. The loader checks
+every field: paths must stay inside the project, and timeouts, thresholds,
+compiler flags, \texttt{cppcheck} severities, and test files must be valid, with
+unique test IDs. Each metric's weight is its points divided by 100, and the
+loader rejects rules whose enabled metrics do not add up to 100 points.
 
-\subsection{Docker Sandbox}
-\texttt{DockerSandbox} starts a uniquely named container from
-\texttt{agent-sandbox:latest} as UID/GID~10001, with no network, all Linux
-capabilities dropped, \texttt{no-new-privileges}, a read-only root filesystem, a
-64-process limit, one CPU, and the memory limit from \texttt{rules.json}. Only the
-\path{/workspace} (256\,MB) and \path{/tmp} (64\,MB) tmpfs mounts are writable.
-Every command has a timeout (at most 120\,s), output is truncated at 64\,KB, and
-uploaded files are limited to 2\,MB. The container is removed after the run. If
-Docker is unavailable, the source-only analyzers and the LLM review still run, and
-the execution metrics are reported as unavailable.
+The repository includes nine teaching assignments (memory errors, a leap-year
+logic error, integer-division averaging, brute-force triplets, a buffer
+overflow, and four dynamic-programming tasks) and five LeetCode-style problems
+with reference solutions. Each comes with a deliberately flawed submission and a
+hidden list of the defects that the grader should find.
 
-\subsection{Preflight}
-Before the analyzers run, the preflight step compiles the submission once
-(\texttt{-std=c11 -Wall -Wextra -O2}) and runs it on the first test input. If it
-reports a compile failure, a compile timeout, or a runtime failure, the
-execution-dependent analyzers are skipped and marked inconclusive instead of
-failed.
+The sandbox container runs as an unprivileged user (UID~10001) with no network,
+no Linux capabilities, \texttt{no-new-privileges}, a read-only root file system,
+at most 64 processes, one CPU, and the memory limit from the rules. Only
+\path{/workspace} (256\,MB) and \path{/tmp} (64\,MB) are writable. Each command
+times out after at most 120\,s, output is cut at 64\,KB, and uploads are limited
+to 2\,MB. The container is removed after the run. If Docker is not available, the
+source-only analyzers and the LLM review still run, and the metrics that need
+execution are reported as unavailable.
 
-\subsection{Test Generation and Execution Oracles}
+Before the analyzers run, a \emph{preflight} step compiles the program once
+(\texttt{-std=c11 -Wall -Wextra -O2}) and runs it on the first test. If the
+program does not compile, times out, or crashes, the analyzers that need
+execution are skipped and marked inconclusive instead of failed.
+
+\subsection{Test Generation}
 \label{sec:testgen}
-Instructor tests are JSON arrays of \texttt{\{id, input, expected\}}. When
-\texttt{test\_generation} is enabled, \path{test_generation.py} builds additional
-cases:
+Instructor tests are lists of input and expected output. When test generation is
+on, one model request first reads the program and suggests what to test. The
+syntax tree adds boundary cases; for example, \texttt{a < b} in the code leads to
+a test with \texttt{a == b}. Neither source decides what the correct output is.
+The model then proposes inputs in small batches (3 cases first, then 4 at a time,
+each input at most 500 characters), so that no answer runs past the token limit.
+When the task states an exact input shape (for example, $n$ followed by $n$
+values), the generator also adds \emph{structural variants} within the stated
+bounds: ascending, descending, random, duplicate, and all-equal inputs of several
+sizes. Expected outputs are never guessed. They come from running a reference
+program in the sandbox, in this order:
 \begin{enumerate}
-    \item One LLM call analyzes the submission to suggest test dimensions. The \texttt{pycparser} syntax tree adds line-anchored boundary targets, for example \texttt{a < b} at line 31 leads to a test with \texttt{a == b}. Neither source decides what is correct.
-    \item The model proposes inputs in small batches (up to 3 cases in the first response and 4 in each later one, at most 500 characters per input), so a response cannot run past the token limit. For assignments that state an exact input shape (an $R \times C$ grid, or $n$ followed by $n$ values), deterministic structural variants are added within the stated bounds.
-    \item Expected outputs come from an \emph{execution oracle}, in this order of authority: the instructor's reference solution compiled and run in the sandbox; otherwise a Python reference program that the model writes from the assignment alone (it never sees the student's code), trusted only if it reproduces every instructor case and otherwise required to agree with a second, independent model call; otherwise, without a sandbox, agreement between two model calls, marked as not execution-checked.
-    \item Malformed, duplicate, out-of-contract, and unverified candidates are discarded. If no case of the first batch survives, one bounded refill request is made.
+  \item the instructor's reference solution, if given;
+  \item otherwise, a Python program the model writes from the task alone (it
+        never sees the student code); this program must reproduce every
+        instructor test;
+  \item without a sandbox, agreement between two separate model answers, marked
+        as not checked by execution.
 \end{enumerate}
-The verified suite is written to \path{.generated_tests/} under a SHA-256
-fingerprint of the assignment, contract, model, seed, temperature, requested case
-count, coverage focus, submission, generator version, instructor cases, and
-reference solution. A later run with the same fingerprint reuses the
-frozen suite, a conflicting suite is never silently overwritten, and
-\texttt{require\_frozen\_suite} makes grading fail rather than regenerate. In the
-interface, generation is a separate step so the instructor can review the cases
-before grading.
+Invalid, duplicate, out-of-range, and unverified cases are removed. If no case
+of the first batch survives, one extra request is made. The final suite is saved
+in \path{.generated_tests/} under a SHA-256 fingerprint of the task, contract,
+model, seed, temperature, number of cases, submission, generator version,
+instructor cases, and reference solution. A later run with the same fingerprint
+reuses exactly the same tests, an existing suite is never silently overwritten,
+and the setting \texttt{require\_frozen\_suite} makes grading stop instead of
+generating new tests.
 
 \subsection{Analyzers and Metrics}
-Table~\ref{tab:metrics} lists the nine default metrics. \emph{I/O tests} and the
-\emph{edge-case runner} compile with \texttt{-std=c11 -Wall -Wextra -O2} and
-compare the trimmed actual and expected output per test, recording exit code,
-timeout, and truncation. Possibly truncated output never counts as a pass.
-\emph{Compiler diagnostics} (\texttt{-std=c11 -Wall -Wextra -Wpedantic}) score 0
-if compilation fails and otherwise deduct 5 points per warning. \emph{Static analysis}
-runs \texttt{cppcheck} with per-severity penalties (error 25, warning 10,
-performance 4, style 3, portability 3, information 0.5). Messages about
-\texttt{cppcheck}'s own analysis (such as \texttt{missingIncludeSystem} or
-\texttt{checkersReport}) are kept as tool notes and are not counted as defects.
-\emph{Modularity}, \emph{complexity}, and \emph{readability} use heuristics:
-function count and helper functions, cyclomatic complexity and function length
-(via \texttt{lizard}), lines over 100 characters, single-character identifiers,
-and the absence of comments. \emph{Similarity} compares 8-token shingles after removing
-comments and literals and replacing identifiers. Credit is full at a maximum
-similarity of 0.35 or less and falls linearly to zero at 0.85, and the full
-pairwise matrix of the cohort is reported. \emph{Runtime profiling} records
-repeated wall-clock samples and per-test medians.
+Table~\ref{tab:metrics} lists the nine default metrics.
+\begin{itemize}
+  \item \textbf{Tests.} The I/O-test and edge-case analyzers compile with
+        \texttt{-std=c11 -Wall -Wextra -O2} and compare the trimmed actual and
+        expected output of each test. They also record the exit code, time-outs,
+        and cut-off output. Output that may have been cut off never counts as a
+        pass.
+  \item \textbf{Compiler.} The program is compiled with \texttt{-std=c11 -Wall
+        -Wextra -Wpedantic}. The score is 0 if compilation fails, and otherwise 5
+        points are removed for each warning.
+  \item \textbf{Static analysis.} \texttt{cppcheck} findings are penalized by
+        severity (error 25, warning 10, performance 4, style 3, portability 3,
+        information 0.5). Messages about \texttt{cppcheck} itself, such as a
+        missing system header, are kept as notes and are not counted as defects.
+  \item \textbf{Memory safety.} GCC's \texttt{-fanalyzer} runs first. Then a
+        debug build (\texttt{-g -O0}) runs every test under Valgrind
+        (\texttt{--leak-check=full}), and a second build with
+        \texttt{-fsanitize=address,undefined} runs the same tests. Each tool's
+        score is the share of clean runs, and the metric takes the lower of the
+        two. A missing, timed-out, or cut-off Valgrind log counts as
+        inconclusive, never as clean. These checks only cover the inputs that
+        were run.
+  \item \textbf{Code quality.} Modularity, complexity, and readability use
+        simple measures: number of functions, cyclomatic complexity and function
+        length (from \texttt{lizard}), lines over 100 characters,
+        single-letter names, and missing comments.
+  \item \textbf{Similarity.} Programs are compared using 8-token shingles after
+        comments and literals are removed and identifiers are renamed. Full
+        credit is given up to 0.35 similarity, falling to zero at 0.85, and the
+        full pairwise table for the class is reported.
+  \item \textbf{Runtime} (optional) repeats each test and records the median
+        wall-clock time.
+\end{itemize}
 
 \begin{table}[!t]
 \centering
-\caption{Default Metrics (Total 100 Points) and Score Authority}
+\caption{Default Metrics (100 Points) and Score Source}
 \label{tab:metrics}
 \footnotesize
 \rowcolors{2}{rowgray}{white}
-\begin{tabularx}{\columnwidth}{@{}L{1.55cm} L{2.05cm} C{0.6cm} Y@{}}
+\begin{tabularx}{\columnwidth}{@{}L{1.7cm} >{\scriptsize\raggedright\arraybackslash}p{3.0cm} C{0.45cm} Y@{}}
 \toprule
 \rowcolor{headgray}
 \textbf{Metric} & \textbf{Analyzer} & \textbf{Pts} & \textbf{Score source} \\
@@ -472,166 +439,190 @@ logical & \texttt{edge\_case\_runner} & 10 & Test pass rate \\
 syntax & \texttt{compiler\_diagnostics} & 10 & Analyzer \\
 memory\_safety & \texttt{memory\_safety} & 10 & Analyzer \\
 similarity & \texttt{similarity\_flag} & 10 & Analyzer \\
-structure & \texttt{static\_analysis} & 10 & LLM level; analyzer fallback \\
-modularity & \texttt{modularity} & 10 & LLM level; analyzer fallback \\
-complexity & \texttt{complexity\_estimator} & 10 & LLM level; analyzer fallback \\
-readability & \texttt{readability} & 10 & LLM level; analyzer fallback \\
+structure & \texttt{static\_analysis} & 10 & LLM; analyzer fallback \\
+modularity & \texttt{modularity} & 10 & LLM; analyzer fallback \\
+complexity & \texttt{complexity\_estimator} & 10 & LLM; analyzer fallback \\
+readability & \texttt{readability} & 10 & LLM; analyzer fallback \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\subsection{Memory-Safety Analysis}
-The memory-safety analyzer first runs GCC's static analyzer
-(\texttt{-fanalyzer}) on the source. It then builds a debug binary
-(\texttt{-g -O0}) and runs it under Valgrind Memcheck (\texttt{--leak-check=full},
-\texttt{--error-exitcode=99}) for each test input, with a separate log per run. It
-also builds a second binary with \texttt{-fsanitize=address,undefined} and runs it
-on the same inputs. Each tool gets the fraction of runs that were clean. The
-metric score is the minimum of the two when both complete, and the Valgrind score
-alone when the sanitizer runs are inconclusive. A missing log, a timeout, a truncated log, or a missing
-\texttt{ERROR SUMMARY} makes the Valgrind result inconclusive, never clean. These
-checks cover only the inputs that were executed.
+\subsection{Syntax Tree (AST)}
+The syntax-tree module (\path{c_ast.py}) parses the program with
+\texttt{pycparser}. It first blanks the \texttt{\#include} lines (keeping the line
+numbers), replaces simple \texttt{\#define} constants, and declares common library
+types. It then records functions, recursion, loops and their nesting, comparisons,
+input and output calls (including unchecked \texttt{scanf} results), memory
+allocation and freeing, reads after \texttt{free}, divisions, small integer types
+used for sums, and fixed-size arrays. These facts are used by test generation,
+the evidence ledger, and every LLM stage.
 
-\subsection{Syntax-Tree Facts and Safety Properties}
-\path{c_ast.py} parses the submission with \texttt{pycparser}. It blanks
-\texttt{\#include} lines while keeping line numbers, substitutes simple
-\texttt{\#define} constants, and declares common library typedefs. It then
-extracts functions, recursion, loops and nesting depth, comparisons, I/O calls
-(including unchecked \texttt{scanf} results), allocations and frees, reads after
-\texttt{free}, divisions, narrow accumulators, and fixed-size arrays.
-\path{c_properties.py} uses these facts for line-anchored checks of the property
-classes that ESBMC verifies: unbounded \texttt{\%s}/\texttt{gets} input, unchecked
-allocation results, loop bounds that reach an array's size, unchecked
-input-derived indices, divisors, and arithmetic, leaks, and use after free. These
-checks are flow-insensitive approximations and are treated as evidence, not
-proofs.
+A second module (\path{c_properties.py}) uses the same facts to flag the kinds of
+problems that the ESBMC model checker looks for: unbounded \texttt{\%s} or
+\texttt{gets} input, unchecked \texttt{malloc} results, loops that reach an
+array's size, unchecked indices, divisors, and arithmetic that come from input,
+memory leaks, and use after free. Each flag points to a line. These checks do
+not follow the program's control flow, so they are treated as evidence, not
+proof.
 
-\subsection{Evidence Ledger}
-\path{evidence.py} builds the ledger from the rules, the analyzer output, and the
-source code only. Each fact gets a stable ID: a failed test with its input,
-expected and actual output, a sanitizer or Valgrind error, a compiler warning, a
-syntax-tree fact, or a source line range. Observed failures and defects are listed
-first. Model text is never added to the ledger as evidence. Cited IDs that are
-not in the ledger are dropped, and a finding's line range must lie within the
-source lines the model was shown. Long prose sections
-can be shortened by the same model when they exceed a size threshold, but source
-code, line numbers, finding identities, and measurements are never compressed. If
-compression fails validation, a deterministic compaction is used instead.
+\subsection{Evidence Ledger and LLM Review}
+All tool results are collected in an \emph{evidence ledger}
+(\path{evidence.py}), built only from the rules, the tool output, and the source
+code. Each fact has a fixed ID: a failed test with its input, expected output,
+and actual output; a Valgrind or sanitizer error; a compiler warning; a
+syntax-tree fact; or a range of source lines. Observed failures are listed
+first. Model text is never added as evidence. If a finding cites an ID that is
+not in the ledger, the citation is dropped, and a finding's lines must be within
+the source the model was shown. Long text sections may be shortened to fit the
+context, but source code, line numbers, and measurements are never shortened.
 
-\subsection{LLM Review: Understanding, RSI, and Adjudication}
-\path{reviewer.py} runs the review in stages:
+The review (\path{reviewer.py}) then runs in five steps:
 \begin{enumerate}
-    \item \textbf{Program understanding:} one request describes what the source actually does, what the assignment expects, how the two align, the algorithm, and the functions. If it fails, a deterministic summary of the source is used instead.
-    \item \textbf{RSI passes (at most 3):} the first pass reviews the whole program against the contract and must explain each observed failure in the ledger. Each later pass receives the previous complete JSON response and the defect evidence that no finding cites yet, and must keep, correct, remove, or add findings. The loop stops early when a pass reproduces the previous findings exactly with nothing left to reconcile, a fixed point at temperature~0.
-    \item \textbf{Deterministic prevalidation:} after each pass, Python removes configuration complaints, self-contradictions, claims disproved by the source (for example a ``missing input check'' where \texttt{scanf}'s result is checked), memory-safety claims with no pointer or indexed access at the cited line, optional style preferences, generic non-falsifiable claims, and duplicates before they reach the next pass.
-    \item \textbf{Adjudication:} one separate request checks each remaining candidate for source location, relevance to the contract, logical consistency, and evidence. Rejected candidates are recorded in the report and do not affect any score.
-    \item \textbf{Metric rating:} one request rates only the metrics without a deterministic score, as an integer level from 0 to 10 using rubric anchors (10 = fully meets; 0 = not met, with a specific failure). Python converts each level to points.
+  \item \textbf{Understanding:} one request describes what the program does,
+        what the task expects, how the two match, the algorithm, and the
+        functions. If this fails, a summary built from the source is used.
+  \item \textbf{RSI passes (at most 3):} the first pass reviews the whole
+        program against the task and must explain every failure in the ledger.
+        Each later pass sees the previous full answer and any evidence that no
+        finding cites yet, and keeps, fixes, removes, or adds findings. The loop
+        stops early when a pass returns the same findings with nothing left to
+        explain. At temperature 0 this is a fixed point.
+  \item \textbf{Prevalidation:} after each pass, Python removes findings that
+        complain about the configuration, that contradict themselves, or that
+        the source disproves (for example, ``missing input check'' when the
+        \texttt{scanf} result is checked). It also removes memory-safety claims
+        with no pointer or array access at the cited line, style preferences,
+        vague claims, and duplicates.
+  \item \textbf{Adjudication:} a separate request checks each remaining finding
+        for location, relevance to the task, logic, and evidence. Rejected
+        findings are listed in the report but do not affect any score.
+  \item \textbf{Rating:} one request gives a 0--10 level, using rubric anchors
+        (10 = fully meets; 0 = not met, with a specific failure), only for the
+        metrics that have no measured score.
 \end{enumerate}
-The adjudication and rating stages allow up to three bounded repair attempts for
-malformed JSON.
-If the server cannot start, a fallback evaluation that is clearly marked as such
-is built from the evidence.
+The adjudication and rating steps may repair invalid JSON up to three times. If
+the model server cannot start, a clearly labelled fallback evaluation is built
+from the evidence.
 
-\subsection{Deterministic Scoring}
-\path{scoring/overall.py} selects one score per metric. For \texttt{correctness}
-and \texttt{logical}, the observed pass rate of the executed tests is the score,
-whatever the model says. For the other analyzers in the first group of
-Table~\ref{tab:metrics}, the completed analyzer's score is used. For the remaining
-metrics, a valid model level is used, and the analyzer's score is the fallback.
-A model rating whose rationale says the metric could not be measured is
-discarded, and a model rating can never replace missing execution evidence. Each
-metric records its origin (\texttt{deterministic\_test\_results},
-\texttt{deterministic\_analyzer}, \texttt{llm}, or \texttt{unmeasured}), its
-available and missing evidence, and a 5-point quality band.
+\subsection{Scoring and Reports}
+For each metric, Python picks one score source. For correctness and logical, the
+test pass rate is used, whatever the model says. For syntax, memory safety, and
+similarity, the analyzer score is used. For the other four metrics, a valid model
+level is used, and the analyzer score is the fallback. A model rating whose
+reason says the metric could not be measured is discarded, and a model rating
+can never replace missing test results. Each metric records where its score came
+from (tests, analyzer, LLM, or unmeasured) and what evidence was available or
+missing.
 
-The grade is the sum of the awarded points. If any graded metric is unmeasured,
-no grade is calculated: the status is \texttt{failed\_incomplete} and the missing
-metrics are listed with their causes. If a grade is calculated but an LLM stage
-used a fallback or rejected candidates, the status is
-\texttt{completed\_with\_warnings}.
+The grade is the sum of the points. If any metric has no evidence at all, no
+grade is given: the status is \texttt{failed\_incomplete} and the missing metrics
+are listed with their causes. If a grade is given but an LLM step used a fallback
+or rejected findings, the status is \texttt{completed\_with\_warnings}.
 
-\subsection{Reporting and Reproducibility}
-Each run writes a JSON report and a text report. The JSON report contains the
-source SHA-256, the rules SHA-256, tool versions (GCC, \texttt{cppcheck},
-Valgrind, \texttt{lizard}), the runtime configuration (model, temperature, RSI
-iterations, token budgets), every analyzer result with raw logs, the evidence
-ledger, the RSI history, accepted and rejected findings, the score provenance, and
-timing for each stage. The text report gives the final grade, each metric's
-points and source with a short rationale, the validated findings with line
-references, the test-suite origin and oracle, the program understanding, and the
-stage timings. Values that are not
-valid JSON (such as non-finite floats) are converted before writing, so a
-completed run always produces a report.
+Each run writes a JSON report and a text report. The JSON report stores the
+SHA-256 hashes of the source and the rules, the tool versions, the model
+settings, every analyzer result with its raw logs, the ledger, the RSI history,
+accepted and rejected findings, where every point came from, and the time taken
+by each step. The text report gives the grade, the points and reason for each
+metric, the findings with line numbers, how the tests were made, and the
+timings.
 
-\subsection{FormAI Benchmark Pipeline}
-\path{formai_benchmark.py} runs one benchmark at a time. It draws a stratified
-random sample (strata are label $\times$ vulnerability family, or label $\times$
-generating model) with balanced or proportional allocation and a fixed seed.
-Every sampled program carries the design weight $N_h/n_h$. The predictor receives
-the source code only, and the labels are read after all predictions are written.
-Five prediction modes are implemented:
+\subsection{FormAI Benchmark}
+FormAI-v2 \cite{formai,formaiv2,formairepo} contains C programs written by nine
+LLMs and labelled with the ESBMC~7.5 model checker \cite{esbmc}; the older
+FormAI-v1 is also supported. The published files have one record per checked
+property, so \path{formai_dataset.py} downloads the archives, checks their
+SHA-256 sums, and builds a SQLite index with one row per program. A program is
+\textsc{vulnerable} if ESBMC found a counterexample, \textsc{safe} if all checks
+passed, and \textsc{unknown} otherwise. A time-out or parse error is not
+evidence of safety, so unknown programs are excluded. Of the 310,487 FormAI-v2
+programs, 192,713 are vulnerable, 25,674 are safe, and 92,100 are unknown, which
+leaves 218,387 programs. Each vulnerable line is mapped to one of nine families
+(input buffer overflow, NULL dereference, out of bounds, invalid pointer, memory
+leak, integer overflow, float overflow, division by zero, other). Building the
+index never compiles or runs a FormAI program, and FormAI is used only for this
+benchmark, not for grading.
+
+A benchmark run (\path{formai_benchmark.py}) draws a stratified random sample
+(label $\times$ family, or label $\times$ generating model) with balanced or
+proportional allocation and a fixed seed. Each program gets the weight
+$N_h/n_h$ (programs in its group divided by programs sampled from it), so results
+can be scaled to the whole dataset. The predictor sees only the source code.
+Five detection modes are available:
 \begin{itemize}
-    \item \texttt{tools\_only}: \texttt{cppcheck} plus the syntax-tree property checks, merged to one finding per (line, family);
-    \item \texttt{llm\_only}: an LLM source audit with exact source excerpts;
-    \item \texttt{hybrid}: tools plus the LLM audit;
-    \item \texttt{hybrid\_verify}: tools plus LLM claims that pass a separate verification;
-    \item \texttt{hybrid\_rsi}: tools plus the LLM audit, with RSI adjudicating every LLM-originated candidate against source and analyzer evidence. Confirmed tool positives are kept.
+  \item \texttt{tools\_only}: \texttt{cppcheck} plus the syntax-tree checks,
+        merged to one finding per line and family;
+  \item \texttt{llm\_only}: an LLM audit of the source;
+  \item \texttt{hybrid}: the tools plus the LLM audit;
+  \item \texttt{hybrid\_verify}: the tools plus only those LLM claims that pass a
+        separate check;
+  \item \texttt{hybrid\_rsi}: the tools plus the LLM audit, with RSI checking
+        every LLM finding against the source and the tool evidence. Tool
+        findings are kept.
 \end{itemize}
-A stage that fails or an unresolved positive candidate makes the prediction
-inconclusive, not safe. Each run folder under \path{reports/formai/} holds
-\path{config.json}, \path{sample.json}, \path{inputs.jsonl} (source only),
-\path{predictions.jsonl}, \path{labels.json}, \path{evaluation.json}, and
-\path{report.md}.
+If a step fails, or a positive finding cannot be resolved, the result is
+\emph{inconclusive}, never ``safe''. Each run folder under
+\path{reports/formai/} holds the configuration, the sample, the inputs (source
+only), the predictions, the labels (read last), the evaluation, and a short
+report.
 
 % =========================================================
-% IV. EVALUATION PROTOCOL AND METRICS
-% =========================================================
-\section{Evaluation Protocol and Metrics}
-
-\subsection{Evaluation Protocol}
-Ground truth is defined per program: \textsc{vulnerable} or \textsc{safe}. Headline
-metrics are \emph{strict}: an inconclusive prediction counts as an error, that is,
-a missed vulnerability on a vulnerable program and a false alarm on a safe one.
-Metrics over decided programs only are reported next to them. Because the sample
-is stratified, we report two sets of figures. The \emph{sample} figures describe
-the drawn programs. The \emph{dataset estimates} weight each program by $N_h/n_h$
-so that they describe the whole eligible population, whose prevalence (88\%
-vulnerable) differs from a balanced sample's. Precision in particular depends on
-prevalence. 95\% confidence intervals come from a stratified bootstrap (resampling
-within each stratum, fixed seed, 1000 resamples for the larger runs). A ratio with
-a zero denominator is reported as undefined, never as zero.
-
-\subsection{Metrics for Comparison}
-With TP, FP, FN, and TN denoting true positives, false positives, false
-negatives, and true negatives:
+\section{Evaluation Method}
+Each program is either vulnerable or safe. With TP, FP, FN, and TN as the counts
+of true positives, false positives, false negatives, and true negatives:
 \begin{align}
 \text{Precision} &= \frac{TP}{TP+FP}, \qquad
 \text{Recall} = \frac{TP}{TP+FN}, \\
 F_1 &= 2\,\frac{\text{Precision}\cdot\text{Recall}}{\text{Precision}+\text{Recall}}.
 \end{align}
-We also report specificity, balanced accuracy, accuracy, and the Matthews
-correlation coefficient (MCC). For localization, a finding \emph{hits} a
-vulnerability when its line is within $\pm 2$ lines of an ESBMC vulnerable line;
-\emph{same family} also requires the vulnerability family to match. ESBMC checks
-a bounded program, so a finding away from its lines is not necessarily wrong, and
-location precision is a lower bound. Detection and location are also reported per
-family and per stratum, together with the runtime per program.
+We also report specificity, $TN/(TN+FP)$ (the share of safe programs correctly
+called safe), balanced accuracy (the mean of recall and specificity), and the
+Matthews correlation coefficient (MCC).
 
-% =========================================================
-% V. RESULTS
+\textbf{Strict scoring.} An inconclusive result counts as an error: a missed
+vulnerability on a vulnerable program and a false alarm on a safe one. Results
+over decided programs only are also stored.
+
+\textbf{Sample and dataset figures.} \emph{Sample} figures describe the drawn
+programs. \emph{Dataset estimates} weight each program by $N_h/n_h$ so that they
+describe all 218,387 programs. The dataset is 88\% vulnerable, while a balanced
+sample is 50\%, so the two can differ; precision changes most. 95\% confidence
+intervals come from a stratified bootstrap (resampling within each group, fixed
+seed). A ratio with a zero denominator is reported as undefined, never as zero.
+
+\textbf{Location.} A finding is \emph{located} if it is within $\pm2$ lines of a
+line that ESBMC reported, and \emph{same family} also requires the vulnerability
+family to match. ESBMC only checks the program up to a bound, so a finding away
+from its lines is not always wrong; the location precision is therefore a lower
+bound.
+
 % =========================================================
 \section{Results}
 
-\subsection{Static-Tool Detection on FormAI-v2}
-Table~\ref{tab:formai_tools} shows the \texttt{tools\_only} mode on a balanced
-sample of 600 programs (300 vulnerable, 300 safe, seed 7). Every program was
-decided. The detector is conservative: it raises few false alarms (13 of 300 safe
-programs) but finds about two thirds of the vulnerable programs. Among the 190
-detected vulnerable programs, the primary finding was on an ESBMC line in 80.5\%
-of cases, and the line and family both matched in 86.3\% of cases for at least one
-finding. A 40-program run with a different seed gave lower recall (50.0\%)
-within wide confidence intervals. The static stage takes about 0.14\,s per
-program.
+\subsection{Static Tools on 600 Programs}
+Table~\ref{tab:formai_tools} shows \texttt{tools\_only} on a balanced sample of
+600 programs (300 vulnerable, 300 safe, seed 7). All 600 were decided, and the
+whole run took 89\,s (about 0.14\,s per program). The tools rarely raise false
+alarms (13 of 300 safe programs, 0.13 findings per safe program) but find about
+two thirds of the vulnerable programs. The sample precision (93.6\%) is lower
+than the dataset estimate (99.1\%) because the dataset has far more vulnerable
+than safe programs.
+
+For the 190 detected vulnerable programs, the top finding was on an ESBMC line in
+80.5\% of cases, at least one finding was on an ESBMC line in 90.5\%, and at least
+one finding matched both the line and the family in 86.3\%. Overall, at least
+62.5\% of all findings on vulnerable programs were on an ESBMC line.
+
+Two smaller \texttt{tools\_only} runs agree with this. A balanced 40-program run
+(seed 101) found 10 of 20 vulnerable programs (50.0\% recall) with 2 false
+alarms. A proportional 91-program run (seed 42; 80 vulnerable, 11 safe) found
+46 of 80 vulnerable programs (57.5\% recall) with no false alarms.
+
+Table~\ref{tab:family} shows the results by vulnerability family. NULL
+dereferences (mostly unchecked \texttt{malloc} results) are found and located
+well. Out-of-bounds and invalid-pointer errors are often detected in the right
+program but rarely at ESBMC's line, because the syntax-tree checks do not follow
+pointers or indices computed at run time.
 
 \begin{table}[!t]
 \centering
@@ -639,7 +630,7 @@ program.
 \label{tab:formai_tools}
 \footnotesize
 \rowcolors{2}{rowgray}{white}
-\begin{tabularx}{\columnwidth}{@{}L{2.4cm} C{1.2cm} Y@{}}
+\begin{tabularx}{\columnwidth}{@{}L{2.2cm} C{1.2cm} Y@{}}
 \toprule
 \rowcolor{headgray}
 \textbf{Metric} & \textbf{Sample} & \textbf{Dataset estimate (95\% CI)} \\
@@ -651,27 +642,21 @@ $F_1$ & 75.5\% & 77.4\% (73.7--81.1) \\
 Balanced accuracy & 79.5\% & 79.6\% (76.9--82.4) \\
 MCC & 0.624 & 0.384 (0.347--0.425) \\
 \midrule
-\multicolumn{3}{@{}l}{Confusion: TP 190, FN 110, FP 13, TN 287} \\
+\multicolumn{3}{@{}l}{TP 190, FN 110, FP 13, TN 287} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Table~\ref{tab:family} shows detection by family. NULL dereferences (mostly
-unchecked \texttt{malloc} results) are found and located reliably. Out-of-bounds
-and invalid-pointer vulnerabilities are often detected in the right program but
-rarely at ESBMC's line, because the syntax-tree checks do not track pointer
-aliasing or indices computed at run time.
-
 \begin{table}[!t]
 \centering
-\caption{\texttt{tools\_only} Detection by ESBMC Family (600-Program Run)}
+\caption{\texttt{tools\_only} Results by Vulnerability Family}
 \label{tab:family}
 \footnotesize
 \rowcolors{2}{rowgray}{white}
-\begin{tabularx}{\columnwidth}{@{}Y C{0.9cm} C{1.2cm} C{1.4cm}@{}}
+\begin{tabularx}{\columnwidth}{@{}Y C{0.9cm} C{1.2cm} C{1.2cm}@{}}
 \toprule
 \rowcolor{headgray}
-\textbf{Family} & \textbf{Progs} & \textbf{Detected} & \textbf{Located (family)} \\
+\textbf{Family} & \textbf{Progs} & \textbf{Detected} & \textbf{Located} \\
 \midrule
 Input buffer overflow & 140 & 61.4\% & 49.3\% \\
 NULL dereference & 119 & 87.4\% & 83.2\% \\
@@ -685,145 +670,83 @@ Division by zero & 3 & 33.3\% & 33.3\% \\
 \end{tabularx}
 \end{table}
 
-\subsection{LLM-Assisted Modes}
-Table~\ref{tab:formai_modes} compares the LLM-assisted modes. They are much slower
-(12--94\,s per program), so they were run on small samples, and their confidence
-intervals are wide. On the same 12 balanced programs, \texttt{llm\_only} and
-\texttt{hybrid} found every vulnerable program, but \texttt{llm\_only} flagged 4
-of the 6 safe programs and \texttt{hybrid} flagged 4 and left 2 undecided: the 2B
-model rarely concludes that a program is safe. \texttt{hybrid\_rsi} removed
-unsupported positives but left 8 of 12 programs inconclusive, which the strict
-metrics count as errors. On a 20-program proportional sample (18 vulnerable),
-\texttt{hybrid\_rsi} decided 11 programs, all correctly, and 90.5\% of its findings
-fell on ESBMC lines. Its strict recall (55.6\%) is limited by the 9 inconclusive
-programs. Specificity estimates from samples with 2--6 safe programs are not
-reliable. These results suggest that RSI adjudication improves precision and
-localization, but that its inconclusive rate and cost must come down before it can
-replace the static detector.
+\subsection{All Five Modes on the Same 20 Programs}
+Table~\ref{tab:formai_modes} compares the five modes on one balanced sample of 20
+programs (10 vulnerable, 10 safe, seed 42). Every mode saw exactly the same
+programs.
+
+\begin{itemize}
+  \item \texttt{tools\_only} never raised a false alarm, and all of its findings
+        were on an ESBMC line, but it found only 4 of the 10 vulnerable programs.
+  \item \texttt{llm\_only}, \texttt{hybrid}, and \texttt{hybrid\_rsi} found 9 of
+        the 10 vulnerable programs, but they also flagged 7 of the 10 safe
+        programs. The 2B model rarely says that a program is safe.
+  \item \texttt{hybrid\_verify} kept only the LLM claims that passed a second
+        check. It cut false alarms to 1, but its recall fell back to that of the
+        tools (40\%).
+  \item \texttt{hybrid\_rsi} made the same yes/no decisions as \texttt{hybrid},
+        but its findings were more precise. 76.5\% of its findings on vulnerable
+        programs were on an ESBMC line, compared with 61.5\% for \texttt{hybrid}
+        and 41.2\% for \texttt{llm\_only}. It also gave half as many findings per
+        safe program (1.7 instead of 3.3). It is the slowest mode, at 88\,s per
+        program.
+\end{itemize}
+
+In every LLM mode, 2 programs (1 vulnerable, 1 safe) were inconclusive because
+the model's answer reached the token limit and its JSON was cut off. The strict
+metrics count these as errors.
+
+An earlier \texttt{hybrid\_rsi} run on a 250-program proportional sample was
+stopped after 79 programs, all of them vulnerable. It found 70 of the 79 (88.6\%
+recall). 7 of its 9 misses were also cut-off answers.
 
 \begin{table}[!t]
 \centering
-\caption{LLM-Assisted Modes on Small FormAI-v2 Samples (Sample Figures, Strict)}
+\caption{All Five Modes on the Same 20 FormAI-v2 Programs (Strict)}
 \label{tab:formai_modes}
-\footnotesize
+\scriptsize
+\setlength{\tabcolsep}{3pt}
 \rowcolors{2}{rowgray}{white}
-\begin{tabularx}{\columnwidth}{@{}L{1.55cm} C{0.55cm} C{0.95cm} C{0.65cm} C{0.65cm} C{0.65cm} Y@{}}
+\begin{tabularx}{\columnwidth}{@{}L{2.05cm} C{0.55cm} C{0.75cm} C{0.75cm} C{0.75cm} C{0.75cm} C{0.75cm} Y@{}}
 \toprule
 \rowcolor{headgray}
-\textbf{Mode} & \textbf{$n$} & \textbf{Decided} & \textbf{Rec.} & \textbf{Spec.} & \textbf{Prec.} & \textbf{s/prog} \\
+\textbf{Mode} & \textbf{Dec.} & \textbf{Prec.} & \textbf{Rec.} & \textbf{$F_1$} & \textbf{Spec.} & \textbf{Loc.} & \textbf{s/prog} \\
 \midrule
-\texttt{llm\_only} & 12 & 12 & 100\% & 33.3\% & 60.0\% & 12.6 \\
-\texttt{hybrid} & 12 & 10 & 100\% & 0.0\% & 50.0\% & 12.1 \\
-\texttt{hybrid\_rsi} & 12 & 4 & 50.0\% & 0.0\% & 33.3\% & 83.7 \\
-\texttt{hybrid\_rsi}$^{\dagger}$ & 20 & 11 & 55.6\% & 50.0\% & 90.9\% & 94.4 \\
+\texttt{tools\_only}    & 20 & 100\%  & 40.0\% & 57.1\% & 100\%  & 100\%  & 0.14 \\
+\texttt{llm\_only}      & 18 & 52.9\% & 90.0\% & 66.7\% & 20.0\% & 41.2\% & 20.3 \\
+\texttt{hybrid}         & 18 & 52.9\% & 90.0\% & 66.7\% & 20.0\% & 61.5\% & 24.0 \\
+\texttt{hybrid\_verify} & 18 & 66.7\% & 40.0\% & 50.0\% & 80.0\% & 100\%  & 31.3 \\
+\texttt{hybrid\_rsi}    & 18 & 52.9\% & 90.0\% & 66.7\% & 20.0\% & 76.5\% & 88.0 \\
 \bottomrule
-\multicolumn{7}{@{}l}{\scriptsize $^{\dagger}$Proportional allocation, seed 42 (18 vulnerable, 2 safe); other rows balanced, seed 7.}
+\multicolumn{8}{@{}L{0.97\columnwidth}@{}}{Balanced sample, 10 vulnerable and 10 safe, seed 42. Dec.: programs decided (the rest were inconclusive and count as errors). Loc.: share of findings on vulnerable programs within $\pm2$ lines of an ESBMC line (a lower bound).}
 \end{tabularx}
 \end{table}
 
 \subsection{Grading Runs}
 The grading pipeline was run on the example assignments through the Gradio
-interface; the reports are kept in \path{reports/gradio/}. A review makes 6--8 LLM
-requests (understanding, RSI passes, adjudication, and rating, including any
-repair attempts), and grading takes 84--150\,s. Test generation is a separate step
-in the interface and is not included in these times. RSI stopped after two of the
-three allowed passes in most runs.
+interface; the reports are kept in \path{reports/gradio/}. A review makes 6--8
+model requests (understanding, RSI passes, adjudication, rating, and any JSON
+repairs), and grading takes 84--150\,s. Test generation is a separate step and is
+not included in these times. RSI usually stopped after two of the three passes.
+The Appendix walks through one full run on the LIS assignment.
 
-One array-processing submission was graded repeatedly during development, so the
-code changed between some runs. With the instructor's five correctness tests, four
-consecutive runs gave the same total (75.00/100), and a later run, after changes
-to the reviewer, gave 86.00. In all five runs the measured metrics (correctness 4/5
-tests, logical, syntax, similarity, and memory safety) gave the same 51 points. The
-whole difference came from the model's ratings of complexity, structure, and
-readability. With generated suites of 39 and 49 cases, the totals were 76.52,
-76.52, 78.14, and 85.14. In every run, 60 of the 100 points came from executed
-tests or completed analyzers, and the remaining 40 from model ratings of
-structure, modularity, complexity, and readability. These model-rated metrics are
-the main source of variation between runs and between code versions. The repository contains 371 unit and regression test functions
-covering the analyzers, scoring precedence, the evidence ledger, RSI, test
-generation, oracles, fallbacks, and the benchmark.
+\textbf{Repeatability.} The LIS submission from the Appendix was graded several
+times while the code was being developed, so the code changed between some runs.
+With only the instructor's tests, four runs gave the same total (75.00/100), and
+a later run, after changes to the reviewer, gave 86.00. In all five runs, the
+measured metrics (correctness 4/5 tests, logical, syntax, similarity, and memory
+safety) gave the same 51 points; the whole difference came from the model's
+ratings of complexity, structure, and readability. With generated suites of 39
+and 49 cases, the totals were 76.52, 76.52, 78.14, 85.14, and 85.14. With the default rules, 60
+of the 100 points come from tests and tools, and 40 from model ratings, which are
+the main source of variation between runs.
 
-% =========================================================
-% VI. IMPLEMENTATION DETAILS
-% =========================================================
-\section{Implementation Details}
-
-\subsection{Implementation Status}
-Table~\ref{tab:plan} summarizes the implemented milestones and where each one is
-in the repository.
-
-\begin{table*}[!t]
-\centering
-\caption{Implemented Milestones}
-\label{tab:plan}
-\footnotesize
-\rowcolors{2}{rowgray}{white}
-\begin{tabularx}{\textwidth}{@{}C{0.9cm} L{3.2cm} Y L{3.6cm}@{}}
-\toprule
-\rowcolor{headgray}
-\textbf{Stage} & \textbf{Milestone} & \textbf{Implemented activities} & \textbf{Module} \\
-\midrule
-1 & Sandbox &
-Unprivileged, network-less container with read-only root, dropped capabilities, CPU/memory/PID limits, tmpfs workspace, timeouts, and output caps; graceful degradation without Docker. &
-\path{sandbox/docker_sandbox.py} \\
-2 & Rule loader &
-Validation of the assignment, contract, limits, metrics, weights, point caps, and test paths. &
-\path{config/rule_loader.py} \\
-3 & Preflight and analyzers &
-Compile and smoke check; ten registered analyzers covering tests, compiler, \texttt{cppcheck}, Valgrind, ASan/UBSan, runtime, modularity, complexity, readability, and similarity. &
-\path{preflight.py}, \path{analyzers/} \\
-4 & Syntax-tree analysis &
-\texttt{pycparser} facts, edge-case targets, and ESBMC-class safety-property checks. &
-\path{c_ast.py}, \path{c_properties.py} \\
-5 & Test generation &
-Batched input generation, structural variants, execution oracles (instructor or model-written reference), independent verification, and frozen fingerprinted suites. &
-\path{testing/} \\
-6 & LLM review &
-Evidence ledger, program understanding, bounded RSI with convergence stop, prevalidation, adjudication, rubric levels, and context compression. &
-\path{llm/} \\
-7 & Deterministic scoring &
-Evidence-priority metric selection, point sum, unmeasured-metric policy, and score provenance. &
-\path{scoring/} \\
-8 & Reporting and UI &
-JSON and text reports with hashes, tool versions, and timings; Gradio grading and benchmark tabs. &
-\path{reporting/}, \path{ui/} \\
-9 & FormAI benchmark &
-Dataset download and indexing, stratified sampling with design weights, five prediction modes, strict and weighted metrics, bootstrap CIs, and localization. &
-\path{benchmark/} \\
-\bottomrule
-\end{tabularx}
-\end{table*}
-
-\subsection{Development Commands}
-On Linux, \texttt{make} installs Python dependencies with \texttt{uv}, Docker,
-\texttt{llama-server}, the sandbox image, and the model, then opens the interface
-at \url{http://127.0.0.1:7860}:
-\begin{lstlisting}
-make            # setup + launch UI
-make sandbox    # rebuild Dockerfile.sandbox
-make check      # verify llama-server build
-make test       # run the test suite
-\end{lstlisting}
-Grading and benchmarking from the command line:
-\begin{lstlisting}
-python grade.py --rules path/to/rules.json \
-  [--source file.c] [--refresh-suite]
-PYTHONPATH=src python -m \
-  grading_agent.benchmark.formai_benchmark \
-  --dataset v2 -n 50 --mode hybrid_rsi
-\end{lstlisting}
-Settings (model, ports, context size, RSI iterations, sandbox limits, analyzer
-thresholds) are read from environment variables or \path{.env} in
-\path{config/settings.py}. The interface can override a whitelisted subset for
-each request without affecting concurrent jobs.
+\textbf{Software tests.} The repository has 373 unit and regression test
+functions. They cover the analyzers, the scoring rules, the evidence ledger, RSI,
+test generation, the oracles, the fallbacks, and the benchmark.
 
 % =========================================================
-% VII. WORK DISTRIBUTION
-% =========================================================
-\section{Distribution of Work Among Group Members}
-
-The group has four members; the allocation below is provisional and should be
-updated to reflect actual contributions.
+\section{Work Distribution}
 
 \begin{table}[!t]
 \centering
@@ -844,61 +767,142 @@ Anshul Kaushal & 2611AI10 & Docker Implementation \\
 \end{tabularx}
 \end{table}
 
-The functional areas are: (i) input handling and rule validation (grading schema,
-JSON loading, configuration validation); (ii) Docker sandbox and execution
-(compiler, controlled execution, sanitizers, failure recording); (iii) analysis
-and scoring (analyzers, evidence ledger, deterministic grading); and (iv) LLM
-integration, test generation, benchmarking, and reporting.
+Table~\ref{tab:work} shows the work allocation. The main areas were: (i) rule
+handling (grading schema, JSON loading, validation); (ii) the Docker sandbox and
+execution (compiler, controlled runs, sanitizers, failure records); (iii) the
+analyzers, the evidence ledger, and scoring; and (iv) the LLM, test generation,
+benchmark, and reports.
 
 % =========================================================
-% VIII. USEFULNESS AND LIMITATIONS
+\section{Usefulness}
+The same frozen tests and analyzers run on every submission, so every student in
+a large class is checked in the same way. Feedback is concrete: a failed test
+shows the input, the expected and actual output, the exit code, and whether it
+timed out, and Valgrind and sanitizer logs and line-numbered findings point to
+the faulty code. Grades can be checked, because each metric's points come with
+their source and evidence, and the report records the source hash, the rules
+hash, and the tool versions. Test generation turns a few instructor examples
+into many boundary cases (49 tests from 9 in the Appendix). Finally, similarity
+flags and inconclusive metrics show which submissions a person should look at; a
+similarity score alone is not proof of copying.
+
 % =========================================================
-\section{Usefulness and Limitations}
-
-\subsection{Potential Real-World Usefulness}
+\section{Limitations}
 \begin{enumerate}
-    \item \textbf{Coursework at scale.} An instructor can run the same frozen test suite and analyzers against every submission and get consistent evidence for each test.
-    \item \textbf{Actionable feedback.} A failing test reports the input, expected and actual output, exit code, and timeout status. Valgrind and sanitizer logs and line-anchored findings point to the responsible statements.
-    \item \textbf{Auditable grades.} Each metric's points carry their origin and evidence, and the source hash, rules hash, and tool versions are recorded with the grade.
-    \item \textbf{Fewer hand-written tests.} Generated tests with execution-checked expected outputs extend a few instructor examples to boundary cases.
-    \item \textbf{Triage for human review.} Similarity flags and inconclusive metrics identify submissions that need a person to look at them. A similarity score alone is not proof of copying.
+  \item \textbf{Model ratings.} 40 of 100 default points come from the 2B
+        model, and these change between runs (75.00 to 86.00 for the same
+        measured 51 points). The model's reasons can also be wrong, as in the
+        Appendix. \emph{Mitigation:} rubric anchors, ledger citations, and
+        analyzer fallbacks; instructors can give more weight to measured metrics.
+  \item \textbf{Test coverage.} A program can pass all tests and still fail on
+        an untested input, and Valgrind and sanitizers only see the code that
+        ran. Small generated inputs also cannot expose a slow algorithm.
+        \emph{Mitigation:} AST boundary cases, structural variants, the optional
+        runtime analyzer with large inputs, and frozen suites the instructor can
+        review.
+  \item \textbf{Oracle trust.} Without an instructor solution, expected outputs
+        come from a model-written program, which may be wrong.
+        \emph{Mitigation:} it must reproduce every instructor test; providing a
+        reference solution removes this risk, and the report states which oracle
+        was used.
+  \item \textbf{LLM detection.} The LLM modes flag most safe programs (20\%
+        specificity on 20 programs), are 150--600 times slower than the tools,
+        and some answers are cut off at the token limit. All results with LLM
+        modes so far come from small samples. \emph{Mitigation:} tool findings
+        stay authoritative, and inconclusive results count as errors.
+  \item \textbf{Approximate checks.} The syntax-tree checks do not follow
+        pointers or control flow, so out-of-bounds and invalid-pointer errors are
+        rarely located.
+  \item \textbf{Sandbox risk.} Isolation reduces, but does not remove, the risk
+        from kernel or Docker bugs. \emph{Mitigation:} no secrets or host
+        folders in the container, an unprivileged user, and an up-to-date
+        runtime.
 \end{enumerate}
-
-\subsection{Concrete Limitations and Failure Cases}
-\begin{enumerate}
-    \item \textbf{Model-rated metrics.} With the default rules, 40 of 100 points come from the 2B model's 0--10 ratings, which remain the main source of variation between runs. \emph{Mitigation:} rubric anchors, ledger citations, and analyzer fallbacks; instructors can raise the weight of measured metrics.
-    \item \textbf{Test coverage.} A program can pass every configured case but fail an untested input, and dynamic tools report only executed paths. \emph{Mitigation:} syntax-tree edge-case targets, structural variants, and frozen suites the instructor can review.
-    \item \textbf{Oracle trust.} Without an instructor reference, expected outputs come from a model-written program that is checked against instructor cases or a second model. A wrong reference produces wrong expected outputs. \emph{Mitigation:} provide \texttt{reference\_solution}; the report states which oracle was used.
-    \item \textbf{LLM detection quality.} The LLM-assisted benchmark modes have low specificity or high inconclusive rates and cost 12--94\,s per program. \emph{Mitigation:} keep tool positives authoritative and count inconclusive results as errors.
-    \item \textbf{Static-check approximations.} The syntax-tree checks are flow-insensitive and miss aliasing, which explains the low location rates for out-of-bounds and invalid-pointer vulnerabilities.
-    \item \textbf{Sandbox residual risk.} Isolation reduces but does not remove exposure to kernel or Docker vulnerabilities. \emph{Mitigation:} no secrets or host mounts, an unprivileged user, and an updated runtime.
-\end{enumerate}
-
-The system is a grading assistant, not a replacement for instructor judgment. Its
+The system is a grading assistant, not a replacement for the instructor. Its
 reports separate measured results from model estimates so that a person can check
-the estimates.
+them.
 
-% =========================================================
-% IX. CONCLUSION
 % =========================================================
 \section{Conclusion}
-The Code Checking Assistant grades C submissions end to end. A sandboxed analyzer
-pipeline measures correctness, compilation, static diagnostics, and memory safety
-with both Valgrind and sanitizers. Test generation produces execution-checked,
-frozen suites. A local 2B model, constrained to cite a deterministic evidence
-ledger, reviews the program in bounded RSI passes. Python computes the grade with
-measured results taking precedence, and refuses to produce a grade when a metric
-has no evidence. On FormAI-v2, the static detector reaches 63.3\% recall at
-95.7\% specificity on 600 programs, and RSI adjudication gives precise,
-well-located LLM findings at a high cost and inconclusive rate.
-
-Future work is to reduce the share and variance of model-rated points, lower the
-inconclusive rate and latency of \texttt{hybrid\_rsi}, evaluate it on larger
-samples, add flow-sensitive checks for pointers and indices, and measure agreement
-with human graders on real course submissions.
+The Code Checking Assistant grades C programs end to end. A sandboxed set of
+analyzers measures correctness, compiler output, static issues, and memory
+safety. Test generation creates tests with execution-checked outputs. A small
+local model reviews the program but must cite tool evidence, and Python computes
+the grade with measured results first. On FormAI-v2, the static tools reach
+63.3\% recall at 95.7\% specificity on 600 programs. On the same 20 programs,
+the LLM modes raise recall from 40\% to 90\% but lower specificity to 20\%, and
+RSI makes their findings more precise. Future work is to make the model accept
+that a program is safe, raise the token limit to avoid cut-off answers, run the
+LLM modes on larger samples, add pointer-aware checks, and compare the grades
+with human graders.
 
 % =========================================================
-% REFERENCES
+\appendix
+\section*{Example Grading Run: Longest Increasing Subsequence}
+\label{app:lis}
+
+\textbf{Task.} Assignment 08 asks for the length of the longest \emph{strictly}
+increasing subsequence of $n$ signed 32-bit integers ($1\le n\le 20000$), in
+$O(n\log n)$ time. The submission has two seeded defects:
+\begin{enumerate}
+  \item line 25 uses \texttt{values[j] <= values[i]}, so it computes the longest
+        \emph{non-decreasing} subsequence and wrongly chains equal values; and
+  \item its nested loop is $O(n^2)$ instead of the required $O(n\log n)$.
+\end{enumerate}
+
+\textbf{Test suite.} The suite has 49 cases: the 9 instructor cases and 40
+generated ones. 8 repeated candidates were dropped. The generated cases include
+small boundary cases ($n=1$, all-equal values, a mixed list) and structural
+variants within the stated bounds: ascending, descending, random, duplicate, and
+all-equal lists with $n$ from 1 to 30. No instructor solution was used here. The
+expected outputs came from a Python program that the model wrote from the task
+text, and this program first reproduced all 9 instructor cases. We checked all
+40 generated outputs against an independent $O(n\log n)$ implementation, and all
+were correct.
+
+\textbf{Result.} The grade was 85.14/100, with status
+\texttt{completed\_with\_warnings}. Table~\ref{tab:lis} shows each metric.
+\begin{itemize}
+  \item \textbf{Defect 1 found by tests.} The submission failed 16 of the 49
+        correctness cases (3 instructor, 13 generated) and 2 of the 6 edge cases.
+        Every failing case contains equal values, so the failures point to the
+        \texttt{<=} defect.
+  \item \textbf{Defect 2 found by the LLM.} The model lowered complexity to 7/10
+        because of the $O(n^2)$ loop. However, its rationale wrongly says that
+        $O(n)$ is required; the task asks for $O(n\log n)$. The runtime analyzer
+        was not enabled, and the largest test has $n=30$, so no test could expose
+        the slowdown.
+  \item \textbf{Points.} 50.14 of the 85.14 points came from tests and tools, and
+        35 from LLM ratings. Similarity got full marks only because no other
+        submissions were available for comparison.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Grade Breakdown for the LIS Submission}
+\label{tab:lis}
+\scriptsize
+\rowcolors{2}{rowgray}{white}
+\begin{tabularx}{\columnwidth}{@{}L{1.55cm} C{1.05cm} L{0.75cm} Y@{}}
+\toprule
+\rowcolor{headgray}
+\textbf{Metric} & \textbf{Points} & \textbf{Source} & \textbf{Reason} \\
+\midrule
+correctness   & 13.47/20 & tests & 33 of 49 tests passed \\
+logical       & 6.67/10  & tests & 4 of 6 edge cases passed \\
+syntax        & 10/10    & tool  & compiled, 0 warnings \\
+memory\_safety & 10/10   & tool  & 49 of 49 runs clean \\
+similarity    & 10/10    & tool  & no other submissions to compare \\
+structure     & 10/10    & LLM   & clean control flow, no cppcheck findings \\
+modularity    & 10/10    & LLM   & one coherent function \\
+complexity    & 7/10     & LLM   & $O(n^2)$ loop penalized \\
+readability   & 8/10     & LLM   & consistent formatting, clear names \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Total: 85.14/100} (50.14 measured, 35 from LLM ratings)} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 % =========================================================
 \balance
 \begin{thebibliography}{1}

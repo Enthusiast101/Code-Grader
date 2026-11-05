@@ -1,0 +1,495 @@
+[
+  {
+    "expected": "4\n",
+    "id": "instructor-classic-example",
+    "input": "8\n10 9 2 5 3 7 101 18\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "memory_safety"
+    ]
+  },
+  {
+    "expected": "1\n",
+    "id": "instructor-all-equal-strictness",
+    "input": "4\n1 1 1 1\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness"
+    ]
+  },
+  {
+    "expected": "1\n",
+    "id": "instructor-strictly-decreasing",
+    "input": "5\n5 4 3 2 1\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness"
+    ]
+  },
+  {
+    "expected": "5\n",
+    "id": "instructor-strictly-increasing",
+    "input": "5\n1 2 3 4 5\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness"
+    ]
+  },
+  {
+    "expected": "4\n",
+    "id": "instructor-negative-values",
+    "input": "5\n-3 -2 -5 -1 0\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-duplicate-inside-lis",
+    "input": "4\n1 2 2 3\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "1\n",
+    "id": "instructor-single-element",
+    "input": "1\n42\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-integer-extremes",
+    "input": "5\n-2147483648 0 2147483647 -1 1\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-repeated-negative",
+    "input": "6\n-5 -5 -4 -4 -3 -3\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-single-element",
+    "input": "1\n100\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary",
+      "n=1",
+      "single-element"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-all-equal",
+    "input": "3\n5 5 5\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "all-equal",
+      "n=3",
+      "strictly-increasing"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "8\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-random-mixed",
+    "input": "10\n1 3 2 4 5 1 6 7 8 9\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "mixed",
+      "n=10",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-1",
+    "input": "1\n-690172939\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-descending-1",
+    "input": "1\n1313755844\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "descending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-random-1",
+    "input": "1\n1090640750\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-duplicates-1",
+    "input": "1\n-262987230\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "duplicates"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-equal-1",
+    "input": "1\n1854320663\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "equal"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "2\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-2",
+    "input": "2\n-1300907444 714940541\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-descending-2",
+    "input": "2\n1794297567 10751216\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "descending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-random-2",
+    "input": "2\n-1968936825 -2112580701\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-duplicates-2",
+    "input": "2\n-496776800 -496776800\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "duplicates"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-equal-2",
+    "input": "2\n-1436899631 -1436899631\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "equal"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "5\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-5",
+    "input": "5\n-1690605555 -686753732 -291065677 493351835 703491157\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-descending-5",
+    "input": "5\n1350864864 1185125925 610057876 -789351953 -1591160842\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "descending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "3\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-random-5",
+    "input": "5\n2091730793 1078629595 1889791364 1495816870 2092675451\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "2\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-duplicates-5",
+    "input": "5\n857530396 857530396 857530396 -1164320582 857530396\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "duplicates"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-equal-5",
+    "input": "5\n-412486473 -412486473 -412486473 -412486473 -412486473\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "equal"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "10\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-10",
+    "input": "10\n-1736004931 -1567190786 -1372080602 267777707 388653380 629872967 897157248 1509332899 1697797839 1895065994\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-descending-10",
+    "input": "10\n2070722478 1826949931 1451412034 1212978235 1171521213 33115662 -267634597 -1036231240 -1227682618 -2088838115\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "descending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "5\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-random-10",
+    "input": "10\n-840940040 463765963 1720698772 255559741 1866266467 -1842119600 71788782 -695817694 1676579534 1999889343\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "2\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-duplicates-10",
+    "input": "10\n2038651476 2038651476 -158615575 2038651476 -158615575 -158615575 1893933226 1893933226 1893933226 -158615575\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "duplicates"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-equal-10",
+    "input": "10\n-1285867801 -1285867801 -1285867801 -1285867801 -1285867801 -1285867801 -1285867801 -1285867801 -1285867801 -1285867801\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "equal"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "30\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-30",
+    "input": "30\n-2056953574 -1989611121 -1724091035 -1624577921 -1398418210 -1231337055 -791156354 -731430981 -694089345 -611690099 -507060001 -398473732 -336377888 -263695388 -250697655 -125914698 -2767070 30643814 120771076 184120476 367713589 757726616 1022981999 1025905335 1273337881 1517968960 1727099777 1803360402 1931111438 2090030039\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-descending-30",
+    "input": "30\n2116007395 1841605502 1826312166 1722466249 1533292026 1484414517 1448184312 1321508872 1005356076 788545926 385967390 173548974 9939270 -21421278 -47173605 -790090423 -878592947 -968372568 -977659203 -1020534437 -1217594968 -1228627812 -1318439584 -1338888062 -1565393702 -1689159551 -1851879347 -1943142764 -2036165746 -2141169389\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "descending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "8\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-random-30",
+    "input": "30\n-570179618 -720058864 1856459199 443692031 1997899146 1316051498 -1461049217 -1451127456 -831449471 -1232716212 -155033395 -1839109437 -1258293623 1244324780 717866753 1588352294 1573529340 -631173202 -1705946010 1432272588 935635034 1232815494 1164604311 2096536287 -1618217672 2008331661 -1809561788 -1536789599 -667483060 -932202197\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "3\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-duplicates-30",
+    "input": "30\n566110619 566110619 1027391872 566110619 1027391872 566110619 566110619 1027391872 1559544294 566110619 566110619 566110619 566110619 1027391872 566110619 1559544294 1027391872 1027391872 1559544294 1027391872 1559544294 1027391872 1027391872 1559544294 566110619 1027391872 1559544294 1559544294 1027391872 1559544294\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "duplicates"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-equal-30",
+    "input": "30\n1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950 1518085950\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "equal"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "17\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-17-0",
+    "input": "17\n-1982437498 -1787847118 -1739864038 -1643863480 -774198904 -512703356 -420468004 -107892740 -69558118 808666362 1066288364 1171672641 1271697408 1953207844 1998167398 2011820335 2120759848\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-descending-9-1",
+    "input": "9\n1574796434 1075702515 760618064 -316212037 -778602109 -1125134921 -1416041891 -1521352898 -1728557751\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "descending"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "7\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-random-20-2",
+    "input": "20\n1340120462 -2141372347 2098081776 -1301225282 695500797 1968004070 -1376868339 -1340600542 730187756 -58765777 -1518175798 1630122255 698199173 1388960109 -82890632 -300071092 702648871 -1188722253 2032240612 -383167455\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "random"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "3\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-duplicates-8-3",
+    "input": "8\n1918853416 -1423435768 1918853416 -1423435768 1918853416 1367480229 1918853416 1918853416\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "duplicates"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-equal-3-4",
+    "input": "3\n1915174104 1915174104 1915174104\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "equal"
+    ]
+  },
+  {
+    "description": "deterministic variant of the stated input shape; output from the reference program",
+    "expected": "24\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-variant-ascending-24-5",
+    "input": "24\n-2089747096 -1790291160 -1492223294 -910304702 -599757081 -542598950 -358031444 -329393330 -153452684 -81744761 105803441 190884473 684533198 728133916 757273224 932467062 989321810 1033980240 1208659789 1488873902 1665744132 1723710880 1875520007 1964497030\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "structural-variant",
+      "ascending"
+    ]
+  }
+]
