@@ -200,8 +200,12 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                 stream = result.get(key)
                 if isinstance(stream, str) and stream:
                     lines.append(f"  Compiler {label}: {stream[:1_000]}")
-        elif name == "originality":
-            lines.append(f"  Similarity flagged for review: {result.get('flagged_for_human_review', 'N/A')}")
+        elif name in {"originality", "similarity"} or result.get("analyzer") == "similarity_flag":
+            lines.append(f"  {result.get('summary', 'Similarity result unavailable.')}")
+            for row in (result.get("per_file_similarity") or [])[:10]:
+                lines.append(f"    {row.get('similarity', 0):.2f}  {row.get('file')}")
+            for pair in (result.get("cohort_flagged_pairs") or [])[:10]:
+                lines.append(f"  Cohort pair above threshold: {pair['files'][0]} <-> {pair['files'][1]} ({pair['similarity']:.2f})")
 
     failures: list[str] = []
     for metric_name in ("correctness", "logical"):

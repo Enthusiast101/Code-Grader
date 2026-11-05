@@ -114,31 +114,19 @@
       "grade_contribution": true
     },
     {
-      "name": "originality",
+      "name": "similarity",
       "analyzer": "similarity_flag",
-      "weight": 0.0,
-      "enabled": false,
-      "params": {
-        "corpus_dir": "examples/leetcode/1192-critical-connections/originality_corpus",
-        "flag_threshold": 0.85,
-        "max_files": 5000,
-        "shingle_size": 5
-      },
-      "max_points": 0,
-      "grade_contribution": false
-    },
-    {
-      "name": "runtime_efficiency",
-      "analyzer": "runtime_profile",
       "weight": 0.1,
-      "max_points": 10,
-      "grade_contribution": true,
       "enabled": true,
       "params": {
-        "testset_path": null,
-        "target_runtime_ms": 1000,
-        "repetitions": 3
-      }
+        "corpus_dir": "examples/leetcode/1192-critical-connections/originality_corpus",
+        "low_threshold": 0.35,
+        "flag_threshold": 0.85,
+        "shingle_size": 8,
+        "max_files": 5000
+      },
+      "max_points": 10,
+      "grade_contribution": true
     }
   ],
   "llm_review": {

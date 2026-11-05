@@ -1,0 +1,15 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "logical-error",
+      "severity": "high",
+      "anchor": "if (items[i].start < last->end) {",
+      "line": 28,
+      "source_excerpt": "if (items[i].start < last->end) {",
+      "description": "Closed intervals that share an endpoint overlap, so the test must be start <= end. With < the touching intervals [1,4] and [4,5] stay separate (edge cases touching-pair and touching-chain)."
+    }
+  ],
+  "similarity_expectation": "submissions/student_kim.c reuses the struct, comparator and input code but merges differently: similarity about 0.67, partial credit.",
+  "note": "Instructor-side regression oracle. Do not upload this file or expose it to the grading LLM."
+}

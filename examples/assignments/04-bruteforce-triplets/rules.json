@@ -89,14 +89,16 @@
       "grade_contribution": true
     },
     {
-      "name": "runtime_efficiency",
-      "analyzer": "runtime_profile",
+      "name": "similarity",
+      "analyzer": "similarity_flag",
       "weight": 0.1,
       "enabled": true,
       "params": {
-        "testset_path": "examples/assignments/04-bruteforce-triplets/runtime_cases.json",
-        "target_runtime_ms": 250,
-        "repetitions": 3
+        "corpus_dir": "submissions",
+        "low_threshold": 0.35,
+        "flag_threshold": 0.85,
+        "shingle_size": 8,
+        "max_files": 5000
       },
       "max_points": 10,
       "grade_contribution": true
@@ -123,20 +125,6 @@
       },
       "max_points": 10,
       "grade_contribution": true
-    },
-    {
-      "name": "originality",
-      "analyzer": "similarity_flag",
-      "weight": 0.0,
-      "enabled": false,
-      "params": {
-        "corpus_dir": "submissions",
-        "flag_threshold": 0.85,
-        "max_files": 5000,
-        "shingle_size": 5
-      },
-      "max_points": 0,
-      "grade_contribution": false
     }
   ]
 }

@@ -1,0 +1,15 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "memory-leak",
+      "severity": "medium",
+      "anchor": "grid[r] = malloc((size_t)cols + 1);",
+      "line": 59,
+      "source_excerpt": "grid[r] = malloc((size_t)cols + 1);",
+      "description": "Every grid row and the row-pointer array are allocated but never freed, so each run leaks R*(C+1) + R*sizeof(char*) bytes (Valgrind definitely lost)."
+    }
+  ],
+  "similarity_expectation": "The graded submission is original (max similarity about 0.25, full credit). In the cohort, student_01.c and student_03.c are the same program with renamed identifiers (1.0).",
+  "note": "Instructor-side regression oracle. Do not upload this file or expose it to the grading LLM."
+}

@@ -135,8 +135,10 @@ def _run_similarity(context: AnalyzerContext) -> dict[str, Any]:
     from grading_agent.analyzers.similarity import run_similarity_flag
     return run_similarity_flag(
         context.source_code,
-        context.params["resolved_corpus_dir"],
+        context.params.get("resolved_corpus_dir"),
         flag_threshold=context.params.get("flag_threshold", settings.ANALYZER_SIMILARITY_THRESHOLD),
+        low_threshold=context.params.get("low_threshold", settings.ANALYZER_SIMILARITY_LOW_THRESHOLD),
+        submission_name=context.params.get("submission_name") or context.source_filename,
         max_files=context.params.get("max_files", settings.ANALYZER_SIMILARITY_MAX_FILES),
         shingle_size=context.params.get("shingle_size", settings.ANALYZER_SIMILARITY_SHINGLE_SIZE),
         max_file_bytes=context.params.get("max_file_bytes", settings.ANALYZER_SIMILARITY_MAX_FILE_BYTES),

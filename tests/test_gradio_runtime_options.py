@@ -186,25 +186,20 @@ def test_rules_upload_populates_editor_and_limits(tmp_path):
     assert source_hash == ui_app._sha256_text(content)
 
 
-def test_legacy_rules_upload_migrates_old_weights_and_removes_runtime_metric(tmp_path, monkeypatch):
-    names_and_caps = [
-        ("correctness", 20), ("syntax", 10), ("structure", 10),
-        ("modularity", 10), ("complexity", 10), ("logical", 10),
-        ("memory_safety", 10), ("readability", 10), ("originality", 10),
-    ]
-    canonical_metrics = [
-        {"name": name, "analyzer": "source", "weight": cap / 100, "max_points": cap,
-         "enabled": True, "params": {}}
-        for name, cap in names_and_caps
-    ]
-    (tmp_path / "rules.json").write_text(json.dumps({"metrics": canonical_metrics}), encoding="utf-8")
+def test_legacy_rules_upload_replaces_runtime_metric_with_similarity(tmp_path, monkeypatch):
+    names = ["correctness", "syntax", "structure", "modularity", "complexity", "logical", "memory_safety", "readability"]
     old_metrics = [
-        {"name": name, "analyzer": "source", "weight": 0.1, "enabled": True, "params": {}}
-        for name, _ in names_and_caps[:-1]
+        {"name": name, "analyzer": "source", "weight": 0.2 if name == "correctness" else 0.1,
+         "max_points": 20 if name == "correctness" else 10, "enabled": True, "params": {}}
+        for name in names
     ]
-    old_metrics.append({
-        "name": "runtime_efficiency", "analyzer": "runtime_profile", "weight": 0.05,
+    old_metrics.insert(6, {
+        "name": "runtime_efficiency", "analyzer": "runtime_profile", "weight": 0.1, "max_points": 10,
         "enabled": True, "params": {"testset_path": None},
+    })
+    old_metrics.append({
+        "name": "originality", "analyzer": "similarity_flag", "weight": 0.0, "max_points": 0,
+        "enabled": False, "params": {"corpus_dir": "cohort", "flag_threshold": 0.9},
     })
     old_rules_path = tmp_path / "old_rules.json"
     old_text = json.dumps({
@@ -216,12 +211,18 @@ def test_legacy_rules_upload_migrates_old_weights_and_removes_runtime_metric(tmp
 
     editor_text, _, _, status, source_hash = ui_app.load_rules_editor_from_upload(str(old_rules_path))
     migrated = json.loads(editor_text)
+    by_name = {metric["name"]: metric for metric in migrated["metrics"]}
 
-    assert [metric["name"] for metric in migrated["metrics"]] == [name for name, _ in names_and_caps]
-    assert [metric["max_points"] for metric in migrated["metrics"]] == [cap for _, cap in names_and_caps]
-    assert sum(metric["weight"] for metric in migrated["metrics"]) == 1.0
+    assert "runtime_efficiency" not in by_name and "originality" not in by_name
+    assert [metric["name"] for metric in migrated["metrics"]][6] == "similarity"
+    similarity = by_name["similarity"]
+    assert similarity["analyzer"] == "similarity_flag" and similarity["enabled"] is True
+    assert (similarity["weight"], similarity["max_points"]) == (0.1, 10)
+    assert similarity["params"]["corpus_dir"] == "cohort"
+    assert similarity["params"]["flag_threshold"] == 0.9
+    assert round(sum(metric["weight"] for metric in migrated["metrics"]), 6) == 1.0
     assert "rubric" not in migrated
-    assert "runtime_efficiency removed" in status
+    assert "replaced by the similarity metric" in status
     assert source_hash == ui_app._sha256_text(old_text)
 
 

@@ -34,7 +34,7 @@ def apply_metric_scores(
     } if isinstance(llm_metrics, list) else {}
     deterministic_metrics = {
         "io_tests", "edge_case_runner", "runtime_profile", "memory_safety",
-        "compiler_diagnostics",
+        "compiler_diagnostics", "similarity_flag",
     }
 
     for metric in metrics:

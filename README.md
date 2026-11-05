@@ -46,9 +46,20 @@ If model compression does not reduce the payload, changes protected information,
 
 ## Metric scoring and reports
 
-The LLM returns an integer 0–10 level for each metric that no completed analyzer or executed test measures, using the anchored levels in `rubrics/default_metric_rubric.json`; Python converts levels to points. Executed correctness and logical test pass rates and completed analyzers remain authoritative and are not sent for rating. Metric scores are shown against the configured `max_points` caps; the root rules allocate 20 points to correctness and 10 points to each of syntax, structure, modularity, logical, memory safety, complexity, readability, and originality. A completed deterministic analyzer score is used when a valid LLM rating is unavailable. Inconclusive evidence remains unscored, and the overall grade is withheld when a required metric cannot be measured. Reports show both the earned metric points and LLM rating where available; the overall grade is out of 100.
+The LLM returns an integer 0–10 level for each metric that no completed analyzer or executed test measures, using the anchored levels in `rubrics/default_metric_rubric.json`; Python converts levels to points. Executed correctness and logical test pass rates and completed analyzers remain authoritative and are not sent for rating. Metric scores are shown against the configured `max_points` caps; the root rules allocate 20 points to correctness and 10 points to each of syntax, structure, modularity, logical, memory safety, complexity, readability, and similarity. A completed deterministic analyzer score is used when a valid LLM rating is unavailable. Inconclusive evidence remains unscored, and the overall grade is withheld when a required metric cannot be measured. Reports show both the earned metric points and LLM rating where available; the overall grade is out of 100.
 
 Every metric explanation in the Gradio and text reports preserves up to three concise, metric-specific sentences (up to 60 words/420 characters) so the rationale can explain evidence, impact, and rubric alignment. Generic RSI filler and separate “Score basis” boilerplate are omitted. Successful compiler diagnostics such as `compiled=True; warnings=0; errors=0` are not emitted as syntax defects.
+
+### Similarity metric
+
+`similarity` (analyzer `similarity_flag`, 10 points) replaces the former runtime-efficiency metric. It compares the submission with every other `.c` file in `params.corpus_dir` using normalized 8-token shingles: comments, literals and identifier names are ignored, so renaming variables or reformatting does not hide copying. The highest similarity `s` to any other file is scored as:
+
+- no `corpus_dir`, a missing directory, or no other C files: full marks;
+- `s <= low_threshold` (default 0.35): full marks;
+- `s >= flag_threshold` (default 0.85): zero, and the pair is flagged for instructor review;
+- in between: linear partial credit.
+
+The report also includes the full pairwise similarity matrix of every file in the directory, so copied pairs that do not involve the graded student are visible too. A high score is a review signal, not proof of plagiarism. The submission's own file (same path, or same name and contents) is never compared with itself.
 
 ## Generic assignment rules and test data
 

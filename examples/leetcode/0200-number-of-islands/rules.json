@@ -1,0 +1,134 @@
+{
+  "problem": "Read R and C (1 <= R, C <= 300), then R lines of C characters, each '0' (water) or '1' (land). Print the number of islands, where an island is a maximal group of land cells connected horizontally or vertically. Release every allocation before exiting.",
+  "problem_contract": {
+    "description": "Count 4-connected components of land cells.",
+    "input_range": "1 <= R, C <= 300; each row has exactly C characters from {0, 1}",
+    "output_rule": "Print the island count followed by a newline.",
+    "memory_requirement": "Release every heap allocation before exiting.",
+    "required_time_complexity": "O(R * C)"
+  },
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/leetcode/0200-number-of-islands/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0200-number-of-islands/testcases.json"
+      },
+      "max_points": 20,
+      "grade_contribution": true
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "expect_helpers": true,
+        "min_functions": 2
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0200-number-of-islands/edge_cases.json"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 12,
+        "max_function_length": 80,
+        "required": "O(R * C)"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0200-number-of-islands/memory_cases.json",
+        "run_sanitizers": true
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "similarity",
+      "analyzer": "similarity_flag",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "corpus_dir": "examples/leetcode/0200-number-of-islands/submissions",
+        "low_threshold": 0.35,
+        "flag_threshold": 0.85,
+        "shingle_size": 8,
+        "max_files": 5000
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  }
+}

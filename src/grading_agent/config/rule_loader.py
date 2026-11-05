@@ -388,10 +388,20 @@ def load_rules(
 
         if enabled and analyzer == "similarity_flag":
             corpus_dir = params.get("corpus_dir")
-            if not isinstance(corpus_dir, str) or not corpus_dir.strip():
+            low = params.get("low_threshold", settings.ANALYZER_SIMILARITY_LOW_THRESHOLD)
+            high = params.get("flag_threshold", settings.ANALYZER_SIMILARITY_THRESHOLD)
+            if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in (low, high)) or not 0 <= low < high <= 1:
                 raise RuleValidationError(
-                    f"'{name}.params.corpus_dir' must be a non-empty directory path."
+                    f"'{name}.params' needs 0 <= low_threshold < flag_threshold <= 1."
                 )
+            # The comparison directory is optional: without one (or when it does
+            # not exist) the analyzer awards full similarity marks.
+            if corpus_dir in (None, "") or (isinstance(corpus_dir, str) and not corpus_dir.strip()):
+                normalized["params"]["resolved_corpus_dir"] = None
+                corpus_dir = None
+            elif not isinstance(corpus_dir, str):
+                raise RuleValidationError(f"'{name}.params.corpus_dir' must be a directory path or null.")
+        if enabled and analyzer == "similarity_flag" and corpus_dir:
             candidate = Path(corpus_dir.strip().replace("\\", "/"))
             if PureWindowsPath(corpus_dir.strip()).is_absolute() or PureWindowsPath(corpus_dir.strip()).drive:
                 raise RuleValidationError("similarity corpus_dir must be project-relative.")
@@ -400,8 +410,6 @@ def load_rules(
             resolved_dir = (project_root / candidate).resolve()
             if not resolved_dir.is_relative_to(project_root):
                 raise RuleValidationError("similarity corpus_dir must not escape the project root.")
-            if not resolved_dir.is_dir():
-                raise RuleValidationError(f"Similarity corpus directory does not exist: {corpus_dir}")
             normalized["params"]["resolved_corpus_dir"] = str(resolved_dir)
 
         if enabled and analyzer == "runtime_profile":
@@ -483,7 +491,11 @@ def load_rules(
                 raise RuleValidationError(f"'{name}.params.max_files' must be positive.")
             if isinstance(shingle_size, bool) or not isinstance(shingle_size, int) or shingle_size < settings.ANALYZER_SIMILARITY_MIN_SHINGLE_SIZE:
                 raise RuleValidationError(f"'{name}.params.shingle_size' must be >= {settings.ANALYZER_SIMILARITY_MIN_SHINGLE_SIZE}.")
-            normalized["params"].update({"flag_threshold": threshold, "max_files": max_files, "shingle_size": shingle_size})
+            low_threshold = float(params.get("low_threshold", settings.ANALYZER_SIMILARITY_LOW_THRESHOLD))
+            normalized["params"].update({
+                "flag_threshold": threshold, "low_threshold": low_threshold,
+                "max_files": max_files, "shingle_size": shingle_size,
+            })
 
 
         normalized_metrics.append(normalized)

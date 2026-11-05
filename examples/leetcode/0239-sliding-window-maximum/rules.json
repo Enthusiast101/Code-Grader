@@ -1,0 +1,133 @@
+{
+  "problem": "Read n and k (1 <= k <= n <= 100000), then n integers (each between -10000 and 10000). For every window of k consecutive values, from left to right, print its maximum. Print the n-k+1 maxima on one line separated by single spaces, followed by a newline. O(n) time is required.",
+  "problem_contract": {
+    "description": "Sliding window maximum using a monotonic deque.",
+    "input_range": "1 <= k <= n <= 100000; -10000 <= value <= 10000",
+    "output_rule": "One line with n-k+1 space-separated maxima, then a newline.",
+    "required_time_complexity": "O(n)"
+  },
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/leetcode/0239-sliding-window-maximum/submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0239-sliding-window-maximum/testcases.json"
+      },
+      "max_points": 20,
+      "grade_contribution": true
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "expect_helpers": true,
+        "min_functions": 2
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0239-sliding-window-maximum/edge_cases.json"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 12,
+        "max_function_length": 80,
+        "required": "O(n)"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0239-sliding-window-maximum/memory_cases.json",
+        "run_sanitizers": true
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "similarity",
+      "analyzer": "similarity_flag",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "corpus_dir": null,
+        "low_threshold": 0.35,
+        "flag_threshold": 0.85,
+        "shingle_size": 8,
+        "max_files": 5000
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  }
+}

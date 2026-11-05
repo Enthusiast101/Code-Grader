@@ -1,0 +1,15 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "complexity",
+      "severity": "high",
+      "anchor": "for (int i = start + 1; i < start + width; i++) {",
+      "line": 8,
+      "source_excerpt": "for (int i = start + 1; i < start + width; i++) {",
+      "description": "Each window is rescanned, giving O(n*k) time (2.5*10^9 steps for n = 100000, k = 50000), which times out on the large edge case. A monotonic deque gives O(n)."
+    }
+  ],
+  "similarity_expectation": "No comparison directory is configured (corpus_dir is null), so similarity is full marks.",
+  "note": "Instructor-side regression oracle. Do not upload this file or expose it to the grading LLM."
+}

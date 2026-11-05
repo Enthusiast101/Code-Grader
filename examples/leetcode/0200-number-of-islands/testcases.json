@@ -1,0 +1,26 @@
+[
+  {
+    "id": "leetcode-sample",
+    "description": "Statement example.",
+    "input": "4 5\n11000\n11000\n00100\n00011\n",
+    "expected": "3\n"
+  },
+  {
+    "id": "one-big",
+    "description": "One irregular island.",
+    "input": "4 5\n11110\n11010\n11000\n00000\n",
+    "expected": "1\n"
+  },
+  {
+    "id": "checkerboard",
+    "description": "Diagonal neighbours do not connect.",
+    "input": "3 3\n101\n010\n101\n",
+    "expected": "5\n"
+  },
+  {
+    "id": "random-10x12",
+    "description": "Seeded random map.",
+    "input": "10 12\n101011100000\n000010100000\n010010001011\n111101010111\n101111000100\n110011101110\n100000101001\n000101100000\n111111001101\n011100011110\n",
+    "expected": "10\n"
+  }
+]

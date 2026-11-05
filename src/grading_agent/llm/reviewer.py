@@ -78,6 +78,8 @@ def _evidence_priority(entry: dict[str, Any]) -> int:
         return 0
     if facts.get("sanitizer_error") is True or facts.get("compiled") is False:
         return 0
+    if facts.get("flagged_for_human_review") is True:
+        return 0
     for key in ("error_count", "warning_count", "finding_count", "tests_failed", "overflow_tests_failed"):
         if _positive_count(facts.get(key)):
             return 0
@@ -108,7 +110,7 @@ def _compact_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "compiler_diagnostics", "static_analysis", "static_finding", "model_audit", "model_audit_finding",
         "memory_safety_measurement", "valgrind_result", "sanitizer_result", "runtime_measurement",
         "readability_measurement", "source_metric", "scope_limitation", "coverage_summary",
-        "undefined_behavior_finding", "address_sanitizer_finding",
+        "undefined_behavior_finding", "address_sanitizer_finding", "similarity_measurement",
     }
     selected = [item for item in ledger if item.get("kind") in priority_kinds]
     source_lines = [item for item in ledger if item.get("kind") == "source_line"]
@@ -4143,6 +4145,7 @@ def _rubric_metric_levels(rules: dict[str, Any]) -> dict[str, dict[str, str]]:
 _MEASUREMENT_ONLY_ANALYZERS = frozenset({"runtime_profile"})
 _DETERMINISTIC_SCORE_ANALYZERS = frozenset({
     "io_tests", "edge_case_runner", "runtime_profile", "memory_safety", "compiler_diagnostics",
+    "similarity_flag",
 })
 
 

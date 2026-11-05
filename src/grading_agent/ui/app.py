@@ -77,7 +77,7 @@ def _sha256_text(text: str) -> str:
 
 
 def _normalize_legacy_metric_profile(rules: dict[str, Any]) -> dict[str, Any] | None:
-    """Migrate the old weighted metric set to the current nine-metric profile."""
+    """Replace the retired runtime_efficiency metric with the similarity metric."""
     supplied = rules.get("metrics")
     if not isinstance(supplied, list):
         return None
@@ -94,30 +94,31 @@ def _normalize_legacy_metric_profile(rules: dict[str, Any]) -> dict[str, Any] | 
     if "runtime_efficiency" not in supplied_by_name or not set(supplied_by_name).issubset(legacy_names):
         return None
 
-    canonical_path = PROJECT_ROOT / "rules.json"
-    try:
-        canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
-        canonical_metrics = canonical.get("metrics")
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(canonical_metrics, list):
-        return None
-
+    # runtime_efficiency is replaced by the similarity metric with the same
+    # weight and point cap. A legacy "originality" entry contributes its
+    # comparison directory and is folded into the new metric.
+    runtime = supplied_by_name["runtime_efficiency"]
+    originality = supplied_by_name.get("originality", {})
+    old_params = originality.get("params", {}) if isinstance(originality.get("params"), dict) else {}
+    similarity = {
+        "name": "similarity",
+        "analyzer": "similarity_flag",
+        "weight": runtime.get("weight", 0.1),
+        "enabled": True,
+        "params": {
+            "corpus_dir": old_params.get("corpus_dir"),
+            "low_threshold": old_params.get("low_threshold", settings.ANALYZER_SIMILARITY_LOW_THRESHOLD),
+            "flag_threshold": old_params.get("flag_threshold", settings.ANALYZER_SIMILARITY_THRESHOLD),
+            "shingle_size": old_params.get("shingle_size", settings.ANALYZER_SIMILARITY_SHINGLE_SIZE),
+        },
+        "max_points": runtime.get("max_points", 10),
+        "grade_contribution": runtime.get("grade_contribution", True),
+    }
     migrated: list[dict[str, Any]] = []
-    for template in canonical_metrics:
-        if not isinstance(template, dict):
+    for item in supplied:
+        if not isinstance(item, dict) or item.get("name") == "originality":
             continue
-        name = str(template.get("name", ""))
-        old = supplied_by_name.get(name, {})
-        normalized = json.loads(json.dumps(template))
-        params = dict(normalized.get("params", {}))
-        if isinstance(old.get("params"), dict):
-            params.update(old["params"])
-        normalized["params"] = params
-        migrated.append(normalized)
-
-    if not migrated:
-        return None
+        migrated.append(similarity if item.get("name") == "runtime_efficiency" else item)
     removed = sorted(set(supplied_by_name) - {metric["name"] for metric in migrated})
     added = sorted({metric["name"] for metric in migrated} - set(supplied_by_name))
     rules["metrics"] = migrated
@@ -127,7 +128,7 @@ def _normalize_legacy_metric_profile(rules: dict[str, Any]) -> dict[str, Any] | 
     rules.pop("rubrics", None)
     return {
         "applied": True,
-        "profile": "current_nine_metric_point_caps",
+        "profile": "runtime_efficiency_replaced_by_similarity",
         "removed_metrics": removed,
         "added_metrics": added,
     }
@@ -563,7 +564,7 @@ def load_rules_editor_from_upload(rules_upload: Any):
         editor_content = json.dumps(parsed, indent=2) if migration else content
         status = f"Loaded {path.name}; edit the JSON or use the controls below."
         if migration:
-            status += " Legacy metrics updated to the current nine-metric profile; runtime_efficiency removed."
+            status += " runtime_efficiency was replaced by the similarity metric (same weight and points)."
         return editor_content, time_limit, memory_limit, status, digest
     except Exception as exc:
         logger.warning("Could not load rules into Gradio editor: %s", exc)

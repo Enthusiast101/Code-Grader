@@ -230,6 +230,17 @@ def build_evidence_ledger(
                 measurement_note=metric.get("measurement_note"),
             )
 
+        elif metric.get("analyzer") == "similarity_flag" or name in {"similarity", "originality"}:
+            _add(
+                ledger, "E-SIMILARITY-001", "similarity_measurement",
+                str(metric.get("summary") or "Similarity measurement recorded."),
+                max_similarity=metric.get("max_similarity"),
+                most_similar_file=metric.get("most_similar_file"),
+                files_compared=metric.get("files_compared"),
+                flagged_for_human_review=metric.get("flagged_for_human_review"),
+                score=metric.get("score"),
+            )
+
         elif name == "runtime_efficiency":
             _add(
                 ledger, "E-RUNTIME-001", "runtime_measurement",

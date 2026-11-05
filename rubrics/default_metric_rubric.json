@@ -1,5 +1,5 @@
 {
-  "version": "2.0",
+  "version": "2.1",
   "scale": {
     "minimum": 0,
     "maximum": 100,
@@ -11,7 +11,7 @@
       "modularity": 10,
       "complexity": 10,
       "logical": 10,
-      "runtime_efficiency": 10,
+      "similarity": 10,
       "memory_safety": 10,
       "readability": 10
     },
@@ -67,7 +67,7 @@
         "0": "Cannot finish within limits for the stated input sizes (for example exponential where polynomial is required)."
       }
     },
-    "runtime_efficiency": "Use measured runtimes against the configured target across the executed tests. Without measurements, leave unmeasured.",
+    "similarity": "Measured, not estimated: the submission is compared with every other C file in the configured comparison directory using normalized token shingles (identifiers and formatting ignored). Without a directory, similarity earns full marks. Otherwise credit is full at or below the low threshold and falls linearly to zero at the review threshold. High similarity is a signal for instructor review, not proof of plagiarism.",
     "memory_safety": {
       "criterion": "Every enabled check must complete. Distinguish actual defects from tool failures and incomplete executions. Tool failure is unmeasured, not clean.",
       "levels": {
@@ -86,7 +86,6 @@
         "2": "Formatting or identifiers make the logic hard to follow.",
         "0": "Unreadable without reformatting."
       }
-    },
-    "originality": "Token and structural similarity are review signals, not proof of plagiarism. No punitive deduction without explicit instructor policy and human review."
+    }
   }
 }

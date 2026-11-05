@@ -18,6 +18,12 @@ from typing import Any, Callable
 
 MAX_GENERATED_CASES = 80
 MAX_INPUT_CHARS = 20_000
+# Limits on what the generator may write. The schema is enforced while the
+# model decodes, so a string must close at its limit: a small model that
+# starts repeating digits (e.g. a 30x30 grid) cannot run past the token budget.
+GENERATED_INPUT_MAX_CHARS = 1_200
+GENERATED_OUTPUT_MAX_CHARS = 600
+CONTRACT_ITEM_MAX_CHARS = 160
 MAX_SUBMISSION_SOURCE_BYTES = 100_000
 
 
@@ -584,7 +590,8 @@ def _verify_expected_outputs(
                 "items": {
                     "type": "object",
                     "properties": {
-                        "id": {"type": "string"},
+                        # Results are linked to tests by id; the enum pins the ids.
+                        "id": {"type": "string", "enum": [str(case["id"]) for case in candidate_cases]},
                         "input": {"type": "string", "maxLength": MAX_INPUT_CHARS, "description": "Exact stdin text; empty is valid when the assignment reads no stdin."},
                         "input_is_valid": {"type": "boolean"},
                         "expected_output": {"type": "string"},
@@ -742,13 +749,8 @@ def _verify_expected_outputs(
                 "expected_output_verification_failed",
                 f"Verifier returned unexpected test IDs {unexpected_ids[:5]}.",
             )
-        for case in candidate_cases:
-            case_id = str(case["id"])
-            if checks[case_id]["input"] != case["input"]:
-                raise TestGenerationError(
-                    "expected_output_verification_failed",
-                    f"Verifier associated an output with the wrong input for test {case_id}.",
-                )
+        # A differing input echo is handled per case below: one oversized or
+        # mis-copied input must not invalidate every other verification.
         return checks
 
     verifier_errors: list[str] = []
@@ -812,11 +814,19 @@ def _verify_expected_outputs(
                 "expected_output_verification_failed",
                 f"The independent verifier omitted test {case_id}. No generated outputs were accepted.",
             )
-        if check.get("input") != case["input"]:
-            raise TestGenerationError(
-                "expected_output_verification_failed",
-                f"The independent verifier associated an output with the wrong input for test {case_id}.",
-            )
+        if _input_identity(str(check.get("input", "")), exact=stdin_unused) != _input_identity(case["input"], exact=stdin_unused):
+            # The verifier solved a different text than the real test input
+            # (typically a long input shortened to fit the model context), so
+            # its expected output cannot be trusted for this case.
+            rejected.append({
+                "id": case_id,
+                "reason": (
+                    "independent verifier's copy of the input differs from the test input "
+                    f"({len(str(check.get('input', '')))} vs {len(case['input'])} characters; long inputs may be "
+                    "shortened to fit the model context), so its expected output was not trusted"
+                ),
+            })
+            continue
         if check.get("input_is_valid") is not True:
             reason = check.get("reason")
             rejected.append({
@@ -919,16 +929,16 @@ def generate_assignment_test_spec(
     generation_schema = {
         "type": "object",
         "properties": {
-            "spec_summary": {"type": "string", "maxLength": 2_000},
-            "ambiguities": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+            "spec_summary": {"type": "string", "maxLength": 600},
+            "ambiguities": {"type": "array", "items": {"type": "string", "maxLength": CONTRACT_ITEM_MAX_CHARS}, "maxItems": 5},
             "inferred_contract": {
                 "type": "object",
                 "properties": {
-                    "input_format": {"type": "string"},
-                    "output_format": {"type": "string"},
-                    "constraints": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
-                    "semantics": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
-                    "formatting": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                    "input_format": {"type": "string", "maxLength": 300},
+                    "output_format": {"type": "string", "maxLength": 300},
+                    "constraints": {"type": "array", "items": {"type": "string", "maxLength": CONTRACT_ITEM_MAX_CHARS}, "maxItems": 8},
+                    "semantics": {"type": "array", "items": {"type": "string", "maxLength": CONTRACT_ITEM_MAX_CHARS}, "maxItems": 8},
+                    "formatting": {"type": "array", "items": {"type": "string", "maxLength": CONTRACT_ITEM_MAX_CHARS}, "maxItems": 6},
                 },
                 "required": ["input_format", "output_format", "constraints", "semantics", "formatting"],
             },
@@ -939,9 +949,9 @@ def generate_assignment_test_spec(
                 "items": {
                     "type": "object",
                     "properties": {
-                        "id": {"type": "string"},
-                        "input": {"type": "string", "maxLength": MAX_INPUT_CHARS, "description": "Exact stdin text; empty is valid when the assignment reads no stdin."},
-                        "expected_output": {"type": "string", "maxLength": MAX_INPUT_CHARS},
+                        "id": {"type": "string", "maxLength": 48},
+                        "input": {"type": "string", "maxLength": GENERATED_INPUT_MAX_CHARS, "description": "Exact stdin text; empty is valid when the assignment reads no stdin."},
+                        "expected_output": {"type": "string", "maxLength": GENERATED_OUTPUT_MAX_CHARS},
                         "tags": {"type": "array", "items": {"type": "string", "maxLength": 24}, "maxItems": 3},
                     },
                     "required": ["id", "input", "expected_output"],
@@ -979,7 +989,9 @@ def generate_assignment_test_spec(
             f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
             "id, input, expected_output, and up to three short tags. The input is the exact stdin text for one "
             "test (not a label such as 'normal' or 'edge'). When the input declares a count (for example "
-            "n), supply exactly that many values; keep large cases small enough to write out in full. "
+            f"n), supply exactly that many values. Keep every input under {GENERATED_INPUT_MAX_CHARS} "
+            "characters (use small sizes such as grids up to 6 x 6 or up to 30 values); large performance "
+            "cases already come from the instructor. "
             "The empty string is valid only when the "
             "assignment requires no stdin; whitespace-only text must never stand in for missing required "
             "input. Derive expected_output from the assignment contract, not from the submitted code. "
@@ -994,11 +1006,40 @@ def generate_assignment_test_spec(
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, sort_keys=True, ensure_ascii=False)},
     ]
-    result = request_json(
-        generation_messages,
-        generation_schema,
-        "assignment_test_generation_single_pass",
-    )
+    try:
+        result = request_json(
+            generation_messages,
+            generation_schema,
+            "assignment_test_generation_single_pass",
+        )
+    except Exception as first_error:
+        # Usually a response cut off at the token limit (finish_reason=length).
+        # Retry once asking for half as many, shorter cases instead of failing.
+        fewer = max(1, max_cases // 2)
+        retry_schema = json.loads(json.dumps(generation_schema))
+        retry_schema["properties"]["test_inputs"]["maxItems"] = fewer
+        retry_payload = dict(
+            payload,
+            maximum_cases=fewer,
+            requested_case_count=fewer,
+            previous_attempt_problem=(
+                "The previous answer was cut off or invalid. Return at most "
+                f"{fewer} cases, keep each input under 300 characters, and keep every contract "
+                "entry to one short sentence."
+            ),
+        )
+        retry_messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(retry_payload, sort_keys=True, ensure_ascii=False)},
+        ]
+        try:
+            result = request_json(retry_messages, retry_schema, "assignment_test_generation_single_pass_retry")
+        except Exception as retry_error:
+            raise TestGenerationError(
+                "generation_failed",
+                f"Test generation failed twice. First attempt: {' '.join(str(first_error).split())[:400]} | "
+                f"Shorter retry: {' '.join(str(retry_error).split())[:400]}",
+            ) from retry_error
     candidate = _validate_candidate(
         result,
         1,
@@ -1611,7 +1652,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v20-bounded-hints-input-identity-count-check",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":two-pass-llm-verified-outputs-v22-bounded-generation-output-and-retry",
         rsi_passes=1,
         max_cases=int(max_cases),
         temperature=float(temperature),

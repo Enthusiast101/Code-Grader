@@ -1149,3 +1149,67 @@ def test_declared_count_must_match_supplied_values_for_n_then_values_tasks():
     # Other input shapes are not checked by this rule.
     knapsack = "Read n and capacity W, then n positive item weights and n nonnegative item values."
     assert _declared_count_mismatch(knapsack, "2 5\n1 2\n") is None
+
+
+def test_one_mismatched_verifier_echo_rejects_only_that_case():
+    generated = sample_response()
+    generated["test_inputs"].append({"id": "long", "input": "1 " * 2 + "\n", "expected_output": "2\n", "tags": ["large"]})
+
+    def request(messages, schema, stage):
+        if stage == "assignment_test_generation_single_pass":
+            return generated
+        payload = json.loads(messages[1]["content"])
+        ids = schema["properties"]["verifications"]["items"]["properties"]["id"]["enum"]
+        assert sorted(ids) == sorted(item["id"] for item in payload["test_inputs_to_solve"])
+        response = verifier_response(payload["test_inputs_to_solve"])
+        for item in response["verifications"]:
+            if item["id"] == "long":
+                item["input"] = "1 ... [shortened] ...\n"  # the verifier saw a different text
+        return response
+
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=3,
+    )
+    assert sorted(case["id"] for case in spec["test_inputs"]) == ["basic", "negative"]
+    assert any(item["id"] == "long" and "copy of the input differs" in item["reason"] for item in spec["rejected_generated_cases"])
+
+
+def test_truncated_generation_retries_once_with_fewer_shorter_cases():
+    stages = []
+
+    def request(messages, schema, stage):
+        stages.append(stage)
+        payload = json.loads(messages[1]["content"])
+        if stage == "assignment_test_generation_single_pass":
+            assert schema["properties"]["test_inputs"]["items"]["properties"]["input"]["maxLength"] == 1200
+            raise RuntimeError("Malformed final assistant JSON; finish_reason=length")
+        if stage == "assignment_test_generation_single_pass_retry":
+            assert schema["properties"]["test_inputs"]["maxItems"] == 2
+            assert "cut off" in payload["previous_attempt_problem"]
+            return sample_response()
+        return verifier_response(payload["test_inputs_to_solve"])
+
+    spec, _ = generate_assignment_test_spec(
+        problem="Read two integers and print their sum.",
+        problem_contract={},
+        request_json=request,
+        max_cases=4,
+    )
+    assert stages[:2] == ["assignment_test_generation_single_pass", "assignment_test_generation_single_pass_retry"]
+    assert len(spec["test_inputs"]) == 2
+
+
+def test_generation_failing_twice_reports_both_attempts():
+    def request(messages, schema, stage):
+        raise RuntimeError(f"cut off in {stage}")
+
+    with pytest.raises(TestGenerationError, match="failed twice"):
+        generate_assignment_test_spec(
+            problem="Read two integers and print their sum.",
+            problem_contract={},
+            request_json=request,
+            max_cases=4,
+        )

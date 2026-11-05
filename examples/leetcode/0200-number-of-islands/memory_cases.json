@@ -1,0 +1,14 @@
+[
+  {
+    "id": "memory-sample",
+    "description": "Small input for Valgrind and ASan.",
+    "input": "4 5\n11000\n11000\n00100\n00011\n",
+    "expected": "3\n"
+  },
+  {
+    "id": "memory-single",
+    "description": "1 x 1 land.",
+    "input": "1 1\n1\n",
+    "expected": "1\n"
+  }
+]
