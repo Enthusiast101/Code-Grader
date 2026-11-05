@@ -1,0 +1,120 @@
+[
+  {
+    "expected": "4\n",
+    "id": "instructor-negative-values",
+    "input": "5\n-3 -2 -5 -1 0\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-duplicate-inside-lis",
+    "input": "4\n1 2 2 3\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "1\n",
+    "id": "instructor-single-element",
+    "input": "1\n42\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-integer-extremes",
+    "input": "5\n-2147483648 0 2147483647 -1 1\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-repeated-negative",
+    "input": "6\n-5 -5 -4 -4 -3 -3\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-single-element",
+    "input": "1\n100",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary",
+      "n=1",
+      "single_value"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "3\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-strictly_increasing_small",
+    "input": "3\n1 2 3",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "small",
+      "strictly_increasing"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "20\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-strictly_increasing_large",
+    "input": "20\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "large",
+      "strictly_increasing"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "4\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-duplicate_adjacent",
+    "input": "5\n1 2 2 3 4",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "adjacent",
+      "duplicate"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-n_min",
+    "input": "1\n1000000000",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "large_value",
+      "min_n"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "0\n",
+    "expected_output_source": "llm_reference",
+    "id": "generated-n_min_zero",
+    "input": "0\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "empty_input",
+      "min_n"
+    ]
+  }
+]

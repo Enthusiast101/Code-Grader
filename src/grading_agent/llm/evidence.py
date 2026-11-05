@@ -100,6 +100,39 @@ def build_evidence_ledger(
         for item in rules.get("metrics", [])
         if isinstance(item, dict) and item.get("enabled", True)
     }
+    tree = report.get("syntax_tree")
+    if isinstance(tree, dict) and tree.get("status") == "completed":
+        functions = ", ".join(
+            f"{fn['name']} (lines {fn['line_start']}-{fn['line_end']})" for fn in tree.get("functions", [])[:12]
+        )
+        _add(
+            ledger, "E-AST-SUMMARY-001", "syntax_tree",
+            f"Syntax tree: functions {functions or 'none'}; {len(tree.get('loops', []))} loop(s), "
+            f"nesting depth {tree.get('effective_loop_depth', tree.get('max_loop_depth'))} including calls; "
+            f"{tree.get('complexity_hint', '')}",
+            functions=[fn["name"] for fn in tree.get("functions", [])],
+            called_functions=tree.get("called_functions", []),
+            effective_loop_depth=tree.get("effective_loop_depth"),
+        )
+        risks: list[tuple[str, str, int | None]] = []
+        for item in tree.get("uses_after_free", []):
+            risks.append(("use_after_free", f"'{item['variable']}' is freed at line {item['freed_line']} and dereferenced at line {item['used_line']}.", item["used_line"]))
+        for item in tree.get("allocations_never_freed", []):
+            risks.append(("allocation_never_freed", f"Memory allocated into '{item['variable']}' at line {item['line']} is never passed to free().", item["line"]))
+        for item in tree.get("integer_divisions", []):
+            risks.append(("integer_division", f"Integer division '{item['expression']}' at line {item['line']} discards the fractional part.", item["line"]))
+        for item in tree.get("narrow_accumulators", []):
+            risks.append(("narrow_accumulator", f"'{item['variable']}' ({item['type']}) accumulates with {item['operator']} inside a loop at line {item['line']}; large totals may overflow.", item["line"]))
+        for item in tree.get("input_calls", []):
+            if item.get("name") in {"scanf", "fscanf"} and not item.get("result_checked"):
+                risks.append(("unchecked_scanf", f"The result of {item['name']} at line {item['line']} is not checked.", item["line"]))
+        for index, (category, statement, line) in enumerate(risks[:12], 1):
+            _add(
+                ledger, f"E-AST-RISK-{index:03d}", "syntax_tree_risk",
+                "Syntax-tree observation (structural, not execution-confirmed): " + statement,
+                category=category, line=line,
+            )
+
     configuration = report.get("configuration", {})
     metric_names = [
         item.get("name") for item in configuration.get("enabled_metrics", [])

@@ -12,6 +12,7 @@ dependencies = [
     "requests",
     "docker>=7.0.0",
     "lizard==1.17.10",
+    "pycparser>=2.21",
     "gradio>=5.0",
 ]
 

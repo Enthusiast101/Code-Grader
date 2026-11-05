@@ -126,16 +126,65 @@ _COUNT_THEN_VALUES = re.compile(
 )
 
 
-def _declared_count_mismatch(problem: str, test_input: str) -> str | None:
-    """Reject "n, then n values" inputs whose value count differs from n.
+_GRID_SHAPE = re.compile(
+    r"\b(?P<r>[A-Za-z])\s*(?:by|x|\u00d7|\*)\s*(?P<c>[A-Za-z])\s+(?:grid|matrix|board|table|array)\b"
+    r"|\b(?P<r2>[A-Za-z])\s+lines?\b[^.]{0,40}?\b(?P<c2>[A-Za-z])\s+(?:[\w-]+\s+){0,3}?(?:integers?|numbers?|values?|cells?)\b",
+    re.IGNORECASE,
+)
 
-    Applies only when the assignment states exactly that shape (for example
-    "Read n (...), followed by n signed 32-bit integers"). A generated case that
-    declares n=20000 but lists 100 values has no defined expected output, and
-    both model stages were observed to accept one.
+
+def _declared_grid_mismatch(problem: str, test_input: str) -> str | None:
+    """Reject "R C, then an R by C grid" inputs whose cell count differs from R*C.
+
+    A model asked for a 30 x 30 grid miscounts cells; the reference program
+    then fails (for example with StopIteration) and the case is wasted.
+    Applies only when the assignment names the grid shape and the header order
+    ("R and C", "R C", "R, C") is stated, and only to integer cells: either
+    R*C separate tokens or R tokens of C characters each (rows like ``0101``).
     """
-    if not isinstance(problem, str) or not _COUNT_THEN_VALUES.search(problem):
+    match = _GRID_SHAPE.search(problem)
+    if not match:
         return None
+    r, c = (match.group("r"), match.group("c")) if match.group("r") else (match.group("r2"), match.group("c2"))
+    if r.casefold() == c.casefold():
+        return None
+
+    def adjacent(first: str, second: str) -> bool:
+        return re.search(rf"\b{first}\s*(?:,|\band\b)?\s*{second}\b", problem) is not None
+
+    if adjacent(r, c):
+        order = (0, 1)
+    elif adjacent(c, r):
+        order = (1, 0)
+    else:
+        return None
+    tokens = test_input.split()
+    if len(tokens) < 2 or not all(re.fullmatch(r"[+-]?\d+", t) for t in tokens):
+        return None
+    rows, cols = int(tokens[order[0]]), int(tokens[order[1]])
+    if rows <= 0 or cols <= 0:
+        return None
+    cells = tokens[2:]
+    if len(cells) == rows * cols:
+        return None
+    if cols > 1 and len(cells) == rows and all(len(t.lstrip("+-")) == cols for t in cells):
+        return None
+    return f"input declares a {rows} x {cols} grid ({rows * cols} cells) but supplies {len(cells)}"
+
+
+def _declared_count_mismatch(problem: str, test_input: str) -> str | None:
+    """Reject inputs whose declared size disagrees with the values supplied.
+
+    Applies only when the assignment states the shape: "n, then n values"
+    (for example "Read n (...), followed by n signed 32-bit integers") or an
+    R by C grid. A generated case that declares n=20000 but lists 100 values
+    has no defined expected output, and both model stages were observed to
+    accept one.
+    """
+    if not isinstance(problem, str):
+        return None
+    if not _COUNT_THEN_VALUES.search(problem):
+        return _declared_grid_mismatch(problem, test_input)
     tokens = test_input.split()
     if not tokens:
         return None
@@ -171,8 +220,12 @@ def _validate_candidate(
     fallback_summary: str = "",
     fallback_contract: dict[str, Any] | None = None,
     allow_empty: bool = False,
+    expected_output_required: bool = True,
 ) -> dict[str, Any]:
     """Validate generated input/output pairs before independent verification.
+
+    With ``expected_output_required=False`` (an execution oracle computes the
+    outputs) a missing expected_output becomes the empty string.
 
     Empty stdin is preserved as a possible test input. The assignment contract
     and independent verifier—not a blanket non-empty-string rule—decide whether
@@ -250,6 +303,8 @@ def _validate_candidate(
         seen_ids.add(case_id)
         test_input = item.get("input", item.get("stdin"))
         expected_output = item.get("expected_output", item.get("expected"))
+        if expected_output is None and not expected_output_required:
+            expected_output = ""
         if not isinstance(test_input, str):
             rejected_cases.append({"id": case_id, "reason": "input is missing or is not text"})
             continue
@@ -442,6 +497,14 @@ def _assignment_statement_is_actionable(problem: str, problem_contract: dict[str
     return len(text) >= 32 and len(words) >= 6 and bool(has_task_verb)
 
 
+# Library calls a weak point may name; if the syntax tree shows the program
+# never calls one, the claim is about code that does not exist.
+_TREE_GROUNDED_CALLS = (
+    "strcpy", "strcat", "strncpy", "sprintf", "gets", "memcpy", "memmove", "memset",
+    "malloc", "calloc", "realloc", "free", "fgets", "strtok", "atoi", "qsort",
+)
+
+
 def analyze_submission_for_test_generation(
     *,
     problem: str,
@@ -449,8 +512,15 @@ def analyze_submission_for_test_generation(
     submission_source: str,
     request_json: Callable[[list[dict[str, str]], dict[str, Any], str], dict[str, Any] | None],
     submission_filename: str = "submission.c",
+    syntax_tree: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Understand the submitted C implementation with exactly one LLM call."""
+    """Understand the submitted C implementation with exactly one LLM call.
+
+    ``syntax_tree`` holds deterministic pycparser facts (functions, loops,
+    branch conditions, allocations, line-anchored edge-case targets). The model
+    uses it as exact structure and turns its targets into test dimensions;
+    weak points that contradict the tree are dropped afterwards.
+    """
     if not isinstance(submission_source, str) or not submission_source.strip():
         raise TestGenerationError("missing_submission_source", "A non-empty C submission is required before generating tests.")
     if len(submission_source.encode("utf-8")) > MAX_SUBMISSION_SOURCE_BYTES:
@@ -514,11 +584,19 @@ def analyze_submission_for_test_generation(
                     "problem_contract": problem_contract,
                     "submission_filename": submission_filename,
                     "submission_source": submission_source,
+                    **({"syntax_tree": syntax_tree} if syntax_tree else {}),
                     "instruction": (
                         "Understand this exact implementation in one pass. Return a concise summary "
                         "and only the most useful distinct observations within the schema limits. Identify "
                         "likely edge cases and missing checks that a separate test-generation call should "
                         "probe. Do not supply test inputs or expected outputs."
+                        + (
+                            " syntax_tree was parsed deterministically from this source: treat its functions, "
+                            "loops, conditions, calls, allocations and line numbers as exact, never claim a "
+                            "construct it does not contain, and base recommended_test_dimensions on its "
+                            "edge_case_targets that matter for the assignment."
+                            if syntax_tree else ""
+                        )
                     ),
                 },
                 sort_keys=True,
@@ -557,6 +635,19 @@ def analyze_submission_for_test_generation(
         analysis["likely_weak_points"],
         analysis["input_parsing_and_validation"] + analysis["control_flow_and_data_types"],
     )
+    if isinstance(syntax_tree, dict) and syntax_tree.get("status") == "completed":
+        called = set(syntax_tree.get("called_functions", []))
+        grounded = []
+        for point in kept:
+            missing = [
+                name for name in _TREE_GROUNDED_CALLS
+                if re.search(r"\b" + re.escape(name) + r"\b", point, re.IGNORECASE) and name not in called
+            ]
+            if missing:
+                dropped.append(point)
+            else:
+                grounded.append(point)
+        kept = grounded
     analysis["likely_weak_points"] = kept
     if dropped:
         analysis["dropped_contradictory_weak_points"] = dropped
@@ -869,6 +960,7 @@ def generate_assignment_test_spec(
     submission_analysis: dict[str, Any] | None = None,
     oracle: Any = None,
     oracle_trusted: bool = False,
+    syntax_tree: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Generate input/output pairs and independently verify them.
 
@@ -934,6 +1026,10 @@ def generate_assignment_test_spec(
     }
     if submission_analysis:
         base["submitted_implementation_analysis"] = submission_analysis
+    tree_targets = (syntax_tree or {}).get("edge_case_targets") if isinstance(syntax_tree, dict) else None
+    if tree_targets:
+        # Line-anchored boundaries from the student's parsed syntax tree.
+        base["syntax_tree_edge_case_targets"] = tree_targets[:15]
 
     generation_schema = {
         "type": "object",
@@ -969,6 +1065,19 @@ def generate_assignment_test_spec(
         },
         "required": ["ambiguities", "inferred_contract", "test_inputs"],
     }
+    # An execution oracle computes every expected output, so asking the model
+    # for them only spends output tokens (grid answers doubled the response
+    # and cut it off at the token limit) on values that are discarded.
+    outputs_from_oracle = oracle is not None
+    if outputs_from_oracle:
+        item_schema = generation_schema["properties"]["test_inputs"]["items"]
+        item_schema["properties"].pop("expected_output")
+        item_schema["required"] = ["id", "input"]
+    solve_instruction = (
+        "Do not return expected_output: a reference program computes it by executing each input. "
+        if outputs_from_oracle else
+        "Independently solve each input from the assignment to provide expected_output. "
+    )
     system = (
         "You generate test input and expected-output pairs for a C programming assignment. "
         "The assignment and instructor problem_contract are the only authority for correctness. "
@@ -978,8 +1087,8 @@ def generate_assignment_test_spec(
         "First formalize the I/O contract from the assignment and problem_contract alone: "
         "inferred_contract must never restate details of the submitted implementation (loop bounds, "
         "buffer or allocation sizes, variable names, keywords, library calls, or initial values) unless "
-        "the assignment itself states them. Generate diverse valid inputs and independently solve each "
-        "input from the assignment to provide expected_output. Do not write, propose, or return C code. "
+        "the assignment itself states them. Generate diverse valid inputs. " + solve_instruction
+        + "Do not write, propose, or return C code. "
         "Do not invent requirements or guess ambiguous behaviour. If a required rule is genuinely "
         "ambiguous, report it in ambiguities. Include normal, boundary, empty/singleton, negative/zero, "
         "and task-specific cases only when valid. Prefer concise inputs and outputs. Return JSON only."
@@ -996,18 +1105,26 @@ def generate_assignment_test_spec(
         base,
         instruction=stdin_instruction + (
             f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
-            "id, input, expected_output, and up to three short tags. The input is the exact stdin text for one "
+            + ("id, input, and up to three short tags. " if outputs_from_oracle
+               else "id, input, expected_output, and up to three short tags. ")
+            + "The input is the exact stdin text for one "
             "test (not a label such as 'normal' or 'edge'). When the input declares a count (for example "
             f"n), supply exactly that many values. Keep every input under {GENERATED_INPUT_MAX_CHARS} "
             "characters (use small sizes such as grids up to 6 x 6 or up to 30 values); large performance "
             "cases already come from the instructor. "
             "The empty string is valid only when the "
             "assignment requires no stdin; whitespace-only text must never stand in for missing required "
-            "input. Derive expected_output from the assignment contract, not from the submitted code. "
-            "Follow the style shown by instructor "
+            "input. "
+            + ("" if outputs_from_oracle else "Derive expected_output from the assignment contract, not from the submitted code. ")
+            + "Follow the style shown by instructor "
             "examples while exploring new inputs. The instructor suite already has instructor_case_count cases; "
             "every input you return must be new: different values and sizes from the hints, not a copy "
-            "with different whitespace, because copies are discarded. Do not include "
+            "with different whitespace, because copies are discarded. When syntax_tree_edge_case_targets "
+            "are given, make each input exercise one target exactly at its boundary (for example equal values "
+            "for a '<' comparison, the largest allowed totals for an overflow target), always within the "
+            "assignment's valid input range, and name the target in the tags. The size limit above overrides "
+            "every target: when a target would need a larger input (array capacity, maximum size), use the "
+            "largest input that fits or skip that target. Do not include "
             "C source, coverage narration, or long rationales."
         ),
     )
@@ -1052,10 +1169,13 @@ def generate_assignment_test_spec(
     candidate = _validate_candidate(
         result,
         1,
-        allow_ambiguities=False,
+        # With an oracle, outputs come from executing a reference program, so a
+        # reported ambiguity is recorded for the grader instead of being fatal.
+        allow_ambiguities=outputs_from_oracle,
         fallback_summary=problem,
         fallback_contract=fallback_contract,
         allow_empty=True,
+        expected_output_required=not outputs_from_oracle,
     )
     # The inferred contract is later shown to the grader as assignment-derived,
     # so remove anything the generator copied from the implementation analysis.
@@ -1068,7 +1188,10 @@ def generate_assignment_test_spec(
     candidate["inferred_contract"], removed_entries = _remove_submission_derived_contract_entries(
         candidate["inferred_contract"],
         spec_text=spec_text,
-        submission_analysis=submission_analysis,
+        submission_analysis=(
+            {**(submission_analysis or {}), "syntax_tree": syntax_tree}
+            if syntax_tree else submission_analysis
+        ),
         fallback_contract=fallback_contract,
     )
     candidate["submission_derived_contract_entries_removed"] = removed_entries
@@ -1122,7 +1245,10 @@ def generate_assignment_test_spec(
             if not outcome["ok"]:
                 rejected_now.append({"id": str(case["id"]), "reason": f"reference program rejected this input: {outcome['reason']}"[:300]})
                 continue
-            executed.append({**case, "expected_output": outcome["stdout"], "generator_expected_output": case["expected_output"]})
+            executed.append({
+                **case, "expected_output": outcome["stdout"],
+                **({"generator_expected_output": case["expected_output"]} if case.get("expected_output") else {}),
+            })
         summary = {
             "method": oracle.kind if oracle_trusted else f"{oracle.kind}_plus_independent_check",
             "requested": len(batch), "verified": len(executed), "rejected": len(rejected_now),
@@ -1205,12 +1331,13 @@ def generate_assignment_test_spec(
             instruction=stdin_instruction + (
                 f"The first batch did not produce {max_cases} independently verified distinct cases. "
                 f"Generate up to {missing_count} NEW replacement cases. Each must contain an id, exact "
-                "stdin text in input, expected_output, and up to three concise tags. Do not reuse any "
+                + ("stdin text in input, and up to three concise tags. " if outputs_from_oracle
+                   else "stdin text in input, expected_output, and up to three concise tags. ")
+                + f"Keep every input under {GENERATED_INPUT_MAX_CHARS} characters. Do not reuse any "
                 "previously_used_inputs. Follow the assignment and problem_contract exactly. Empty stdin "
                 "is valid only when the assignment requires no stdin; never use spaces or blank text as "
                 "a placeholder for missing required values. For input-required tasks, include all required "
-                "tokens and lines. Independently derive expected_output from the assignment, not from the "
-                "student implementation. Do not return C code."
+                "tokens and lines. " + solve_instruction + "Do not return C code."
             ),
         )
         repair_schema = json.loads(json.dumps(generation_schema))
@@ -1246,8 +1373,13 @@ def generate_assignment_test_spec(
                 fallback_summary=problem,
                 fallback_contract=fallback_contract,
                 allow_empty=True,
+                expected_output_required=not outputs_from_oracle,
             )
-            if repair_candidate["ambiguities"]:
+            if repair_candidate["ambiguities"] and outputs_from_oracle:
+                candidate["ambiguities"] = list(dict.fromkeys(
+                    candidate["ambiguities"] + repair_candidate["ambiguities"]
+                ))[:10]
+            if repair_candidate["ambiguities"] and not outputs_from_oracle:
                 repair_failure = (
                     "replacement generation reported unresolved ambiguities: "
                     + "; ".join(repair_candidate["ambiguities"][:3])
@@ -1581,6 +1713,7 @@ def write_frozen_suite(
         "submission_analysis": generated_spec.get("submission_analysis", {}),
         "inferred_contract": generated_spec.get("inferred_contract", {}),
         "expected_output_oracle": generated_spec.get("expected_output_oracle", {}),
+        "submission_syntax_tree": generated_spec.get("submission_syntax_tree", {}),
         "submission_derived_contract_entries_removed": generated_spec.get(
             "submission_derived_contract_entries_removed", []
         ),
@@ -1771,7 +1904,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":execution-oracle-v23",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":execution-oracle-syntax-tree-v25",
         rsi_passes=1,
         max_cases=int(max_cases),
         temperature=float(temperature),
@@ -1841,13 +1974,17 @@ def prepare_assignment_test_suite(
         suite_source = "frozen_cache"
     else:
         submission_analysis = None
+        syntax_tree = None
         if submission_source_sha256:
+            from grading_agent.analyzers.c_ast import analyze_c_source, compact_ast_summary
+            syntax_tree = compact_ast_summary(analyze_c_source(submission_source))
             submission_analysis = analyze_submission_for_test_generation(
                 problem=str(rules.get("problem", "")),
                 problem_contract=rules.get("problem_contract", {}),
                 submission_source=submission_source,
                 submission_filename=submission_filename,
                 request_json=request_json,
+                syntax_tree=syntax_tree if syntax_tree.get("status") == "completed" else None,
             )
         oracle, oracle_record = _build_expected_output_oracle(
             sandbox=sandbox,
@@ -1869,7 +2006,10 @@ def prepare_assignment_test_suite(
             submission_analysis=submission_analysis,
             oracle=oracle,
             oracle_trusted=bool(oracle_record.get("trusted")),
+            syntax_tree=syntax_tree if syntax_tree and syntax_tree.get("status") == "completed" else None,
         )
+        if syntax_tree:
+            spec["submission_syntax_tree"] = syntax_tree
         spec["expected_output_oracle"] = {key: value for key, value in oracle_record.items() if key != "program"}
         if oracle_record.get("program"):
             spec["expected_output_oracle"]["program_sha256"] = hashlib.sha256(oracle_record["program"].encode("utf-8")).hexdigest()

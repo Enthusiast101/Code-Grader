@@ -6,6 +6,7 @@ Requires-Python: >=3.11
 Requires-Dist: requests
 Requires-Dist: docker>=7.0.0
 Requires-Dist: lizard==1.17.10
+Requires-Dist: pycparser>=2.21
 Requires-Dist: gradio>=5.0
 Provides-Extra: benchmark
 Requires-Dist: ijson>=3.2.3; extra == "benchmark"

@@ -160,3 +160,50 @@ def test_instructor_reference_build_failure_is_reported():
             sandbox=LocalPythonSandbox(), rules={}, reference_source="this is not python(\n",
             reference_path="reference_solution.py", instructor_cases=[], request_json=None,
         )
+
+
+GRID_PROBLEM = (
+    "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). "
+    "Count right/down paths from the top-left to the bottom-right avoiding blocked cells; print the count."
+)
+GRID_PROGRAM = (
+    "import sys\nit = iter(sys.stdin.read().split())\nr, c = int(next(it)), int(next(it))\n"
+    "g = [[int(next(it)) for _ in range(c)] for _ in range(r)]\n"
+    "dp = [[0] * c for _ in range(r)]\n"
+    "for i in range(r):\n    for j in range(c):\n        if g[i][j]: continue\n"
+    "        dp[i][j] = 1 if i == j == 0 else (dp[i-1][j] if i else 0) + (dp[i][j-1] if j else 0)\n"
+    "print(dp[-1][-1])\n"
+)
+
+
+def test_oracle_backed_generation_omits_outputs_rejects_miscounted_grids_and_keeps_ambiguous_refill():
+    # Regression for the grid-paths failure: a miscounted grid reached the
+    # reference program (StopIteration), and a refill reporting an irrelevant
+    # ambiguity was discarded although the oracle decides every output.
+    oracle = ExecutionOracle(LocalPythonSandbox(), GRID_PROGRAM, language="python", kind="instructor_reference")
+    assert oracle.prepare() is None
+    schemas = {}
+
+    def request(messages, schema, stage):
+        schemas[stage] = schema
+        if stage == "assignment_test_generation_single_pass":
+            return generation_response([
+                {"id": "short-grid", "input": "2 3\n0 0 0\n0 0\n"},  # 5 of 6 cells
+                {"id": "copy", "input": "2 2\n0 0\n0 0\n"},          # instructor duplicate
+            ])
+        assert stage == "assignment_test_generation_repair"
+        response = generation_response([{"id": "wall", "input": "2 2\n0 1\n1 0\n"}])
+        response["ambiguities"] = ["Is the grid 0-indexed or 1-indexed?"]
+        return response
+
+    spec, _ = generate_assignment_test_spec(
+        problem=GRID_PROBLEM, problem_contract={}, request_json=request, max_cases=2,
+        instructor_examples=[{"id": "t", "input": "2 2\n0 0\n0 0\n", "expected": "2\n"}],
+        oracle=oracle, oracle_trusted=True,
+    )
+    item_schema = schemas["assignment_test_generation_single_pass"]["properties"]["test_inputs"]["items"]
+    assert "expected_output" not in item_schema["properties"] and item_schema["required"] == ["id", "input"]
+    assert [(c["id"], c["expected_output"]) for c in spec["test_inputs"]] == [("refill-1-wall", "0\n")]
+    reasons = {r["id"]: r["reason"] for r in spec["rejected_generated_cases"]}
+    assert "2 x 3 grid (6 cells) but supplies 5" in reasons["short-grid"]
+    assert "Is the grid 0-indexed or 1-indexed?" in spec["ambiguities"]

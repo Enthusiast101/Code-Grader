@@ -139,9 +139,14 @@ def run_configured_analyzers(
     enabled_metrics = [metric for metric in rules["metrics"] if metric["enabled"]]
     docker_needed = any(metric["analyzer"] in DOCKER_ANALYZERS for metric in enabled_metrics)
 
+    from grading_agent.analyzers.c_ast import analyze_c_source
+
     report: dict[str, Any] = {
         "submission": source_filename,
         "source_code": source_code,
+        # Deterministic syntax-tree facts (pycparser), shared by test design,
+        # the evidence ledger and every model grading stage.
+        "syntax_tree": analyze_c_source(source_code),
         "source_sha256": hashlib.sha256(source_code.encode("utf-8")).hexdigest(),
         "problem": rules["problem"],
         "rules_hash": hashlib.sha256(Path(rules["rules_path"]).read_bytes()).hexdigest(),

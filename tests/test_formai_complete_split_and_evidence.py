@@ -91,16 +91,28 @@ class StrictRsiSourceLineTests(unittest.TestCase):
             }]},
         }
 
-    def test_rsi_requires_exact_source_line_id(self):
+    def test_rsi_claim_is_anchored_through_cited_candidate_source_line(self):
         ledger = [
             {"id": "E-MODEL-001", "kind": "model_audit_finding", "facts": {"line": 8, "category": "Buffer Overflow", "code_excerpt": "strcpy(dst, src);"}},
             {"id": "E-SOURCE-L008", "kind": "source_line", "facts": {"line": 8, "code": "strcpy(dst, src);"}},
         ]
+        # Citing the candidate alone resolves its line in the ledger.
         result = _prediction_from_rsi_review(self._review(["E-MODEL-001"]), ledger)
-        self.assertFalse(result[0])
+        self.assertTrue(result[0])
+        self.assertEqual(result[1], 8)
         result = _prediction_from_rsi_review(self._review(["E-MODEL-001", "E-SOURCE-L008"]), ledger)
         self.assertTrue(result[0])
         self.assertEqual(result[1], 8)
+
+    def test_rsi_candidate_without_matching_source_line_is_rejected(self):
+        no_line = [
+            {"id": "E-MODEL-001", "kind": "model_audit_finding", "facts": {"line": 8, "category": "Buffer Overflow", "code_excerpt": "strcpy(dst, src);"}},
+        ]
+        self.assertFalse(_prediction_from_rsi_review(self._review(["E-MODEL-001"]), no_line)[0])
+        wrong_excerpt = no_line + [
+            {"id": "E-SOURCE-L008", "kind": "source_line", "facts": {"line": 8, "code": "int n = 0;"}},
+        ]
+        self.assertFalse(_prediction_from_rsi_review(self._review(["E-MODEL-001"]), wrong_excerpt)[0])
 
     def test_rsi_rejects_model_excerpt_that_does_not_match_cited_source_line(self):
         ledger = [

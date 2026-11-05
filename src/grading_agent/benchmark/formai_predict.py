@@ -14,14 +14,18 @@ import json
 import logging
 import re
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Iterator
 
 import requests
 
+from grading_agent.analyzers.c_properties import check_c_properties
+from grading_agent.benchmark.formai_dataset import FAMILIES, error_family
 from grading_agent.config import settings
 from grading_agent.llm.evidence import build_evidence_ledger
-from grading_agent.llm.reviewer import review_c_vulnerabilities_source, review_evidence
+from grading_agent.llm.reviewer import review_c_vulnerabilities_source, review_evidence, verify_vulnerability_claims
 from grading_agent.llm.server import initiate_server
 
 logger = logging.getLogger("formai_predict")
@@ -203,15 +207,28 @@ def _prediction_from_rsi_review(
         if not VULNERABILITY_ID.search(classification_text):
             continue
 
-        # An ID merely existing in the ledger is not proof. The claim must cite
-        # the exact source line that it is asking the evaluator to trust.
-        source_lines = [
-            entry for entry in evidence
-            if entry.get("kind") == "source_line"
-            and isinstance(entry.get("facts"), dict)
-            and isinstance(entry["facts"].get("line"), int)
-            and not isinstance(entry["facts"].get("line"), bool)
-        ]
+        # An ID merely existing in the ledger is not proof. The claim must be
+        # anchored to an exact source line: either cited directly, or reached
+        # through a cited analyzer/model candidate whose line exists in the
+        # ledger (its quoted excerpt is checked against that line below).
+        def _is_line_entry(entry: dict[str, Any]) -> bool:
+            return (entry.get("kind") == "source_line" and isinstance(entry.get("facts"), dict)
+                    and isinstance(entry["facts"].get("line"), int)
+                    and not isinstance(entry["facts"].get("line"), bool))
+
+        source_lines = [entry for entry in evidence if _is_line_entry(entry)]
+        if not source_lines:
+            cited_candidate_lines = {
+                entry["facts"]["line"] for entry in evidence
+                if entry.get("kind") in {"static_finding", "model_audit_finding"}
+                and isinstance(entry.get("facts"), dict)
+                and isinstance(entry["facts"].get("line"), int)
+                and not isinstance(entry["facts"].get("line"), bool)
+            }
+            source_lines = [
+                entry for entry in ledger
+                if _is_line_entry(entry) and entry["facts"]["line"] in cited_candidate_lines
+            ]
         if not source_lines:
             continue
         # Do not accept a header/include line as the vulnerable operation.
@@ -299,6 +316,30 @@ def _prediction_from_rsi_review(
     return True, selected.get("line"), selected.get("error_type"), supported
 
 
+def _run_property_stage(source: str) -> tuple[list[dict[str, Any]], str]:
+    """Deterministic syntax-tree property checks (no Docker, no LLM)."""
+    try:
+        result = check_c_properties(source)
+    except Exception as exc:  # never let one parser edge case stop the program
+        logger.warning("Syntax-tree property checks failed: %s", exc)
+        return [], "error"
+    findings = [
+        {"line": item["line"], "severity": "warning", "id": item["check"], "description": item["description"],
+         "tool": "syntax_tree", "family": item["family"]}
+        for item in result.get("findings", [])
+    ]
+    return findings, str(result.get("status"))
+
+
+def _merge_tool_findings(cppcheck: list[dict[str, Any]], properties: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """cppcheck plus syntax-tree findings, one per (line, family), earliest line first."""
+    merged: dict[tuple[Any, str], dict[str, Any]] = {}
+    for finding in [*cppcheck, *properties]:
+        family = error_family(finding.get("family") or f"{finding.get('id', '')} {finding.get('description', '')}")
+        merged.setdefault((finding.get("line"), family), {"tool": "cppcheck", **finding, "family": family})
+    return sorted(merged.values(), key=lambda f: (f.get("line") or 0, f["family"]))
+
+
 def _run_tool_stage(sandbox: Any, source: str, timeout_s: float) -> tuple[list[dict[str, Any]], str, str | None]:
     if sandbox is None:
         return [], "unavailable", "Docker sandbox is unavailable; cppcheck was not run."
@@ -333,6 +374,15 @@ def _run_llm_stage(source: str, max_findings: int, setup_error: str | None) -> d
         result = review_c_vulnerabilities_source(source, max_findings=max_findings)
         if not isinstance(result, dict):
             return {"status": "inconclusive", "model": settings.MODEL, "error": "LLM auditor returned an invalid response object."}
+        audit = result.get("audit")
+        if isinstance(audit, dict) and isinstance(audit.get("findings"), list):
+            # Findings outside every safety family (style, portability, "unexpected
+            # behaviour") are kept for review but are not vulnerability evidence.
+            safety = [f for f in audit["findings"] if not isinstance(f, dict) or error_family(f.get("category")) != "other"]
+            other = [f for f in audit["findings"] if isinstance(f, dict) and error_family(f.get("category")) == "other"]
+            if other:
+                audit["findings"] = safety
+                audit["non_safety_findings"] = other
         return result
     except Exception as exc:  # Isolate network, server, and parser errors to this sample.
         logger.exception("LLM source audit failed for one FormAI record")
@@ -431,7 +481,18 @@ def _select_hybrid_prediction(
         and isinstance(rsi_review.get("claim_validation"), dict)
         and rsi_review["claim_validation"].get("status") in {"completed", "completed_with_warnings"}
     )
-    rsi_positive = bool(rsi_findings) and rsi_done
+    # A partial review (e.g. the final synthesis was truncated) still carries
+    # evidence-validated claims from an earlier pass; those support a positive.
+    # Only a negative needs the review to have fully completed (rsi_done).
+    rsi_positive = bool(rsi_findings) and (
+        rsi_done
+        or (
+            isinstance(rsi_review, dict)
+            and rsi_review.get("status") == "partial"
+            and isinstance(rsi_review.get("claim_validation"), dict)
+            and rsi_review["claim_validation"].get("status") in {"completed", "completed_with_warnings"}
+        )
+    )
 
     if mode == "tools_only":
         if not tool_done and not tool_findings:
@@ -486,208 +547,336 @@ def _select_hybrid_prediction(
     return predicted, line, error_type, status
 
 
-def run(args: argparse.Namespace) -> None:
-    input_manifest = _validate_predictor_input(args.inputs)
-    process = None
-    sandbox = None
-    sandbox_error: str | None = None
-    needs_llm = args.mode in {"llm_only", "hybrid", "hybrid_rsi"}
-    needs_tools = args.mode in {"tools_only", "hybrid", "hybrid_rsi"}
-    server_error: str | None = None
+def _accepted_findings(
+    mode: str,
+    tool_findings: list[dict[str, Any]],
+    llm_findings: list[dict[str, Any]],
+    rsi_findings: list[dict[str, Any]],
+    verified_claims: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Findings the prediction actually relies on, mapped to benchmark families."""
+    accepted: list[dict[str, Any]] = []
+    if mode != "llm_only":
+        for finding in tool_findings:
+            accepted.append({
+                "line": finding.get("line"), "source": finding.get("tool", "cppcheck"),
+                "error_type": finding.get("id"),
+                "family": error_family(finding.get("family") or f"{finding.get('id', '')} {finding.get('description', '')}"),
+            })
+    if mode != "tools_only":
+        if mode == "hybrid_verify":
+            usable = list(verified_claims or [])
+        elif mode == "hybrid_rsi":
+            usable = [f for f in llm_findings if isinstance(f, dict) and _rsi_confirms_llm_finding(f, rsi_findings)]
+        else:
+            usable = [f for f in llm_findings if isinstance(f, dict)]
+        for finding in usable:
+            accepted.append({
+                "line": finding.get("line"), "source": "llm", "error_type": finding.get("category"),
+                "family": error_family(f"{finding.get('category', '')} {finding.get('description', '')}"
+                                       if finding.get("category") not in FAMILIES else finding.get("category")),
+            })
+        for finding in rsi_findings:
+            accepted.append({
+                "line": finding.get("line"), "source": "evidence_review", "error_type": finding.get("error_type"),
+                "family": error_family(finding.get("error_type") if finding.get("error_type") not in {None, "source_review_finding"}
+                                       else finding.get("text")),
+            })
+    unique: dict[tuple[Any, str], dict[str, Any]] = {}
+    for finding in accepted:
+        unique.setdefault((finding.get("line"), finding["family"]), finding)
+    return sorted(unique.values(), key=lambda f: (f.get("line") or 0, f["family"]))
 
-    # LLM setup is independent of Docker setup. Failure to initialize one stage
-    # is recorded but must not prevent the other stage from running.
-    if needs_llm and not _server_ready():
-        try:
-            process = initiate_server()
-        except Exception as exc:
-            server_error = f"{type(exc).__name__}: {exc}"
-            logger.warning("Local LLM server unavailable: %s; per-record outputs will still be written.", server_error)
 
-    if needs_tools:
-        try:
-            from grading_agent.sandbox.docker_sandbox import DockerSandbox
-            sandbox_manager = DockerSandbox(
-                memory_limit=args.memory_limit,
-                cpu_limit=getattr(args, "cpu_limit", settings.DOCKER_CPU_LIMIT),
+def _select_verified_prediction(
+    *,
+    tool_status: str,
+    tool_findings: list[dict[str, Any]],
+    llm_audit: dict[str, Any] | None,
+    verification: dict[str, Any] | None,
+) -> tuple[bool | None, int | None, str | None, str]:
+    """hybrid_verify fusion: deterministic tool findings plus verified LLM claims.
+
+    Vulnerable when a static tool reports a safety finding or a claim survives
+    verification. Safe only when the static tools, the audit and the
+    verification all completed and nothing survived; otherwise inconclusive.
+    """
+    audit_status = (llm_audit or {}).get("status")
+    audit_done = audit_status in {"completed", "completed_with_warnings"} and not int((llm_audit or {}).get("chunks_failed", 0) or 0)
+    verification_done = verification is None or verification.get("status") == "completed"
+    tool_done = tool_status == "completed"
+    confirmed = list((verification or {}).get("confirmed_claims") or [])
+    positives = [(f.get("line") or 0, f.get("id") or f.get("family")) for f in tool_findings]
+    positives += [(c.get("line") or 0, c.get("category")) for c in confirmed]
+    complete = tool_done and audit_done and verification_done
+    if positives:
+        line, kind = min(positives, key=lambda item: item[0])
+        return True, line or None, kind, "completed" if complete else "completed_with_warnings"
+    if complete:
+        return False, None, None, "completed"
+    return None, None, None, "inconclusive"
+
+
+class PredictionSession:
+    """Shared LLM server / Docker sandbox for predicting many programs.
+
+    ``predict`` handles one program at a time so callers can report progress;
+    a failure in one stage of one program never stops the others.
+    """
+
+    def __init__(
+        self,
+        *,
+        mode: str,
+        tool_timeout: float = settings.FORM_AI_DEFAULT_TOOL_TIMEOUT_S,
+        max_llm_findings: int = settings.FORM_AI_DEFAULT_MAX_FINDINGS,
+        rsi_iterations: int = settings.FORM_AI_DEFAULT_RSI_ITERATIONS,
+        memory_limit: str = settings.FORM_AI_DEFAULT_MEMORY_LIMIT,
+        cpu_limit: float = settings.DOCKER_CPU_LIMIT,
+    ) -> None:
+        if mode not in settings.FORM_AI_PREDICTION_MODES:
+            raise ValueError(f"Unknown mode {mode!r}; choose one of {settings.FORM_AI_PREDICTION_MODES}.")
+        self.mode = mode
+        self.tool_timeout = float(tool_timeout)
+        self.max_llm_findings = int(max_llm_findings)
+        self.rsi_iterations = int(rsi_iterations)
+        self.memory_limit = memory_limit
+        self.cpu_limit = float(cpu_limit)
+        self.needs_llm = mode in {"llm_only", "hybrid", "hybrid_rsi", "hybrid_verify"}
+        self.needs_tools = mode in {"tools_only", "hybrid", "hybrid_rsi", "hybrid_verify"}
+        self.process = None
+        self.sandbox = None
+        self._sandbox_manager = None
+        self.server_error: str | None = None
+        self.sandbox_error: str | None = None
+
+    def __enter__(self) -> "PredictionSession":
+        # LLM setup is independent of Docker setup: a failure in one is recorded
+        # per program and the other stage still runs.
+        if self.needs_llm and not _server_ready():
+            try:
+                self.process = initiate_server()
+            except Exception as exc:
+                self.server_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("Local LLM server unavailable: %s; per-record outputs will still be written.", self.server_error)
+        if self.needs_tools:
+            try:
+                from grading_agent.sandbox.docker_sandbox import DockerSandbox
+                self._sandbox_manager = DockerSandbox(memory_limit=self.memory_limit, cpu_limit=self.cpu_limit)
+                self.sandbox = self._sandbox_manager.__enter__()
+            except Exception as exc:
+                self.sandbox = None
+                self.sandbox_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("Docker sandbox unavailable; combined mode will continue with LLM analysis: %s", self.sandbox_error)
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        if self.sandbox is not None and self._sandbox_manager is not None:
+            with suppress(Exception):
+                self._sandbox_manager.__exit__(None, None, None)
+        if self.process is not None and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=settings.LLAMA_SHUTDOWN_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+
+    def predict(self, item: dict[str, Any], on_stage: Callable[[str], None] | None = None) -> dict[str, Any]:
+        """Predict one program: ``item`` holds ``file_name`` and ``source_code`` only."""
+        def stage(name: str) -> None:
+            if on_stage is not None:
+                with suppress(Exception):
+                    on_stage(name)
+
+        mode = self.mode
+        source = item.get("source_code", "")
+        if item.get("_input_error"):
+            return {
+                "file_name": item["file_name"], "predicted_vulnerable": None, "predicted_line": None,
+                "predicted_error_type": None, "predicted_findings": [], "prediction_status": "inconclusive",
+                "mode": mode, "prediction_source": "none", "tool_status": "not_run", "tool_findings": [],
+                "llm_findings": [], "llm_audit_status": "not_run", "rsi_review_status": "not_run",
+                "rsi_findings": [], "stage_errors": {"input": item["_input_error"]},
+            }
+        started = time.monotonic()
+        timings: dict[str, float] = {}
+        tool_findings: list[dict[str, Any]] = []
+        tool_status = "not_run"
+        property_status = "not_run"
+        tool_error = None
+        llm_audit: dict[str, Any] | None = None
+        rsi_review: dict[str, Any] | None = None
+        rsi_findings: list[dict[str, Any]] = []
+        rsi_error = None
+        rsi_note = None
+        verification: dict[str, Any] | None = None
+
+        if self.needs_tools:
+            stage("static analysis")
+            clock = time.monotonic()
+            tool_findings, tool_status, tool_error = _run_tool_stage(self.sandbox, source, self.tool_timeout)
+            if tool_status == "unavailable" and self.sandbox_error:
+                tool_error = self.sandbox_error
+            property_findings, property_status = _run_property_stage(source)
+            tool_findings = _merge_tool_findings(tool_findings, property_findings)
+            timings["tools_s"] = round(time.monotonic() - clock, 2)
+
+        if self.needs_llm:
+            stage("LLM source audit")
+            clock = time.monotonic()
+            llm_audit = _run_llm_stage(source, self.max_llm_findings, self.server_error)
+            timings["llm_audit_s"] = round(time.monotonic() - clock, 2)
+
+        if mode == "hybrid_verify" and (llm_audit or {}).get("status") in {"completed", "completed_with_warnings"}:
+            claims = ((llm_audit or {}).get("audit") or {}).get("findings") or []
+            if claims:
+                stage("claim verification")
+                clock = time.monotonic()
+                try:
+                    verification = verify_vulnerability_claims(source, claims, max_passes=self.rsi_iterations)
+                except Exception as exc:  # isolate this program
+                    logger.warning("Claim verification failed for %s: %s", item["file_name"], exc)
+                    verification = {"status": "incomplete", "error": f"{type(exc).__name__}: {exc}", "confirmed_claims": []}
+                timings["claim_verification_s"] = round(time.monotonic() - clock, 2)
+
+        if mode == "hybrid_rsi" and (
+            (llm_audit or {}).get("status") in {"completed", "completed_with_warnings"}
+            or tool_status == "completed"
+            or bool(tool_findings)
+        ):
+            # Review runs when either primary stage produced usable evidence. It
+            # adjudicates LLM candidates; cppcheck positives are retained.
+            stage("evidence review (RSI)")
+            clock = time.monotonic()
+            try:
+                review_report = _build_rsi_review_report(item, source, tool_findings, tool_status, llm_audit or {})
+                rsi_ledger = build_evidence_ledger(review_report, {"metrics": []})
+                rsi_review = review_evidence(review_report, rules={"metrics": []}, max_iterations=self.rsi_iterations)
+                _, _, _, rsi_findings = _prediction_from_rsi_review(rsi_review, rsi_ledger)
+                if not rsi_findings:
+                    llm_candidates = (llm_audit or {}).get("audit", {}).get("findings", [])
+                    if isinstance(llm_candidates, list) and llm_candidates:
+                        rsi_note = (
+                            "RSI completed but did not validate the LLM candidate finding(s). "
+                            "The candidates are retained in the record; absent another validated "
+                            "positive, the prediction is inconclusive rather than safe."
+                        )
+                    elif (llm_audit or {}).get("unresolved_positive_summary"):
+                        rsi_note = (
+                            "The LLM summary suggested possible vulnerabilities, but neither the "
+                            "source audit nor RSI established a line-grounded claim. Review manually; "
+                            "the prediction is inconclusive rather than safe."
+                        )
+                    else:
+                        rsi_note = "Evidence review completed without additional validated vulnerability claims; primary results are retained."
+            except Exception as exc:
+                rsi_error = f"{type(exc).__name__}: {exc}"
+                rsi_review = {"status": "unavailable", "error": rsi_error}
+                logger.warning("RSI evidence review failed for %s: %s", item["file_name"], exc)
+            timings["evidence_review_s"] = round(time.monotonic() - clock, 2)
+        elif mode == "hybrid_rsi":
+            rsi_review = {
+                "status": "skipped",
+                "reason": "No primary analysis completed and no usable tool findings were available; primary-stage status is retained.",
+            }
+
+        if mode == "hybrid_verify":
+            predicted, line, error_type, status = _select_verified_prediction(
+                tool_status=tool_status, tool_findings=tool_findings, llm_audit=llm_audit, verification=verification,
             )
-            sandbox = sandbox_manager.__enter__()
-        except Exception as exc:
-            sandbox = None
-            sandbox_error = f"{type(exc).__name__}: {exc}"
-            logger.warning("Docker sandbox unavailable; combined mode will continue with LLM analysis: %s", sandbox_error)
+        else:
+            predicted, line, error_type, status = _select_hybrid_prediction(
+                mode=mode, tool_status=tool_status, tool_findings=tool_findings,
+                llm_audit=llm_audit, rsi_review=rsi_review, rsi_findings=rsi_findings,
+            )
+        llm_findings: list[dict[str, Any]] = []
+        audit_body = (llm_audit or {}).get("audit", {})
+        if (llm_audit or {}).get("status") in {"completed", "completed_with_warnings"}:
+            if isinstance(audit_body, dict) and isinstance(audit_body.get("findings"), list):
+                llm_findings = audit_body["findings"]
+        llm_findings_not_confirmed_by_rsi = []
+        if mode == "hybrid_rsi":
+            llm_findings_not_confirmed_by_rsi = [
+                finding for finding in llm_findings
+                if isinstance(finding, dict) and not _rsi_confirms_llm_finding(finding, rsi_findings)
+            ]
+        audit_body = audit_body if isinstance(audit_body, dict) else {}
+        timings["total_s"] = round(time.monotonic() - started, 2)
+        return {
+            "file_name": item["file_name"],
+            "predicted_vulnerable": predicted,
+            "predicted_line": line,
+            "predicted_error_type": error_type,
+            "predicted_family": error_family(error_type) if predicted else None,
+            "predicted_findings": _accepted_findings(
+                mode, tool_findings, llm_findings, rsi_findings, (verification or {}).get("confirmed_claims"),
+            ) if predicted is not None else [],
+            "prediction_status": status,
+            "mode": mode,
+            "prediction_source": _prediction_source(mode, tool_status, tool_findings, llm_audit, rsi_findings),
+            "tool_status": tool_status,
+            "syntax_tree_status": property_status,
+            "tool_findings": tool_findings,
+            "tool_error": tool_error,
+            "llm_findings": llm_findings,
+            "llm_findings_not_confirmed_by_rsi": llm_findings_not_confirmed_by_rsi,
+            "llm_audit_status": (llm_audit or {}).get("status", "not_run"),
+            "llm_audit_summary": audit_body.get("summary"),
+            "llm_audit_limitations": audit_body.get("limitations", []),
+            "llm_rejected_findings": audit_body.get("rejected_findings", []),
+            "llm_finding_recovery_attempted": (llm_audit or {}).get("finding_recovery_attempted", False),
+            "llm_finding_recovery_succeeded": (llm_audit or {}).get("finding_recovery_succeeded"),
+            "llm_finding_recovery_completed": (llm_audit or {}).get("finding_recovery_completed"),
+            "llm_unresolved_positive_summary": (llm_audit or {}).get("unresolved_positive_summary", False),
+            "llm_unresolved_invalid_candidates": (llm_audit or {}).get("unresolved_invalid_candidates", False),
+            "llm_finding_recovery_error": (llm_audit or {}).get("finding_recovery_error"),
+            "llm_error": (llm_audit or {}).get("error"),
+            "rsi_review_status": (rsi_review or {}).get("status", "not_run"),
+            "rsi_preserved_prior_findings": (rsi_review or {}).get("preserved_prior_findings", 0),
+            "rsi_findings": rsi_findings,
+            "rsi_error": rsi_error or (rsi_review or {}).get("error"),
+            "rsi_note": rsi_note,
+            "claim_verification": {key: value for key, value in (verification or {}).items() if key != "confirmed_claims"}
+            if verification is not None else None,
+            "timings": timings,
+            "stage_errors": {
+                key: value for key, value in {
+                    "tools": tool_error,
+                    "llm": (llm_audit or {}).get("error"),
+                    "rsi": rsi_error or (rsi_review or {}).get("error"),
+                    "verification": (verification or {}).get("error"),
+                }.items() if value
+            },
+        }
 
+
+def run(args: argparse.Namespace) -> None:
+    """CLI entry: predict every program in a source-only JSONL file."""
+    input_manifest = _validate_predictor_input(args.inputs)
     output_path = args.output
     count = 0
     errors_count = 0
-    try:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with output_path.open("w", encoding="utf-8") as output:
-            for item in _iter_inputs(args.inputs):
-                if args.max_samples is not None and count >= args.max_samples:
-                    break
-                source = item["source_code"]
-                if item.get("_input_error"):
-                    prediction = {
-                        "file_name": item["file_name"],
-                        "predicted_vulnerable": None,
-                        "predicted_line": None,
-                        "predicted_error_type": None,
-                        "prediction_status": "inconclusive",
-                        "mode": args.mode,
-                        "prediction_source": "none",
-                        "tool_status": "not_run",
-                        "tool_findings": [],
-                        "llm_findings": [],
-                        "llm_audit_status": "not_run",
-                        "rsi_review_status": "not_run",
-                        "rsi_findings": [],
-                        "stage_errors": {"input": item["_input_error"]},
-                    }
-                    output.write(json.dumps(prediction, ensure_ascii=False) + "\n")
-                    output.flush()
-                    count += 1
-                    errors_count += 1
-                    continue
-                tool_findings: list[dict[str, Any]] = []
-                tool_status = "not_run"
-                tool_error = None
-                llm_audit: dict[str, Any] | None = None
-                rsi_review: dict[str, Any] | None = None
-                rsi_findings: list[dict[str, Any]] = []
-                rsi_error = None
-                rsi_note = None
-
-                if needs_tools:
-                    tool_findings, tool_status, tool_error = _run_tool_stage(
-                        sandbox, source, args.tool_timeout
-                    )
-                    if tool_status == "unavailable" and sandbox_error:
-                        tool_error = sandbox_error
-
-                if needs_llm:
-                    llm_audit = _run_llm_stage(source, args.max_llm_findings, server_error)
-
-                if args.mode == "hybrid_rsi" and (
-                    (llm_audit or {}).get("status") in {"completed", "completed_with_warnings"}
-                    or tool_status == "completed"
-                    or bool(tool_findings)
-                ):
-                    # Review runs when either primary stage produced usable
-                    # evidence. It adjudicates LLM candidates independently;
-                    # cppcheck positives are retained even if RSI has warnings.
-                    try:
-                        review_report = _build_rsi_review_report(
-                            item, source, tool_findings, tool_status, llm_audit or {}
-                        )
-                        rsi_ledger = build_evidence_ledger(review_report, {"metrics": []})
-                        rsi_review = review_evidence(
-                            review_report,
-                            rules={"metrics": []},
-                            max_iterations=args.rsi_iterations,
-                        )
-                        _, _, _, rsi_findings = _prediction_from_rsi_review(rsi_review, rsi_ledger)
-                        if not rsi_findings:
-                            llm_candidates = (llm_audit or {}).get("audit", {}).get("findings", [])
-                            if isinstance(llm_candidates, list) and llm_candidates:
-                                rsi_note = (
-                                    "RSI completed but did not validate the LLM candidate finding(s). "
-                                    "The candidates are retained in the record; absent another validated "
-                                    "positive, the prediction is inconclusive rather than safe."
-                                )
-                            elif (llm_audit or {}).get("unresolved_positive_summary"):
-                                rsi_note = (
-                                    "The LLM summary suggested possible vulnerabilities, but neither the "
-                                    "source audit nor RSI established a line-grounded claim. Review manually; "
-                                    "the prediction is inconclusive rather than safe."
-                                )
-                            else:
-                                rsi_note = "Evidence review completed without additional validated vulnerability claims; primary results are retained."
-                    except Exception as exc:
-                        rsi_error = f"{type(exc).__name__}: {exc}"
-                        rsi_review = {"status": "unavailable", "error": rsi_error}
-                        logger.warning("RSI evidence review failed for %s: %s", item["file_name"], exc)
-                elif args.mode == "hybrid_rsi":
-                    rsi_review = {
-                        "status": "skipped",
-                        "reason": "No primary analysis completed and no usable tool findings were available; primary-stage status is retained.",
-                    }
-
-                predicted, line, error_type, status = _select_hybrid_prediction(
-                    mode=args.mode,
-                    tool_status=tool_status,
-                    tool_findings=tool_findings,
-                    llm_audit=llm_audit,
-                    rsi_review=rsi_review,
-                    rsi_findings=rsi_findings,
-                )
-                llm_findings = []
-                if (llm_audit or {}).get("status") in {"completed", "completed_with_warnings"}:
-                    audit_payload = (llm_audit or {}).get("audit", {})
-                    if isinstance(audit_payload, dict) and isinstance(audit_payload.get("findings"), list):
-                        llm_findings = audit_payload["findings"]
-                llm_findings_not_confirmed_by_rsi = []
-                if args.mode == "hybrid_rsi":
-                    llm_findings_not_confirmed_by_rsi = [
-                        finding for finding in llm_findings
-                        if isinstance(finding, dict) and not _rsi_confirms_llm_finding(finding, rsi_findings)
-                    ]
-                if predicted is None:
-                    errors_count += 1
-
-                prediction = {
-                    "file_name": item["file_name"],
-                    "predicted_vulnerable": predicted,
-                    "predicted_line": line,
-                    "predicted_error_type": error_type,
-                    "prediction_status": status,
-                    "mode": args.mode,
-                    "prediction_source": _prediction_source(args.mode, tool_status, tool_findings, llm_audit, rsi_findings),
-                    "tool_status": tool_status,
-                    "tool_findings": tool_findings,
-                    "tool_error": tool_error,
-                    "llm_findings": llm_findings,
-                    "llm_findings_not_confirmed_by_rsi": llm_findings_not_confirmed_by_rsi,
-                    "llm_audit_status": (llm_audit or {}).get("status", "not_run"),
-                    "llm_audit_summary": ((llm_audit or {}).get("audit", {}) or {}).get("summary") if isinstance((llm_audit or {}).get("audit", {}), dict) else None,
-                    "llm_audit_limitations": ((llm_audit or {}).get("audit", {}) or {}).get("limitations", []) if isinstance((llm_audit or {}).get("audit", {}), dict) else [],
-                    "llm_rejected_findings": ((llm_audit or {}).get("audit", {}) or {}).get("rejected_findings", []) if isinstance((llm_audit or {}).get("audit", {}), dict) else [],
-                    "llm_finding_recovery_attempted": (llm_audit or {}).get("finding_recovery_attempted", False),
-                    "llm_finding_recovery_succeeded": (llm_audit or {}).get("finding_recovery_succeeded"),
-                    "llm_finding_recovery_completed": (llm_audit or {}).get("finding_recovery_completed"),
-                    "llm_unresolved_positive_summary": (llm_audit or {}).get("unresolved_positive_summary", False),
-                    "llm_unresolved_invalid_candidates": (llm_audit or {}).get("unresolved_invalid_candidates", False),
-                    "llm_finding_recovery_error": (llm_audit or {}).get("finding_recovery_error"),
-                    "llm_error": (llm_audit or {}).get("error"),
-                    "rsi_review_status": (rsi_review or {}).get("status", "not_run"),
-                    "rsi_preserved_prior_findings": (rsi_review or {}).get("preserved_prior_findings", 0),
-                    "rsi_findings": rsi_findings,
-                    "rsi_error": rsi_error or (rsi_review or {}).get("error"),
-                    "rsi_note": rsi_note,
-                    "stage_errors": {
-                        key: value for key, value in {
-                            "tools": tool_error,
-                            "llm": (llm_audit or {}).get("error"),
-                            "rsi": rsi_error or (rsi_review or {}).get("error"),
-                        }.items() if value
-                    },
-                }
-                output.write(json.dumps(prediction, ensure_ascii=False) + "\n")
-                output.flush()
-                count += 1
-                if count % 25 == 0:
-                    logger.info("Processed %d FormAI samples.", count)
-    finally:
-        if sandbox is not None:
-            with suppress(Exception):
-                sandbox_manager.__exit__(None, None, None)
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=settings.LLAMA_SHUTDOWN_TIMEOUT_S)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with PredictionSession(
+        mode=args.mode,
+        tool_timeout=args.tool_timeout,
+        max_llm_findings=args.max_llm_findings,
+        rsi_iterations=args.rsi_iterations,
+        memory_limit=args.memory_limit,
+        cpu_limit=getattr(args, "cpu_limit", settings.DOCKER_CPU_LIMIT),
+    ) as session, output_path.open("w", encoding="utf-8") as output:
+        for item in _iter_inputs(args.inputs):
+            if args.max_samples is not None and count >= args.max_samples:
+                break
+            prediction = session.predict(item)
+            if prediction["predicted_vulnerable"] is None:
+                errors_count += 1
+            output.write(json.dumps(prediction, ensure_ascii=False) + "\n")
+            output.flush()
+            count += 1
+            if count % 25 == 0:
+                logger.info("Processed %d FormAI samples.", count)
 
     run_manifest = {
         **input_manifest,
@@ -728,6 +917,8 @@ def _prediction_source(
         sources.append("llm")
     if rsi_findings:
         sources.append("evidence_review")
+    if mode == "hybrid_verify" and "llm" in sources:
+        sources[sources.index("llm")] = "llm(verified)"
     return "+".join(sources) if sources else "none"
 
 

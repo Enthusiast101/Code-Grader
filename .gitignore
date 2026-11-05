@@ -53,3 +53,8 @@ student_program
 # Operating-system files
 .DS_Store
 Thumbs.db
+
+# FormAI benchmark data (downloaded archives, extracted JSON, per-program index)
+resources/formai_v2/
+resources/formai_*/index.sqlite3
+resources/formai_*/index.building
