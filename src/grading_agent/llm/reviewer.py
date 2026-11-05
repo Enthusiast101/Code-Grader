@@ -4367,6 +4367,40 @@ def _rubric_metric_levels(rules: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 
 _MEASUREMENT_ONLY_ANALYZERS = frozenset({"runtime_profile"})
+# Metrics that are properties of the source text alone. Their rating must not
+# depend on how many tests ran or which ones failed.
+_SOURCE_INTRINSIC_ANALYZERS = frozenset({
+    "compiler_diagnostics", "static_analysis", "modularity", "complexity_estimator", "readability",
+})
+# Evidence derived only from the source and instructor rules (never from
+# executing tests or from the generated, inferred contract).
+_SOURCE_INTRINSIC_EVIDENCE_KINDS = frozenset({
+    "rubric", "syntax_tree", "syntax_tree_risk", "compiler_diagnostics", "static_analysis",
+    "static_finding", "source_metric", "readability_measurement", "source_line",
+})
+
+
+def _is_source_intrinsic(metric: dict[str, Any]) -> bool:
+    return str(metric.get("analyzer", "")) in _SOURCE_INTRINSIC_ANALYZERS
+
+
+def _source_intrinsic_ledger(
+    ledger: list[dict[str, Any]], metric_names: set[str],
+) -> list[dict[str, Any]]:
+    """Keep only evidence that is identical whether or not tests were generated."""
+    selected = []
+    for item in ledger:
+        kind = item.get("kind")
+        facts = item.get("facts") if isinstance(item.get("facts"), dict) else {}
+        if kind == "metric_summary":
+            keep = facts.get("metric") in metric_names
+        elif kind == "scope_limitation":
+            keep = str(item.get("id", "")).startswith("E-SOURCE-")
+        else:
+            keep = kind in _SOURCE_INTRINSIC_EVIDENCE_KINDS
+        if keep:
+            selected.append(item)
+    return selected
 _DETERMINISTIC_SCORE_ANALYZERS = frozenset({
     "io_tests", "edge_case_runner", "runtime_profile", "memory_safety", "compiler_diagnostics",
     "similarity_flag",
@@ -4430,6 +4464,14 @@ def _score_metrics_after_rsi(
     ]
     unmeasurable_names = [str(item.get("name")) for item in unmeasurable]
     scored_names = [str(item.get("name")) for item in enabled]
+    # Source-intrinsic metrics are rated in their own request that never sees
+    # test execution. Otherwise generating more tests changes their prompt
+    # (failing tests crowd the evidence budget, test-influenced findings and
+    # program understanding leak in) and, even at temperature 0, their scores.
+    source_group = [item for item in enabled if _is_source_intrinsic(item)]
+    contextual_group = [item for item in enabled if item not in source_group]
+    source_names = [str(item.get("name")) for item in source_group]
+    contextual_names = [str(item.get("name")) for item in contextual_group]
     criteria = _rubric_metric_criteria(rules)
     rubric_levels = _rubric_metric_levels(rules)
 
@@ -4451,7 +4493,7 @@ def _score_metrics_after_rsi(
         # Only per-metric criteria: the rubric's own "scale" block (0-100
         # points) contradicts the 0-10 rating this request asks for.
         "instructor_rubric_criteria": _grading_context_value(
-            {name: criteria[name] for name in scored_names if name in criteria}
+            {name: criteria[name] for name in contextual_names if name in criteria}
         ),
         "source_line_count": len(source_text.splitlines()),
         "source_was_truncated": source_truncated,
@@ -4463,9 +4505,24 @@ def _score_metrics_after_rsi(
         "review_summary": str(final_review.get("overall_assessment", ""))[:450],
         "rubric_and_analyzer_summaries": [_compact_metric_context(metric, report) for metric in all_enabled],
         "evidence_ledger": _compact_ledger(ledger),
-        "metrics_to_rate": scored_names,
+        "metrics_to_rate": contextual_names,
         "metrics_already_measured_by_tools": measured_names,
     }
+    rating_format = (
+        "A zero requires a specific, fully demonstrated failure; provide zero_score_reason, otherwise use an "
+        "appropriate nonzero score. For every metric return a concise, source-specific rationale "
+        "in 2–3 concise, metric-specific sentences (roughly 30–60 words). Include zero_score_reason as an empty string "
+        "when not applicable and confidence as a number from 0 to 1. Return exactly one JSON "
+        "object with scores containing every metric in metrics_to_rate exactly once. No Markdown.\n\n"
+    )
+
+    def rubric_block(names: list[str]) -> str:
+        return rubric_prompt_block(
+            {"metrics": {name: criteria.get(name, "") for name in names}},
+            None,
+            levels={name: rubric_levels[name] for name in names if name in rubric_levels},
+        )
+
     system = (
         "You are the final expert evaluator for this C assignment. Read the submitted numbered "
         "source itself and rate every metric listed in metrics_to_rate with one integer level "
@@ -4477,17 +4534,50 @@ def _score_metrics_after_rsi(
         "Never infer expected assignment behavior from the submitted source. If assignment_contract_is_actionable is false and no configured tests exist, Python will mark correctness/logical unmeasured. Do not penalize missing scanf return checks or malformed-input handling unless the assignment requires it. "
         "Assess logical correctness and runtime complexity from source when measurements are "
         "unavailable. Trace pointer ownership, allocations, frees, and later dereferences for "
-        "memory safety. Distinguish confirmed defects from potential concerns. A zero requires "
-        "a specific, fully demonstrated failure; provide zero_score_reason, otherwise use an "
-        "appropriate nonzero score. For every metric return a concise, source-specific rationale "
-        "in 2–3 concise, metric-specific sentences (roughly 30–60 words). Include zero_score_reason as an empty string "
-        "when not applicable and confidence as a number from 0 to 1. Return exactly one JSON "
-        "object with scores containing every metric in metrics_to_rate exactly once. No Markdown.\n\n"
-        + rubric_prompt_block(
-            {"metrics": {name: criteria.get(name, "") for name in scored_names}},
-            None,
-            levels={name: rubric_levels[name] for name in scored_names if name in rubric_levels},
-        )
+        "memory safety. Distinguish confirmed defects from potential concerns. "
+        + rating_format + rubric_block(contextual_names)
+    )
+
+    # Everything below is a function of the source text, the instructor's
+    # assignment and rubric, and source-only analyzers. Excluded by design:
+    # test results and summaries, runtime/sanitizer runs, the generated
+    # (inferred) contract, program understanding and RSI findings, all of
+    # which change when test cases are generated.
+    source_metric_names = {
+        str(item.get("name")) for item in all_enabled if _is_source_intrinsic(item)
+    }
+    source_ledger = _source_intrinsic_ledger(ledger, source_metric_names)
+    source_payload = {
+        "task": task_statement,
+        "problem_contract": problem_contract,
+        "instructor_rubric_criteria": _grading_context_value(
+            {name: criteria[name] for name in source_names if name in criteria}
+        ),
+        "source_line_count": len(source_text.splitlines()),
+        "source_was_truncated": source_truncated,
+        "source_visible_line_ranges": _compress_line_numbers(source_visible_lines),
+        "source_code_with_line_numbers": numbered_source,
+        "syntax_tree": _syntax_tree_context(report),
+        "source_analyzer_summaries": [
+            _compact_metric_context(metric, report)
+            for metric in all_enabled if str(metric.get("name")) in source_metric_names
+        ],
+        "evidence_ledger": _compact_ledger(source_ledger),
+        "metrics_to_rate": source_names,
+    }
+    source_system = (
+        "You are the final expert evaluator for this C assignment. Rate every metric listed in "
+        "metrics_to_rate with one integer level from 0 to 10 using the rubric levels below "
+        "(10 = fully meets the criterion). Do not return points or percentages; Python converts "
+        "levels to points. These metrics are properties of the source text itself: judge them "
+        "only from the numbered source, the syntax tree, the assignment's stated requirements "
+        "(for example a required time or memory complexity), the instructor rubric, and the "
+        "static analyzer evidence supplied. No test executions are supplied for these metrics by "
+        "design; do not speculate about test outcomes or functional correctness, which are graded "
+        "separately. Do not invent requirements, and never infer expected assignment behavior "
+        "from the submitted source. Analyzer output is evidence, not infallible truth: only "
+        "penalize a defect you can point to in the source. "
+        + rating_format + rubric_block(source_names)
     )
     unmeasured_scores = {
         name: {
@@ -4508,33 +4598,66 @@ def _score_metrics_after_rsi(
             [], 0,
         )
 
-    def missing_scored(item: dict[str, Any]) -> list[str]:
-        return [name for name in scored_names if name not in _normalise_metric_scores(item, enabled, ledger)]
+    def rate(
+        group: list[dict[str, Any]], group_system: str, group_payload: dict[str, Any],
+        group_ledger: list[dict[str, Any]], schema_name: str,
+    ) -> tuple[dict[str, dict[str, Any]], list[str], list[float], int]:
+        names = [str(item.get("name")) for item in group]
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-    ]
-    parsed, request_diagnostics, latency, score_attempts = _call_grading_json(
-        messages, max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
-        response_schema=_metric_score_response_schema(enabled),
-        schema_name="rubric_metric_scores",
-        validator=lambda item: not missing_scored(item),
-        invalid_reason=lambda item: (
-            "These metrics were missing or not an integer level from 0 to 10: "
-            + ", ".join(missing_scored(item))
-            + ". Return every metric in metrics_to_rate with an integer score from 0 to 10."
-        ),
-    )
-    raw = "; ".join(request_diagnostics)
-    found = _normalise_metric_scores(parsed, enabled, ledger)
+        def missing_scored(item: dict[str, Any]) -> list[str]:
+            return [name for name in names if name not in _normalise_metric_scores(item, group, group_ledger)]
+
+        messages = [
+            {"role": "system", "content": group_system},
+            {"role": "user", "content": json.dumps(group_payload, ensure_ascii=False)},
+        ]
+        parsed, request_diagnostics, latency, attempts = _call_grading_json(
+            messages, max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
+            response_schema=_metric_score_response_schema(group),
+            schema_name=schema_name,
+            validator=lambda item: not missing_scored(item),
+            invalid_reason=lambda item: (
+                "These metrics were missing or not an integer level from 0 to 10: "
+                + ", ".join(missing_scored(item))
+                + ". Return every metric in metrics_to_rate with an integer score from 0 to 10."
+            ),
+        )
+        group_diagnostics = list(request_diagnostics)
+        if parsed is None:
+            unparsed_names.update(names)
+            group_diagnostics.append(
+                "Metric scoring request returned no valid JSON; one deterministic fallback was used: "
+                + "; ".join(request_diagnostics)[:500]
+            )
+        return _normalise_metric_scores(parsed, group, group_ledger), group_diagnostics, latency, attempts
+
+    unparsed_names: set[str] = set()
+    found: dict[str, dict[str, Any]] = {}
+    diagnostics: list[str] = []
+    latency: list[float] = []
+    score_attempts = 0
+    for group, group_system, group_payload, group_ledger, schema_name in (
+        (contextual_group, system, payload, ledger, "rubric_metric_scores"),
+        (source_group, source_system, source_payload, source_ledger, "rubric_metric_scores_source_only"),
+    ):
+        if not group:
+            continue
+        group_found, group_diagnostics, group_latency, group_attempts = rate(
+            group, group_system, group_payload, group_ledger, schema_name,
+        )
+        found.update(group_found)
+        diagnostics.extend(group_diagnostics)
+        latency.extend(group_latency)
+        score_attempts += group_attempts
+
     scores: dict[str, dict[str, Any]] = {}
-    diagnostics: list[str] = list(request_diagnostics)
     for metric_name, score_item in found.items():
         # The LLM is the rubric-scoring authority. Python validates range/schema
         # and evidence references, but never silently edits a valid model score.
         relevant = [item for item in final_review.get("findings", []) if isinstance(item, dict) and item.get("metric") == metric_name]
-        if relevant:
+        # Source-only ratings never saw RSI findings; citing their evidence
+        # would misstate what the score was based on.
+        if relevant and metric_name not in source_names:
             score_item["evidence_ids"] = list(dict.fromkeys(
                 ref for item in relevant for ref in item.get("evidence_ids", [])
             ))[:6]
@@ -4567,10 +4690,8 @@ def _score_metrics_after_rsi(
 
     scores.update(unmeasured_scores)
     missing = [name for name in enabled_names if name not in scores]
-    omitted = [name for name in missing if name in scored_names]
-    if parsed is None:
-        diagnostics.append("Metric scoring request returned no valid JSON; one deterministic fallback was used: " + str(raw)[:500])
-    elif omitted:
+    omitted = [name for name in missing if name in scored_names and name not in unparsed_names]
+    if omitted:
         diagnostics.append("Metric scoring response omitted: " + ", ".join(omitted))
     for name in missing:
         if name == "correctness" and not contract_is_specific and not _all_configured_tests_failed(report.get(name)):

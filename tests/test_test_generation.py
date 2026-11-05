@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from grading_agent.testing.test_generation import (
+    GENERATED_INPUT_MAX_CHARS,
     TestGenerationError,
     assignment_fingerprint,
     generate_assignment_test_spec,
@@ -1185,12 +1186,15 @@ def test_truncated_generation_retries_once_with_fewer_shorter_cases():
         stages.append(stage)
         payload = json.loads(messages[1]["content"])
         if stage == "assignment_test_generation_single_pass":
-            assert schema["properties"]["test_inputs"]["items"]["properties"]["input"]["maxLength"] == 1200
+            assert schema["properties"]["test_inputs"]["items"]["properties"]["input"]["maxLength"] == GENERATED_INPUT_MAX_CHARS
+            assert schema["properties"]["test_inputs"]["maxItems"] == 2  # bounded first batch, not max_cases
             raise RuntimeError("Malformed final assistant JSON; finish_reason=length")
         if stage == "assignment_test_generation_single_pass_retry":
-            assert schema["properties"]["test_inputs"]["maxItems"] == 2
+            assert schema["properties"]["test_inputs"]["maxItems"] == 1
             assert "cut off" in payload["previous_attempt_problem"]
             return sample_response()
+        if stage == "assignment_test_generation_batch":
+            return {"test_inputs": []}
         return verifier_response(payload["test_inputs_to_solve"])
 
     spec, _ = generate_assignment_test_spec(

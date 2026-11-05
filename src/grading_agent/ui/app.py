@@ -465,9 +465,13 @@ def _grading_dashboard_cells(report: dict[str, Any], source_code: str):
         if shortfall:
             summary.append(f"**Generation note:** {shortfall} requested cases were not produced.")
         rejected_candidates = int(generation.get("rejected_generated_test_count", 0) or 0)
-        if rejected_candidates:
+        duplicate_candidates = int(generation.get("duplicate_generated_test_count", 0) or 0)
+        invalid_candidates = int(generation.get("invalid_generated_test_count", rejected_candidates - duplicate_candidates) or 0)
+        if invalid_candidates or duplicate_candidates:
             summary.append(
-                f"**Generation note:** {rejected_candidates} invalid LLM candidate(s) were discarded."
+                "**Generation note:** "
+                + (f"{invalid_candidates} invalid LLM candidate(s) were discarded. " if invalid_candidates else "")
+                + (f"{duplicate_candidates} repeated candidate(s) were skipped." if duplicate_candidates else "")
             )
         ambiguities = generation.get("unresolved_ambiguities", [])
         if isinstance(ambiguities, list) and ambiguities:
@@ -818,6 +822,10 @@ def generate_test_cases_for_submission(
             "total_test_count": int(result.get("total_test_count", len(cases))),
             "edge_test_count": int(result.get("edge_test_count", 0)),
             "rejected_generated_test_count": int(result.get("rejected_generated_test_count", 0)),
+            "duplicate_generated_test_count": int(result.get("duplicate_generated_test_count", 0)),
+            "invalid_generated_test_count": int(
+                result.get("invalid_generated_test_count", result.get("rejected_generated_test_count", 0))
+            ),
             "expected_output_verification": result.get("expected_output_verification"),
             "oracle_kind": result.get("oracle_kind"),
             "oracle_caveat": result.get("oracle_caveat"),
@@ -847,11 +855,14 @@ def generate_test_cases_for_submission(
             ])
         generated_count = manifest["generated_test_count"]
         rejected_count = manifest["rejected_generated_test_count"]
+        duplicate_count = int(manifest.get("duplicate_generated_test_count", 0))
+        invalid_count = int(manifest.get("invalid_generated_test_count", rejected_count - duplicate_count))
         parts = [
             "## Test suite ready\n\n"
             f"**{generated_count} LLM-generated** + **{manifest['instructor_test_count']} instructor** = "
             f"**{manifest['total_test_count']} case(s) ready for grading.**"
-            + (f" {rejected_count} invalid generated candidate(s) were discarded." if rejected_count else "")
+            + (f" {invalid_count} invalid generated candidate(s) were discarded." if invalid_count else "")
+            + (f" {duplicate_count} repeated candidate(s) were skipped." if duplicate_count else "")
             + "\n\n"
         ]
         if manifest["stdin_unused"]:
