@@ -9,6 +9,21 @@ from grading_agent.config import settings
 
 
 CPP_CHECK_LINE = re.compile(r"^.*?:\d+:\d+:\s*(error|warning|style|performance|portability|information):\s*(.*)$", re.I)
+CPP_CHECK_ID = re.compile(r"\[([A-Za-z0-9_]+)\]\s*$")
+
+# Messages about cppcheck's own analysis (depth limits, include resolution,
+# configuration counts), not about the submitted code. cppcheck reports some of
+# them at "warning" severity, so without this filter they cost points and reach
+# the LLM reviewer as defects it then rationalises into invented ones.
+CPP_CHECK_TOOL_NOTE_IDS = frozenset({
+    "normalCheckLevelMaxBranches",
+    "checkersReport",
+    "missingInclude",
+    "missingIncludeSystem",
+    "toomanyconfigs",
+    "unmatchedSuppression",
+    "noValidConfiguration",
+})
 
 
 def run_static_analysis(
@@ -31,18 +46,25 @@ def run_static_analysis(
         return {"status": "inconclusive", "score": None, "error": "cppcheck timed out.", "raw_output": result["output"]}
 
     penalties = {**settings.ANALYZER_STATIC_PENALTIES, **(severity_penalties or {})}
-    findings: list[dict[str, str]] = []
+    findings: list[dict[str, Any]] = []
+    tool_notes: list[dict[str, Any]] = []
     for line in result["output"].splitlines():
         match = CPP_CHECK_LINE.match(line.strip())
         if match:
             severity = match.group(1).lower()
-            findings.append({"severity": severity, "message": match.group(2), "raw": line.strip()})
+            id_match = CPP_CHECK_ID.search(match.group(2))
+            item = {
+                "severity": severity, "message": match.group(2), "raw": line.strip(),
+                "id": id_match.group(1) if id_match else None,
+            }
+            (tool_notes if item["id"] in CPP_CHECK_TOOL_NOTE_IDS else findings).append(item)
     total_penalty = min(100.0, sum(float(penalties.get(item["severity"], 0.0)) for item in findings))
     return {
         "status": "completed",
         "tool": "cppcheck",
         "finding_count": len(findings),
         "findings": findings,
+        "tool_notes": tool_notes,
         "severity_counts": {
             severity: sum(item["severity"] == severity for item in findings)
             for severity in penalties

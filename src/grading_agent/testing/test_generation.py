@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import random
 import re
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
@@ -21,7 +22,15 @@ MAX_INPUT_CHARS = 20_000
 # Limits on what the generator may write. The schema is enforced while the
 # model decodes, so a string must close at its limit: a small model that
 # starts repeating digits (e.g. a 30x30 grid) cannot run past the token budget.
-GENERATED_INPUT_MAX_CHARS = 1_200
+# A digit grid costs about one token per character, so this bounds one case
+# to roughly 500 output tokens.
+GENERATED_INPUT_MAX_CHARS = 500
+# Cases per model response. One response used to carry the whole contract plus
+# every requested case and hit the completion-token limit (finish_reason=length)
+# for grid inputs; bounded batches keep each response's worst case well under
+# a 4096-token reply. The first response also carries the inferred contract.
+FIRST_GENERATION_BATCH_CASES = 3
+GENERATION_BATCH_CASES = 4
 GENERATED_OUTPUT_MAX_CHARS = 600
 CONTRACT_ITEM_MAX_CHARS = 160
 MAX_SUBMISSION_SOURCE_BYTES = 100_000
@@ -133,16 +142,9 @@ _GRID_SHAPE = re.compile(
 )
 
 
-def _declared_grid_mismatch(problem: str, test_input: str) -> str | None:
-    """Reject "R C, then an R by C grid" inputs whose cell count differs from R*C.
-
-    A model asked for a 30 x 30 grid miscounts cells; the reference program
-    then fails (for example with StopIteration) and the case is wasted.
-    Applies only when the assignment names the grid shape and the header order
-    ("R and C", "R C", "R, C") is stated, and only to integer cells: either
-    R*C separate tokens or R tokens of C characters each (rows like ``0101``).
-    """
-    match = _GRID_SHAPE.search(problem)
+def _grid_shape(problem: str) -> dict[str, Any] | None:
+    """Row/column letters of a stated "R by C grid" and the header order ("R C" -> (0, 1))."""
+    match = _GRID_SHAPE.search(problem) if isinstance(problem, str) else None
     if not match:
         return None
     r, c = (match.group("r"), match.group("c")) if match.group("r") else (match.group("r2"), match.group("c2"))
@@ -153,11 +155,206 @@ def _declared_grid_mismatch(problem: str, test_input: str) -> str | None:
         return re.search(rf"\b{first}\s*(?:,|\band\b)?\s*{second}\b", problem) is not None
 
     if adjacent(r, c):
-        order = (0, 1)
-    elif adjacent(c, r):
-        order = (1, 0)
-    else:
+        return {"rows": r, "cols": c, "order": (0, 1)}
+    if adjacent(c, r):
+        return {"rows": r, "cols": c, "order": (1, 0)}
+    return None
+
+
+def _stated_upper_bound(problem: str, variable: str) -> int | None:
+    """``1 <= R,C <= 30`` -> 30 for R and for C; ``n <= 20000`` -> 20000."""
+    found = [
+        int(m.group(1))
+        for m in re.finditer(rf"\b{re.escape(variable)}\b[^.;<>]{{0,12}}?(?:<=|\u2264)\s*(\d+)", problem)
+    ]
+    return min(found) if found else None
+
+
+VARIANT_MAX_SIDE = 6
+VARIANT_MAX_VALUES = 30
+
+
+def _structural_variants(
+    problem: str,
+    instructor_inputs: list[str],
+    *,
+    count: int,
+    seed: int,
+    exclude: set[str],
+    focus: str = "",
+) -> list[dict[str, Any]]:
+    """Deterministic, distinct inputs for a shape the assignment states exactly.
+
+    A small model asked for new cases mostly returns the instructor's own
+    cases again (start blocked, end blocked, empty 2 x 2), so a suite could end
+    with no new case at all. For an "R by C grid" or "n, then n values" task
+    this builds new inputs from the stated limits and the instructor's own
+    values only: grid cells use the symbols instructor grids use, sizes stay
+    within the stated bounds and at most 6 x 6 (30 values), and numbers stay
+    within the range instructor inputs span. Only used with an execution
+    oracle, which computes every expected output.
+
+    ``focus`` (the instructor's coverage focus) reorders and biases the
+    variants by keyword: large/maximum sizes, dense or sparse obstacles,
+    open grids, duplicates, zeros, negatives, sorted or reversed values.
+    Variants that follow the focus are tagged ``focus``.
+    """
+    words = focus.casefold()
+
+    def mentions(*keys: str) -> bool:
+        return any(key in words for key in keys)
+
+    wants_large = mentions("large", "big", "max", "boundary size", "biggest", "full size")
+    if count <= 0 or not instructor_inputs:
+        return []
+    rng = random.Random(f"structural-variants:{seed}")
+    variants: list[dict[str, Any]] = []
+    seen = set(exclude)
+
+    def add(case_id: str, text: str, tags: list[str], focused: bool = False) -> None:
+        key = _input_identity(text)
+        if len(variants) < count and key not in seen:
+            seen.add(key)
+            variants.append({
+                "id": case_id, "input": text, "expected_output": "",
+                "tags": tags + (["focus"] if focused else []),
+            })
+
+    grid = _grid_shape(problem)
+    if grid:
+        order = grid["order"]
+        symbols: dict[str, int] = {}
+        compact = False
+        min_side = None
+        for text in instructor_inputs:
+            tokens = text.split()
+            if len(tokens) < 3 or not all(re.fullmatch(r"[+-]?\d+", t) for t in tokens):
+                continue
+            rows, cols = int(tokens[order[0]]), int(tokens[order[1]])
+            cells = tokens[2:]
+            if len(cells) == rows * cols:
+                values = cells
+            elif cols > 1 and len(cells) == rows and all(len(t) == cols for t in cells):
+                values, compact = [ch for t in cells for ch in t], True
+            else:
+                continue
+            for value in values:
+                symbols[value] = symbols.get(value, 0) + 1
+            min_side = min(rows, cols) if min_side is None else min(min_side, rows, cols)
+        if not symbols:
+            return []
+        common = max(symbols, key=lambda k: (symbols[k], k))
+        others = sorted(k for k in symbols if k != common)
+        max_rows = min(VARIANT_MAX_SIDE, _stated_upper_bound(problem, grid["rows"]) or VARIANT_MAX_SIDE)
+        max_cols = min(VARIANT_MAX_SIDE, _stated_upper_bound(problem, grid["cols"]) or VARIANT_MAX_SIDE)
+        low = max(1, min_side or 1)
+        sizes = [(1, max_cols), (max_rows, 1), (max_rows, max_cols), (2, 3), (3, 2), (3, 4), (4, 3),
+                 (4, 4), (5, 5), (1, 2), (2, 1), (max_rows, max(low, max_cols - 1))]
+        sizes = [(r, c) for r, c in sizes if low <= r <= max_rows and low <= c <= max_cols]
+        if wants_large:
+            sizes.sort(key=lambda rc: -(rc[0] * rc[1]))
+        dense = mentions("block", "obstacle", "dense", "wall", "barrier")
+        sparse = mentions("sparse", "few obstacle", "few block")
+        wants_open = mentions("open", "empty", "uniform", "no obstacle", "no block")
+
+        def render(cells: list[list[str]]) -> str:
+            rows, cols = len(cells), len(cells[0])
+            header = [str(rows), str(cols)] if order == (0, 1) else [str(cols), str(rows)]
+            sep = "" if compact else " "
+            return " ".join(header) + "\n" + "\n".join(sep.join(row) for row in cells) + "\n"
+
+        # A few uniform grids (shape edge cases); the rest mix in the other
+        # symbols, since uniform grids cannot tell whether those are handled.
+        uniform_quota = max(1, count // 2 if wants_open else count // 4)
+        for r, c in sizes[:uniform_quota]:
+            add(f"variant-open-{r}x{c}", render([[common] * c for _ in range(r)]), ["structural-variant", "uniform"],
+                focused=wants_open or wants_large)
+        density = 0.5 if dense else 0.15 if sparse else 0.3
+        for attempt in range(count * 8):
+            if len(variants) >= count or not others or not sizes:
+                break
+            r, c = sizes[attempt % len(sizes)]
+            cells = [[rng.choice(others) if rng.random() < density else common for _ in range(c)] for _ in range(r)]
+            # Keep the corners open so paths/regions are not trivially empty.
+            cells[0][0] = cells[-1][-1] = common
+            add(f"variant-mixed-{r}x{c}-{attempt}", render(cells), ["structural-variant", "mixed"],
+                focused=dense or sparse or wants_large)
+        return variants
+
+    if _COUNT_THEN_VALUES.search(problem):
+        numbers: list[int] = []
+        lengths: list[int] = []
+        for text in instructor_inputs:
+            tokens = text.split()
+            if len(tokens) < 2 or not all(re.fullmatch(r"[+-]?\d+", t) for t in tokens):
+                continue
+            if int(tokens[0]) != len(tokens) - 1:
+                continue
+            lengths.append(int(tokens[0]))
+            numbers.extend(int(t) for t in tokens[1:])
+        if not numbers:
+            return []
+        lo, hi = min(numbers), max(numbers)
+        variable = _COUNT_THEN_VALUES.search(problem).group("var")
+        max_n = min(VARIANT_MAX_VALUES, _stated_upper_bound(problem, variable) or VARIANT_MAX_VALUES)
+        min_n = max(1, min(lengths))
+
+        def render(values: list[int]) -> str:
+            return f"{len(values)}\n" + " ".join(str(v) for v in values) + "\n"
+
+        span = list(range(lo, hi + 1)) if hi - lo <= 60 else None
+        wants_zero = mentions("zero") and lo <= 0 <= hi
+        wants_negative = mentions("negative") and lo < 0
+
+        def pick() -> int:
+            if wants_zero and rng.random() < 0.3:
+                return 0
+            if wants_negative and rng.random() < 0.5:
+                return rng.randint(lo, -1)
+            return rng.choice(span) if span else rng.randint(lo, hi)
+
+        def duplicates(n: int) -> list[int]:
+            pool = [pick() for _ in range(max(1, min(3, n // 2)))]
+            return [rng.choice(pool) for _ in range(n)]
+
+        patterns: list[tuple[str, Callable[[int], list[int]], bool]] = [
+            ("ascending", lambda n: sorted(pick() for _ in range(n)), mentions("sorted", "ascending", "increasing")),
+            ("descending", lambda n: sorted((pick() for _ in range(n)), reverse=True),
+             mentions("descending", "reverse", "decreasing")),
+            ("random", lambda n: [pick() for _ in range(n)], wants_zero or wants_negative),
+            ("duplicates", duplicates, mentions("duplicate", "repeat")),
+            ("equal", lambda n: [pick()] * n, mentions("equal", "same value", "constant")),
+        ]
+        patterns.sort(key=lambda item: not item[2])  # focused patterns first (stable)
+        lengths_to_try = sorted({min_n, min(max_n, max(min_n, 2)), min(max_n, 5), min(max_n, 10), max_n},
+                                reverse=wants_large)
+        for n in lengths_to_try:
+            for name, make, focused in patterns:
+                add(f"variant-{name}-{n}", render(make(n)), ["structural-variant", name],
+                    focused=focused or (wants_large and n == max_n))
+        for attempt in range(count * 8):
+            if len(variants) >= count:
+                break
+            n = rng.randint(min_n, max_n)
+            name, make, focused = patterns[attempt % len(patterns)]
+            add(f"variant-{name}-{n}-{attempt}", render(make(n)), ["structural-variant", name], focused=focused)
+        return variants
+    return []
+
+
+def _declared_grid_mismatch(problem: str, test_input: str) -> str | None:
+    """Reject "R C, then an R by C grid" inputs whose cell count differs from R*C.
+
+    A model asked for a 30 x 30 grid miscounts cells; the reference program
+    then fails (for example with StopIteration) and the case is wasted.
+    Applies only when the assignment names the grid shape and the header order
+    ("R and C", "R C", "R, C") is stated, and only to integer cells: either
+    R*C separate tokens or R tokens of C characters each (rows like ``0101``).
+    """
+    shape = _grid_shape(problem)
+    if shape is None:
         return None
+    order = shape["order"]
     tokens = test_input.split()
     if len(tokens) < 2 or not all(re.fullmatch(r"[+-]?\d+", t) for t in tokens):
         return None
@@ -196,6 +393,12 @@ def _declared_count_mismatch(problem: str, test_input: str) -> str | None:
     if declared >= 0 and supplied != declared:
         return f"input declares {declared} values but supplies {supplied}"
     return None
+
+
+def _is_duplicate_rejection(item: Any) -> bool:
+    """Whether a rejected candidate was only a repeat of an existing input."""
+    reason = str(item.get("reason", "")) if isinstance(item, dict) else ""
+    return reason.startswith(("duplicate generated input", "duplicate of an instructor or earlier generated input"))
 
 
 def _input_identity(test_input: str, *, exact: bool = False) -> str:
@@ -1018,6 +1221,11 @@ def generate_assignment_test_spec(
         "problem_contract": problem_contract,
         "instructor_examples_as_hints": examples,
         "instructor_case_count": len(instructor_inputs),
+        # Only a few instructor cases are shown as hints, but copies of any of
+        # them are discarded, so every instructor input is listed as taken.
+        "instructor_inputs_already_covered": [
+            _shorten_for_prompt(item, 120) for item in sorted(instructor_inputs)[:30]
+        ],
         "generation_seed": generation_seed,
         "maximum_cases": max_cases,
         "requested_case_count": max_cases,
@@ -1093,6 +1301,14 @@ def generate_assignment_test_spec(
         "ambiguous, report it in ambiguities. Include normal, boundary, empty/singleton, negative/zero, "
         "and task-specific cases only when valid. Prefer concise inputs and outputs. Return JSON only."
     )
+    focus_text = additional_focus.strip()
+    # The focus used to sit in the payload as one key no instruction mentioned,
+    # so the model ignored it. State it as a requirement in every request.
+    focus_instruction = (
+        f"Instructor coverage focus: \"{focus_text}\". At least half of the cases you return must "
+        "exercise this focus while staying valid for the assignment; tag each such case 'focus'. "
+        if focus_text else ""
+    )
     stdin_instruction = (
         "This assignment reads no stdin, so a correct program must ignore stdin entirely and its "
         "expected_output is the same fixed output for every test. Generate distinct stdin-robustness "
@@ -1101,10 +1317,17 @@ def generate_assignment_test_spec(
         "and data that looks like input for a different task. Tag each case 'edge' and 'stdin-ignored'. "
         if stdin_unused else ""
     )
+    # Without an oracle each case also carries an expected_output, so batches
+    # are one case smaller.
+    batch_cases = GENERATION_BATCH_CASES - (0 if outputs_from_oracle else 1)
+    first_batch = min(max_cases, FIRST_GENERATION_BATCH_CASES - (0 if outputs_from_oracle else 1))
+    generation_schema["properties"]["test_inputs"]["maxItems"] = first_batch
     payload = dict(
         base,
-        instruction=stdin_instruction + (
-            f"Generate up to {max_cases} additional distinct test cases. Each test case must contain "
+        maximum_cases=first_batch,
+        requested_case_count=first_batch,
+        instruction=focus_instruction + stdin_instruction + (
+            f"Generate up to {first_batch} additional distinct test cases. Each test case must contain "
             + ("id, input, and up to three short tags. " if outputs_from_oracle
                else "id, input, expected_output, and up to three short tags. ")
             + "The input is the exact stdin text for one "
@@ -1118,7 +1341,8 @@ def generate_assignment_test_spec(
             + ("" if outputs_from_oracle else "Derive expected_output from the assignment contract, not from the submitted code. ")
             + "Follow the style shown by instructor "
             "examples while exploring new inputs. The instructor suite already has instructor_case_count cases; "
-            "every input you return must be new: different values and sizes from the hints, not a copy "
+            "every input you return must be new: different values and sizes from the hints and from "
+            "instructor_inputs_already_covered, not a copy "
             "with different whitespace, because copies are discarded. When syntax_tree_edge_case_targets "
             "are given, make each input exercise one target exactly at its boundary (for example equal values "
             "for a '<' comparison, the largest allowed totals for an overflow target), always within the "
@@ -1141,7 +1365,7 @@ def generate_assignment_test_spec(
     except Exception as first_error:
         # Usually a response cut off at the token limit (finish_reason=length).
         # Retry once asking for half as many, shorter cases instead of failing.
-        fewer = max(1, max_cases // 2)
+        fewer = max(1, first_batch // 2)
         retry_schema = json.loads(json.dumps(generation_schema))
         retry_schema["properties"]["test_inputs"]["maxItems"] = fewer
         retry_payload = dict(
@@ -1195,6 +1419,102 @@ def generate_assignment_test_spec(
         fallback_contract=fallback_contract,
     )
     candidate["submission_derived_contract_entries_removed"] = removed_entries
+
+    # Further bounded batches until max_cases candidates exist. These carry no
+    # contract, and a failed batch keeps every case already collected.
+    batch_schema = {
+        "type": "object",
+        "properties": {"test_inputs": json.loads(json.dumps(generation_schema["properties"]["test_inputs"]))},
+        "required": ["test_inputs"],
+    }
+    extra_batches = 0
+    batch_failures: list[str] = []
+    # A small model keeps returning the same few cases; stop asking once a
+    # batch adds nothing new (or two batches in a row add little) and let the
+    # deterministic structural variants fill the rest.
+    seen_identities = {_input_identity(item, exact=stdin_unused) for item in instructor_inputs}
+    seen_identities.update(_input_identity(case["input"], exact=stdin_unused) for case in candidate["test_inputs"])
+    weak_batches = 0
+    max_extra_batches = -(-(max_cases - first_batch) // batch_cases) + 1 if max_cases > first_batch else 0
+    # A response with fewer cases than requested means the model has nothing new.
+    first_returned = result.get("test_inputs", []) if isinstance(result, dict) else []
+    exhausted = not isinstance(first_returned, list) or len(first_returned) < first_batch
+    while not exhausted and len(candidate["test_inputs"]) < max_cases and extra_batches < max_extra_batches:
+        count = min(batch_cases, max_cases - len(candidate["test_inputs"]))
+        batch_schema["properties"]["test_inputs"]["maxItems"] = count
+        batch_schema["properties"]["test_inputs"]["minItems"] = 1
+        known = [case["input"] for case in candidate["test_inputs"]] + sorted(instructor_inputs)
+        batch_payload = dict(
+            base,
+            maximum_cases=count,
+            requested_case_count=count,
+            inferred_contract=candidate["inferred_contract"],
+            already_generated_inputs=[_shorten_for_prompt(item, 120) for item in known[:40]],
+            already_covered_tags=sorted({tag for case in candidate["test_inputs"] for tag in case.get("tags", [])}),
+            instruction=focus_instruction + stdin_instruction + (
+                f"Generate up to {count} more distinct test cases for this assignment, following "
+                "inferred_contract. Each needs id, input"
+                + ("" if outputs_from_oracle else ", expected_output")
+                + ", and up to three short tags. Every input must differ from already_generated_inputs "
+                "(other values or sizes, not whitespace changes); prefer dimensions and "
+                "syntax_tree_edge_case_targets not in already_covered_tags. "
+                + solve_instruction
+                + f"Keep every input under {GENERATED_INPUT_MAX_CHARS} characters (grids up to 6 x 6, "
+                "up to 30 values). Return only test_inputs."
+            ),
+        )
+        extra_batches += 1
+        try:
+            batch_result = request_json(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": json.dumps(batch_payload, sort_keys=True, ensure_ascii=False)},
+                ],
+                batch_schema,
+                "assignment_test_generation_batch",
+            )
+            batch_candidate = _validate_candidate(
+                {
+                    "ambiguities": [],
+                    "inferred_contract": candidate["inferred_contract"],
+                    "test_inputs": (batch_result or {}).get("test_inputs", []) if isinstance(batch_result, dict) else [],
+                },
+                1 + extra_batches,
+                fallback_summary=problem,
+                fallback_contract=fallback_contract,
+                allow_empty=True,
+                expected_output_required=not outputs_from_oracle,
+            )
+        except Exception as exc:
+            batch_failures.append(" ".join(str(exc).split())[:240] or type(exc).__name__)
+            candidate.setdefault("rejected_generated_cases", []).append({
+                "id": f"batch-{1 + extra_batches}",
+                "reason": ("additional generation batch failed; earlier cases kept: " + batch_failures[-1])[:300],
+            })
+            if len(batch_failures) >= 2:
+                break
+            continue
+        taken = {case["id"] for case in candidate["test_inputs"]}
+        novel = 0
+        for case in batch_candidate["test_inputs"]:
+            identity = _input_identity(case["input"], exact=stdin_unused)
+            if identity in seen_identities:
+                candidate.setdefault("rejected_generated_cases", []).append({
+                    "id": str(case["id"]), "reason": "duplicate of an instructor or earlier generated input",
+                })
+                continue
+            seen_identities.add(identity)
+            novel += 1
+            if case["id"] in taken:
+                case["id"] = f"b{1 + extra_batches}-{case['id']}"[:64]
+            taken.add(case["id"])
+            candidate["test_inputs"].append(case)
+        candidate.setdefault("rejected_generated_cases", []).extend(batch_candidate.get("rejected_generated_cases", []))
+        returned = batch_result.get("test_inputs", []) if isinstance(batch_result, dict) else []
+        weak_batches = weak_batches + 1 if novel * 2 < count else 0
+        exhausted = (
+            not isinstance(returned, list) or len(returned) < count or novel == 0 or weak_batches >= 2
+        )
 
     rejected: list[dict[str, str]] = list(candidate.get("rejected_generated_cases", []))
     used_inputs = {_input_identity(item, exact=stdin_unused) for item in instructor_inputs}
@@ -1275,6 +1595,17 @@ def generate_assignment_test_spec(
         return accepted, rejected_now + disagreed, summary, 1
 
     first_batch = retain_contract_valid_cases(candidate["test_inputs"])
+    structural_variants_added = 0
+    if oracle is not None and not stdin_unused and len(first_batch) < max_cases:
+        variants = _structural_variants(
+            problem, sorted(instructor_inputs), count=max_cases - len(first_batch),
+            seed=generation_seed, exclude=set(used_inputs), focus=additional_focus,
+        )
+        variant_cases = retain_contract_valid_cases(variants)
+        for case in variant_cases:
+            case["description"] = "deterministic variant of the stated input shape; output from the reference program"
+        structural_variants_added = len(variant_cases)
+        first_batch.extend(variant_cases)
     verified_cases: list[dict[str, Any]] = []
     verification_calls = 0
     verification_requested = 0
@@ -1314,7 +1645,7 @@ def generate_assignment_test_spec(
     # structural checks and independent expected-output verification.
     # max_cases is a ceiling. A partial but independently verified batch is
     # usable; refill only when the entire first batch yielded no verified pair.
-    missing_count = max_cases if not verified_cases else 0
+    missing_count = min(max_cases, batch_cases) if not verified_cases else 0
     if missing_count:
         repair_count = 1
         repair_payload = dict(
@@ -1328,7 +1659,7 @@ def generate_assignment_test_spec(
                 for item in rejected[:40]
             ],
             provisional_inferred_contract=candidate["inferred_contract"],
-            instruction=stdin_instruction + (
+            instruction=focus_instruction + stdin_instruction + (
                 f"The first batch did not produce {max_cases} independently verified distinct cases. "
                 f"Generate up to {missing_count} NEW replacement cases. Each must contain an id, exact "
                 + ("stdin text in input, and up to three concise tags. " if outputs_from_oracle
@@ -1419,7 +1750,12 @@ def generate_assignment_test_spec(
     candidate["test_inputs"] = verified_cases[:max_cases]
     candidate["stdin_unused"] = stdin_unused
     candidate["generation_mode"] = "generate_then_independently_verify_with_bounded_refill"
-    candidate["generation_response_count"] = 1 + repair_response_count
+    candidate["generation_response_count"] = 1 + extra_batches + repair_response_count
+    candidate["structural_variants_added"] = structural_variants_added
+    candidate["generation_batches"] = {
+        "first_batch_cases": first_batch, "cases_per_batch": batch_cases,
+        "additional_batches": extra_batches, "failed_batches": batch_failures,
+    }
     candidate["verification_response_count"] = verification_calls
     candidate["verification_summary"] = {
         "method": "independent_second_llm_call",
@@ -1904,7 +2240,7 @@ def prepare_assignment_test_suite(
         input_format=rules.get("problem_contract", {}).get("input_format") if isinstance(rules.get("problem_contract"), dict) else None,
         output_format=rules.get("problem_contract", {}).get("output_format") if isinstance(rules.get("problem_contract"), dict) else None,
         generation_seed=int(seed),
-        generator_version=str(testing_cfg.get("generator_version", "1")) + ":execution-oracle-syntax-tree-v25",
+        generator_version=str(testing_cfg.get("generator_version", "1")) + ":execution-oracle-syntax-tree-v29-focus",
         rsi_passes=1,
         max_cases=int(max_cases),
         temperature=float(temperature),
@@ -2116,6 +2452,13 @@ def prepare_assignment_test_suite(
         "generated_test_count_shortfall": max(0, effective_requested - generated_count),
         "stdin_unused": stdin_unused,
         "rejected_generated_test_count": len(frozen.get("rejected_generated_cases", [])),
+        # Repeats are not malformed cases; report them separately.
+        "duplicate_generated_test_count": sum(
+            1 for item in frozen.get("rejected_generated_cases", []) if _is_duplicate_rejection(item)
+        ),
+        "invalid_generated_test_count": sum(
+            1 for item in frozen.get("rejected_generated_cases", []) if not _is_duplicate_rejection(item)
+        ),
         "edge_test_count": len(edge_cases),
         "generation_passes": generation_history,
         "metric_testset_paths": metric_bindings,

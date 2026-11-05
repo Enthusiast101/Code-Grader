@@ -189,7 +189,7 @@ def test_oracle_backed_generation_omits_outputs_rejects_miscounted_grids_and_kee
         if stage == "assignment_test_generation_single_pass":
             return generation_response([
                 {"id": "short-grid", "input": "2 3\n0 0 0\n0 0\n"},  # 5 of 6 cells
-                {"id": "copy", "input": "2 2\n0 0\n0 0\n"},          # instructor duplicate
+                {"id": "half-grid", "input": "2 2\n0 0\n"},          # 2 of 4 cells
             ])
         assert stage == "assignment_test_generation_repair"
         response = generation_response([{"id": "wall", "input": "2 2\n0 1\n1 0\n"}])
@@ -198,12 +198,114 @@ def test_oracle_backed_generation_omits_outputs_rejects_miscounted_grids_and_kee
 
     spec, _ = generate_assignment_test_spec(
         problem=GRID_PROBLEM, problem_contract={}, request_json=request, max_cases=2,
-        instructor_examples=[{"id": "t", "input": "2 2\n0 0\n0 0\n", "expected": "2\n"}],
+        # No instructor grids: no structural variants, so the refill path runs.
+        instructor_examples=[{"id": "t", "input": "2 2\n0 0\n0 0\n", "expected": "2\n"}][:0],
         oracle=oracle, oracle_trusted=True,
     )
     item_schema = schemas["assignment_test_generation_single_pass"]["properties"]["test_inputs"]["items"]
     assert "expected_output" not in item_schema["properties"] and item_schema["required"] == ["id", "input"]
-    assert [(c["id"], c["expected_output"]) for c in spec["test_inputs"]] == [("refill-1-wall", "0\n")]
     reasons = {r["id"]: r["reason"] for r in spec["rejected_generated_cases"]}
     assert "2 x 3 grid (6 cells) but supplies 5" in reasons["short-grid"]
+    assert ("refill-1-wall", "0\n") in [(c["id"], c["expected_output"]) for c in spec["test_inputs"]]
     assert "Is the grid 0-indexed or 1-indexed?" in spec["ambiguities"]
+
+
+def test_large_case_targets_are_generated_in_bounded_batches_within_the_reply_limit():
+    # Regression: one reply had to hold the contract plus every requested grid
+    # case and was cut off at 4096 tokens (finish_reason=length) twice.
+    oracle = ExecutionOracle(LocalPythonSandbox(), GRID_PROGRAM, language="python", kind="instructor_reference")
+    assert oracle.prepare() is None
+    serial = iter(range(1, 1000))
+    stages = []
+
+    def grid(n):  # a distinct 6 x 6 grid per call, about 80 characters
+        cells = [[(n >> (i * 6 + j - 1)) & 1 if 0 < i * 6 + j < 35 else 0 for j in range(6)] for i in range(6)]
+        return "6 6\n" + "\n".join(" ".join(str(v) for v in row) for row in cells) + "\n"
+
+    def request(messages, schema, stage):
+        stages.append(stage)
+        count = schema["properties"]["test_inputs"]["maxItems"]
+        cases = [{"id": f"g{n}", "input": grid(n), "tags": ["grid"]} for n in (next(serial) for _ in range(count))]
+        response = generation_response(cases) if "inferred_contract" in schema["properties"] else {"test_inputs": cases}
+        if stage == "assignment_test_generation_batch" and stages.count(stage) == 2:
+            raise RuntimeError("Malformed final assistant JSON; finish_reason=length")
+        if len(json.dumps(response)) > 4096:  # ~1 token per character for digit grids
+            raise RuntimeError("Malformed final assistant JSON; finish_reason=length")
+        return response
+
+    spec, _ = generate_assignment_test_spec(
+        problem=GRID_PROBLEM, problem_contract={}, request_json=request, max_cases=12,
+        oracle=oracle, oracle_trusted=True,
+    )
+    assert stages[0] == "assignment_test_generation_single_pass"
+    assert "assignment_test_generation_single_pass_retry" not in stages
+    assert len(spec["test_inputs"]) == 12, "one failed batch keeps earlier cases and the rest still fill the target"
+    assert spec["generation_batches"]["failed_batches"] and spec["generation_batches"]["additional_batches"] >= 3
+
+
+def test_model_that_only_repeats_instructor_cases_still_yields_verified_structural_variants():
+    # Regression: every generated case duplicated an instructor case (or was a
+    # miscounted 30 x 30 grid), so the suite failed with nothing verified.
+    oracle = ExecutionOracle(LocalPythonSandbox(), GRID_PROGRAM, language="python", kind="instructor_reference")
+    assert oracle.prepare() is None
+    instructor = [
+        {"id": "center", "input": "3 3\n0 0 0\n0 1 0\n0 0 0\n", "expected": "2\n"},
+        {"id": "open", "input": "2 2\n0 0\n0 0\n", "expected": "2\n"},
+        {"id": "wall", "input": "2 2\n0 1\n0 0\n", "expected": "1\n"},
+        {"id": "one", "input": "1 1\n0\n", "expected": "1\n"},
+        {"id": "start", "input": "1 1\n1\n", "expected": "0\n"},
+    ]
+    seen_payloads = []
+
+    def request(messages, schema, stage):
+        seen_payloads.append(json.loads(messages[1]["content"]))
+        copies = [{"id": f"copy-{c['id']}", "input": c["input"]} for c in instructor]
+        count = schema["properties"]["test_inputs"]["maxItems"]
+        cases = copies[:count]
+        return generation_response(cases) if "inferred_contract" in schema["properties"] else {"test_inputs": cases}
+
+    spec, _ = generate_assignment_test_spec(
+        problem=GRID_PROBLEM, problem_contract={}, request_json=request, max_cases=8,
+        instructor_examples=instructor, oracle=oracle, oracle_trusted=True,
+    )
+    # The model is told about all five instructor inputs, not only the three hints.
+    assert len(seen_payloads[0]["instructor_inputs_already_covered"]) == 5
+    # A batch that only repeats existing inputs ends model generation early.
+    assert spec["generation_batches"]["additional_batches"] == 1
+    assert all(r["reason"].startswith("duplicate") for r in spec["rejected_generated_cases"])
+    cases = spec["test_inputs"]
+    assert len(cases) == 8 and spec["structural_variants_added"] == 8
+    assert all("structural-variant" in c["tags"] for c in cases)
+    instructor_inputs = {c["input"] for c in instructor}
+    assert not instructor_inputs & {c["input"] for c in cases}
+    assert any(" 1" in c["input"].split("\n", 1)[1] or "1 " in c["input"].split("\n", 1)[1] for c in cases), \
+        "variants must include blocked cells, not only open grids"
+    # Expected outputs come from executing the reference program.
+    assert all(c["expected_output_source"] == "instructor_reference" for c in cases)
+
+
+def test_variation_focus_is_an_explicit_instruction_and_steers_structural_variants():
+    # Regression: the focus sat in the payload as a key no instruction named,
+    # and deterministic variants ignored it, so the field had no visible effect.
+    oracle = ExecutionOracle(LocalPythonSandbox(), GRID_PROGRAM, language="python", kind="instructor_reference")
+    assert oracle.prepare() is None
+    instructor = [{"id": "center", "input": "3 3\n0 0 0\n0 1 0\n0 0 0\n", "expected": "2\n"}]
+    instructions = []
+
+    def request(messages, schema, stage):
+        instructions.append(json.loads(messages[1]["content"])["instruction"])
+        cases = [{"id": "copy", "input": instructor[0]["input"]}]
+        return generation_response(cases) if "inferred_contract" in schema["properties"] else {"test_inputs": cases}
+
+    focus = "dense obstacles and large grids"
+    spec, _ = generate_assignment_test_spec(
+        problem=GRID_PROBLEM, problem_contract={}, request_json=request, max_cases=4,
+        instructor_examples=instructor, oracle=oracle, oracle_trusted=True, additional_focus=focus,
+    )
+    assert instructions and all(f'coverage focus: "{focus}"' in text for text in instructions)
+    cases = spec["test_inputs"]
+    assert len(cases) == 4 and all("focus" in c["tags"] for c in cases)
+    sizes = [tuple(map(int, c["input"].split()[:2])) for c in cases]
+    assert sizes[0] == (6, 6), "large-grid focus puts the largest hand-writable grid first"
+    blocked = [c["input"].split("\n", 1)[1].split().count("1") for c in cases if "mixed" in c["tags"]]
+    assert blocked and min(blocked) >= 5, "dense-obstacle focus raises the blocked-cell density"

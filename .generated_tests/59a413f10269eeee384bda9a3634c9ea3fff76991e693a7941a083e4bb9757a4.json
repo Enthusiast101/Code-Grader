@@ -1,0 +1,735 @@
+{
+  "assignment_fingerprint": "59a413f10269eeee384bda9a3634c9ea3fff76991e693a7941a083e4bb9757a4",
+  "assignment_statement": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "expected_output_oracle": {
+    "attempts": 1,
+    "instructor_cases_mismatched": 0,
+    "instructor_cases_passed": 10,
+    "instructor_cases_unrunnable": 0,
+    "kind": "llm_reference",
+    "program_sha256": "ffbeb02befc1e38ddb8f571f6e1ac2de52b4b56757bafb8a57c927aa4ac3778e",
+    "trusted": true,
+    "validated_against_instructor_cases": 10
+  },
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 0,
+    "requested": 25,
+    "verification_calls": 0,
+    "verified": 25
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 10,
+      "requested_test_count": 25,
+      "status": "completed",
+      "test_count": 25,
+      "verification": {
+        "comparison": "expected output computed by executing the reference program",
+        "method": "llm_reference",
+        "rejected": 0,
+        "requested": 25,
+        "verified": 25
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "1 <= R,C <= 30",
+      "Each cell is 0 or 1",
+      "Path count fits signed 64-bit integer",
+      "Blocked start or end yields 0"
+    ],
+    "formatting": [
+      "Integer followed by newline",
+      "No trailing spaces on the integer line"
+    ],
+    "input_format": "R C followed by R lines of C integers (0 or 1) separated by whitespace",
+    "output_format": "One signed 64-bit integer representing the number of paths, followed by a newline",
+    "semantics": [
+      "Count paths from top-left to bottom-right using only right and down moves",
+      "Do not enter blocked cells",
+      "Return 0 if start or end is blocked"
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were computed by running a model-written reference program that first reproduced all 10 instructor test case(s).",
+  "oracle_kind": "llm-reference-program-validated-on-instructor-cases",
+  "problem_contract": {
+    "description": "Count right/down paths from the top-left to bottom-right cell without entering cells marked 1. A blocked start or destination yields zero.",
+    "input_range": "1 <= rows, cols <= 30; each cell is 0 (open) or 1 (blocked); path count fits signed 64-bit.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "output_rule": "One signed 64-bit integer: number of valid paths; newline terminated.",
+    "sum_type": "signed 64-bit integer where applicable"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "blocked-start",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "blocked-end",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "single-path",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "blocked-start",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "blocked-end",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "all-blocked",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "single-path",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "blocked-start",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "blocked-end",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "open-path",
+      "reason": "duplicate of an instructor or earlier generated input"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Read R and C (1 <= R,C <= 30), followed by an R by C grid whose cells are 0 (open) or 1 (blocked). Count paths from the top-left to the bottom-right using only right and down moves and never entering a blocked cell. If either endpoint is blocked, the answer is zero. Print the path count followed by a newline; it fits in a signed 64-bit integer.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "Main function returns 1 on any validation failure.",
+      "Main function returns 0 on successful execution.",
+      "Uses int for R, C, and grid values.",
+      "Uses long long for dp array to prevent overflow.",
+      "Loops iterate i from 0 to rows-1 and j from 0 to cols-1.",
+      "DP recurrence: dp[i][j] = dp[i-1][j] + dp[i][j-1] (0 if out of bounds).",
+      "DP initialization: dp[0][0] = 1, others 0.",
+      "Output format: signed 64-bit integer followed by newline."
+    ],
+    "dropped_contradictory_weak_points": [
+      "No check if blocked[0][0] is 0 before setting dp[0][0]=1.",
+      "No check if blocked[rows-1][cols-1] is 0 before printing result.",
+      "No check if grid is fully populated before DP starts.",
+      "No check if blocked[i][j] is 0 or 1 for all i,j."
+    ],
+    "implementation_summary": "The program reads R and C, validates bounds, reads a blocked grid, and computes paths using dynamic programming. It initializes dp[0][0]=1 and iterates to sum paths from top-left to bottom-right, skipping blocked cells. Output is the final dp value.",
+    "input_parsing_and_validation": [
+      "Validates R and C are integers within [1, 30] via scanf return check.",
+      "Validates each cell in the grid is 0 or 1 via scanf return check.",
+      "Reads blocked grid into a fixed-size array of 30x30.",
+      "Does not use the read values after validation.",
+      "No bounds check on grid dimensions beyond the main loop limits.",
+      "No check if grid is fully populated before DP starts.",
+      "No check if blocked[0][0] is 0 before setting dp[0][0]=1.",
+      "No check if blocked[rows-1][cols-1] is 0 before printing result."
+    ],
+    "likely_weak_points": [
+      "No check if R or C is 0 (though bounds check covers this).",
+      "No check if R or C is negative (though bounds check covers this)."
+    ],
+    "recommended_test_dimensions": [
+      "R=1, C=1, blocked[0][0]=1 (expected 0).",
+      "R=1, C=1, blocked[0][0]=0 (expected 1).",
+      "R=30, C=30, all blocked (expected 0).",
+      "R=30, C=30, all open (expected 1).",
+      "R=30, C=30, blocked at (0,0) and (29,29) (expected 0).",
+      "R=30, C=30, blocked at (0,0) and (29,29) but (1,1) open (expected 0).",
+      "R=30, C=30, blocked at (0,0) and (29,29) but (1,1) blocked (expected 0).",
+      "R=30, C=30, blocked at (0,0) and (29,29) but (1,1) open and (28,28) open (expected 1)."
+    ]
+  },
+  "submission_derived_contract_entries_removed": [],
+  "submission_syntax_tree": {
+    "allocations_never_freed": [],
+    "branch_conditions": [
+      {
+        "condition": "((((scanf(\"%d %d\", &rows, &cols) != 2) || (rows < 1)) || (rows > 30)) || (cols < 1)) || (cols > 30)",
+        "line": 7
+      },
+      {
+        "condition": "(scanf(\"%d\", &blocked[i][j]) != 1) || ((blocked[i][j] != 0) && (blocked[i][j] != 1))",
+        "line": 12
+      },
+      {
+        "condition": "(i == 0) && (j == 0)",
+        "line": 19
+      },
+      {
+        "condition": "i > 0",
+        "line": 21
+      },
+      {
+        "condition": "j > 0",
+        "line": 21
+      }
+    ],
+    "called_functions": [
+      "printf",
+      "scanf"
+    ],
+    "complexity_hint": "O(n^2) from loop nesting including called functions. This is a structural upper bound, not a proof: amortized loops (monotonic stacks or deques, two pointers) nest syntactically but run in O(n) overall.",
+    "edge_case_targets": [
+      {
+        "detail": "blocked is read by scanf at line 12 but never used outside input and its validation",
+        "kind": "ignored_input",
+        "line": 12,
+        "suggestion": "small inputs where the values read into blocked must change the expected output"
+      },
+      {
+        "detail": "blocked[30]",
+        "kind": "fixed_capacity",
+        "line": 5,
+        "suggestion": "an input reaching the array capacity only if that input fits the generated-input length; otherwise skip it (instructor performance cases cover maximum sizes)"
+      },
+      {
+        "detail": "dp[30]",
+        "kind": "fixed_capacity",
+        "line": 6,
+        "suggestion": "an input reaching the array capacity only if that input fits the generated-input length; otherwise skip it (instructor performance cases cover maximum sizes)"
+      },
+      {
+        "detail": "for (i < rows)",
+        "kind": "loop_bounds",
+        "line": 10,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "for (j < cols)",
+        "kind": "loop_bounds",
+        "line": 11,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "for (i < rows)",
+        "kind": "loop_bounds",
+        "line": 17,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "for (j < cols)",
+        "kind": "loop_bounds",
+        "line": 18,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "rows < 1",
+        "kind": "validated_input_limit",
+        "line": 7,
+        "suggestion": "the valid value nearest 1 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "rows > 30",
+        "kind": "validated_input_limit",
+        "line": 7,
+        "suggestion": "the valid value nearest 30 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "cols < 1",
+        "kind": "validated_input_limit",
+        "line": 7,
+        "suggestion": "the valid value nearest 1 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "cols > 30",
+        "kind": "validated_input_limit",
+        "line": 7,
+        "suggestion": "the valid value nearest 30 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      }
+    ],
+    "effective_loop_depth": 2,
+    "fixed_arrays": [
+      {
+        "element_type": "int []",
+        "function": "main",
+        "line": 5,
+        "name": "blocked",
+        "size": "30"
+      },
+      {
+        "element_type": "long long []",
+        "function": "main",
+        "line": 6,
+        "name": "dp",
+        "size": "30"
+      }
+    ],
+    "functions": [
+      {
+        "calls": [
+          "printf",
+          "scanf"
+        ],
+        "line_end": 26,
+        "line_start": 3,
+        "name": "main",
+        "params": [],
+        "recursive": false,
+        "returns": "int"
+      }
+    ],
+    "ignored_inputs": [
+      {
+        "call": "scanf",
+        "function": "main",
+        "line": 12,
+        "variable": "blocked"
+      }
+    ],
+    "input_calls": [
+      {
+        "format": "\"%d %d\"",
+        "function": "main",
+        "line": 7,
+        "loop_depth": 0,
+        "name": "scanf",
+        "result_checked": true
+      },
+      {
+        "format": "\"%d\"",
+        "function": "main",
+        "line": 12,
+        "loop_depth": 2,
+        "name": "scanf",
+        "result_checked": true
+      }
+    ],
+    "integer_divisions": [],
+    "loops": [
+      {
+        "condition": "i < rows",
+        "depth": 1,
+        "kind": "for",
+        "line": 10
+      },
+      {
+        "condition": "j < cols",
+        "depth": 2,
+        "kind": "for",
+        "line": 11
+      },
+      {
+        "condition": "i < rows",
+        "depth": 1,
+        "kind": "for",
+        "line": 17
+      },
+      {
+        "condition": "j < cols",
+        "depth": 2,
+        "kind": "for",
+        "line": 18
+      }
+    ],
+    "max_loop_depth": 2,
+    "narrow_accumulators": [],
+    "status": "completed",
+    "uses_after_free": []
+  },
+  "test_cases": [
+    {
+      "expected": "2\n",
+      "id": "instructor-center-obstacle",
+      "input": "3 3\n0 0 0\n0 1 0\n0 0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "memory_safety"
+      ]
+    },
+    {
+      "expected": "2\n",
+      "id": "instructor-empty-2x2",
+      "input": "2 2\n0 0\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-top-right-blocked",
+      "input": "2 2\n0 1\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-single-open-cell",
+      "input": "1 1\n0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-single-blocked-cell",
+      "input": "1 1\n1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-blocked-start",
+      "input": "2 2\n1 0\n0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-blocked-destination",
+      "input": "2 2\n0 0\n0 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-one-row-barrier",
+      "input": "1 3\n0 1 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "0\n",
+      "id": "instructor-one-column-barrier",
+      "input": "3 1\n0\n1\n0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "6\n",
+      "id": "instructor-no-obstacles-3x3",
+      "input": "3 3\n0 0 0\n0 0 0\n0 0 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-all-blocked",
+      "input": "3 3\n1 1 1\n1 1 1\n1 1 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-open-1x6",
+      "input": "1 6\n0 0 0 0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "uniform"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-open-6x1",
+      "input": "6 1\n0\n0\n0\n0\n0\n0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "uniform"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "252\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-open-6x6",
+      "input": "6 6\n0 0 0 0 0 0\n0 0 0 0 0 0\n0 0 0 0 0 0\n0 0 0 0 0 0\n0 0 0 0 0 0\n0 0 0 0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "uniform"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "3\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-open-2x3",
+      "input": "2 3\n0 0 0\n0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "uniform"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "3\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-open-3x2",
+      "input": "3 2\n0 0\n0 0\n0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "uniform"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "10\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-open-3x4",
+      "input": "3 4\n0 0 0 0\n0 0 0 0\n0 0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "uniform"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-6x1-1",
+      "input": "6 1\n0\n1\n0\n0\n0\n0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "125\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-6x6-2",
+      "input": "6 6\n0 1 0 0 1 0\n0 0 0 0 0 1\n0 0 0 0 0 0\n0 0 0 0 0 0\n0 0 0 0 0 0\n0 0 0 0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "2\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-2x3-3",
+      "input": "2 3\n0 0 1\n0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "2\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-3x2-4",
+      "input": "3 2\n0 0\n0 0\n1 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-3x4-5",
+      "input": "3 4\n0 1 0 0\n0 0 0 0\n0 0 1 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-4x3-6",
+      "input": "4 3\n0 0 1\n1 1 0\n0 0 1\n1 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "2\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-4x4-7",
+      "input": "4 4\n0 1 0 0\n0 0 0 0\n1 0 0 1\n1 1 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "26\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-5x5-8",
+      "input": "5 5\n0 0 0 0 0\n0 0 1 0 0\n0 0 0 0 0\n1 0 0 0 0\n1 0 1 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-1x2-9",
+      "input": "1 2\n0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-2x1-10",
+      "input": "2 1\n0\n0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-6x5-11",
+      "input": "6 5\n0 0 0 0 1\n1 0 1 0 0\n1 1 0 0 1\n0 0 1 1 0\n0 1 0 1 0\n0 0 0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-1x6-12",
+      "input": "1 6\n0 1 1 1 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "17\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-6x6-14",
+      "input": "6 6\n0 0 0 0 0 0\n0 1 0 0 1 0\n0 0 0 0 1 0\n0 0 0 0 0 0\n1 1 0 1 0 0\n1 0 0 1 1 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-3x4-17",
+      "input": "3 4\n0 1 0 0\n0 1 0 0\n0 0 1 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-4x3-18",
+      "input": "4 3\n0 1 0\n1 1 1\n0 1 0\n0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "2\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-4x4-19",
+      "input": "4 4\n0 0 1 0\n0 0 0 0\n0 0 1 0\n0 1 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-5x5-20",
+      "input": "5 5\n0 0 0 1 1\n1 1 1 0 0\n0 0 0 0 0\n1 0 0 0 0\n0 0 0 0 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    },
+    {
+      "description": "deterministic variant of the stated input shape; output from the reference program",
+      "expected": "0\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-variant-mixed-6x5-23",
+      "input": "6 5\n0 1 0 0 0\n0 0 1 1 1\n0 1 0 0 0\n0 0 1 1 0\n0 0 1 0 0\n1 1 1 1 0\n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "structural-variant",
+        "mixed"
+      ]
+    }
+  ]
+}

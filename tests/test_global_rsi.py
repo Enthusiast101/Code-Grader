@@ -140,10 +140,12 @@ class GlobalRSITests(unittest.TestCase):
         self.assertIn("Do not provide metric scores", captured[1][1]["content"])
         self.assertIn("Do not provide metric scores", captured[3][1]["content"])
         scoring_payload = json.loads(captured[4][1]["content"])
-        self.assertIn("final_validated_findings", scoring_payload)
         # Only the metric without an authoritative measurement is sent for rating.
         self.assertEqual(scoring_payload["metrics_to_rate"], ["readability"])
-        self.assertEqual(sorted(scoring_payload["metrics_already_measured_by_tools"]), ["correctness", "syntax"])
+        # Readability is source-intrinsic: rated without test-dependent context.
+        for key in ("final_validated_findings", "program_understanding", "metrics_already_measured_by_tools"):
+            self.assertNotIn(key, scoring_payload)
+        self.assertFalse(any(e["kind"].startswith("test_") for e in scoring_payload["evidence_ledger"]))
         self.assertNotIn("instructor_rubric", scoring_payload)
         readability = next(item for item in result["metrics"] if item["name"] == "readability")
         self.assertEqual(readability["score_points"], 8.0)  # level 8 of 10 on a 10-point metric
@@ -156,6 +158,67 @@ class GlobalRSITests(unittest.TestCase):
         self.assertEqual(report["correctness"]["score_origin"], "deterministic_test_results")
         self.assertEqual(report["syntax"]["score"], 100)
         self.assertEqual(report["syntax"]["score_origin"], "deterministic_analyzer")
+
+    def test_source_intrinsic_scoring_prompt_is_independent_of_generated_tests(self) -> None:
+        from grading_agent.llm.evidence import build_evidence_ledger
+
+        rules = {
+            **RULES,
+            "metrics": RULES["metrics"] + [
+                {"name": "logical", "analyzer": "io_tests", "weight": 0.1, "enabled": True, "params": {}},
+                {"name": "structure", "analyzer": "static_analysis", "weight": 0.1, "enabled": True, "params": {}},
+                {"name": "readability", "analyzer": "readability", "weight": 0.1, "enabled": True, "params": {}},
+            ],
+        }
+
+        def build(generated: bool) -> dict:
+            report = make_report()
+            report["configuration"]["enabled_metrics"] = [
+                {"name": m["name"], "analyzer": m["analyzer"], "weight": m["weight"]} for m in rules["metrics"]
+            ]
+            report["structure"] = {"status": "completed", "score": 100, "tool": "cppcheck", "finding_count": 0, "findings": []}
+            report["readability"] = {"status": "completed", "score": 90}
+            # logical has no tests, so the contextual request still runs.
+            report["logical"] = {"status": "inconclusive", "score": None, "tests_total": 0, "results": []}
+            if generated:
+                report["correctness"]["results"] += [
+                    {"test_id": f"gen-{i}", "passed": False, "input": f"{i} {i}", "expected": str(2 * i), "actual": "0"}
+                    for i in range(30)
+                ]
+                report["correctness"].update(tests_total=31, tests_passed=1, score=3.2)
+                report["test_generation"] = {
+                    "status": "completed",
+                    "inferred_contract": {"input_format": "two integers a b", "output_format": "their sum",
+                                          "semantics": ["print a + b followed by a newline"]},
+                }
+            return report
+
+        captured: dict[str, list] = {}
+
+        def fake_call(messages, **kwargs):
+            captured.setdefault(kwargs["schema_name"], []).append(messages)
+            return None, ["stub"], [], 1
+
+        for generated in (False, True):
+            report = build(generated)
+            review = {"findings": [{"metric": "readability", "title": f"finding {generated}", "evidence_ids": ["E-X"]}],
+                      "overall_assessment": f"assessment {generated}"}
+            with patch.object(reviewer, "_call_grading_json", side_effect=fake_call):
+                reviewer._score_metrics_after_rsi(
+                    report, rules, {"actual_behavior": f"understanding {generated}"}, review,
+                    build_evidence_ledger(report, rules),
+                )
+
+        without_tests, with_tests = captured["rubric_metric_scores_source_only"]
+        self.assertEqual(without_tests, with_tests)
+        payload = json.loads(with_tests[1]["content"])
+        self.assertEqual(payload["metrics_to_rate"], ["structure", "readability"])
+        self.assertFalse(any(e["kind"] in {"test_result", "test_summary", "inferred_contract"}
+                             for e in payload["evidence_ledger"]))
+        # The contextual request still differs and still carries test evidence.
+        contextual_without, contextual_with = captured["rubric_metric_scores"]
+        self.assertNotEqual(contextual_without, contextual_with)
+        self.assertEqual(json.loads(contextual_with[1]["content"])["metrics_to_rate"], ["logical"])
 
     def test_rsi_stops_when_a_pass_reproduces_the_previous_findings(self) -> None:
         responses = [understanding_response(), review_response(1), review_response(1), review_response(1)]

@@ -168,5 +168,36 @@ class FormAISplitTests(unittest.TestCase):
                 self.assertEqual(len(label_data), first["splits"][split_name]["count"])
 
 
+class StaticAnalysisParsingTests(unittest.TestCase):
+    class _FakeSandbox:
+        def __init__(self, output: str):
+            self.output = output
+
+        def write_file(self, *args):
+            pass
+
+        def run(self, *args, **kwargs):
+            return {"exit_code": 0, "timed_out": False, "output": self.output}
+
+    def test_cppcheck_tool_notes_are_not_findings(self):
+        from grading_agent.analyzers.static_analysis import run_static_analysis
+
+        output = (
+            "Checking submission.c ...\n"
+            "submission.c:0:0: warning: Limiting analysis of branches. Use --check-level=exhaustive "
+            "to analyze all branches. [normalCheckLevelMaxBranches]\n"
+            "submission.c:7:5: warning: Uninitialized variable: total [uninitvar]\n"
+        )
+        result = run_static_analysis(self._FakeSandbox(output), SOURCE)
+        self.assertEqual(result["finding_count"], 1)
+        self.assertEqual(result["findings"][0]["id"], "uninitvar")
+        self.assertEqual([note["id"] for note in result["tool_notes"]], ["normalCheckLevelMaxBranches"])
+        self.assertEqual(result["severity_counts"]["warning"], 1)
+
+        notes_only = run_static_analysis(self._FakeSandbox(output.splitlines(True)[1]), SOURCE)
+        self.assertEqual(notes_only["finding_count"], 0)
+        self.assertEqual(notes_only["score"], 100.0)
+
+
 if __name__ == "__main__":
     unittest.main()
