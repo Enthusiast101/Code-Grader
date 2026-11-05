@@ -1,0 +1,608 @@
+{
+  "assignment_fingerprint": "2ca86126f81f9cb51fae536b4c4147953adb40afa420bded9e04c5e91d643d9f",
+  "assignment_statement": "Given a connected undirected graph with n vertices numbered 0 to n-1 and m edges, find every critical connection (bridge): an edge whose removal disconnects the graph. Output the number of bridges, then each edge once with smaller endpoint first, sorted lexicographically. Expected time O(V+E), space O(V+E).",
+  "expected_output_oracle": {
+    "file": "reference_solution.c",
+    "instructor_cases_mismatched": [],
+    "instructor_cases_passed": 9,
+    "instructor_cases_unrunnable": [],
+    "kind": "instructor_reference",
+    "trusted": true
+  },
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 0,
+    "requested": 1,
+    "verification_calls": 0,
+    "verified": 1
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 6,
+      "requested_test_count": 27,
+      "status": "completed",
+      "test_count": 1,
+      "verification": {
+        "comparison": "expected output computed by executing the reference program",
+        "method": "instructor_reference",
+        "rejected": 0,
+        "requested": 1,
+        "verified": 1
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "2 <= n <= 100000",
+      "0 <= m <= 100000",
+      "0 <= u, v < n",
+      "u != v",
+      "graph is connected",
+      "simple graph"
+    ],
+    "formatting": [
+      "Edges on subsequent lines",
+      "u v format"
+    ],
+    "input_format": "Given a connected undirected graph with n vertices numbered 0 to n-1 and m edges, find every critical connection (bridge): an edge whose removal disconnects the graph. Output the number of bridges, then each edge once with smaller endpoint first, sorted lexicographically. Expected time O(V+E), space O(V+E).",
+    "output_format": "First print the number of bridges, then each sorted edge u v on its own line. Print 0 when there are no bridges.",
+    "semantics": [
+      "Find bridges using Tarjan's DFS algorithm",
+      "Output sorted edges with smaller endpoint first",
+      "Time complexity O(V+E)",
+      "Space complexity O(V+E)"
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were computed by running the instructor's reference solution (reference_solution.c) in the sandbox.",
+  "oracle_kind": "instructor-reference-solution-executed",
+  "problem_contract": {
+    "algorithm": "Tarjan DFS low-link bridge detection",
+    "description": "Find every bridge in a connected undirected simple graph. Output each bridge once with smaller endpoint first, sorted lexicographically.",
+    "input_range": "2 <= V <= 100000; V-1 <= E <= 100000; connected simple undirected graph; vertex IDs 0..V-1",
+    "output_rule": "First print the number of bridges, then each sorted edge u v on its own line. Print 0 when there are no bridges.",
+    "required_space_complexity": "O(V + E)",
+    "required_time_complexity": "O(V + E)"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "bridge-test-1",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "bridge-test-2",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "bridge-test-3",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "bridge-test-4",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "small_chain",
+      "reason": "duplicate of an instructor or earlier generated input"
+    },
+    {
+      "id": "no_bridges",
+      "reason": "duplicate of an instructor or earlier generated input"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Given a connected undirected graph with n vertices numbered 0 to n-1 and m edges, find every critical connection (bridge): an edge whose removal disconnects the graph. Output the number of bridges, then each edge once with smaller endpoint first, sorted lexicographically. Expected time O(V+E), space O(V+E).",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "Iterative DFS with explicit stack",
+      "Edge ID tracking via id_array",
+      "Low-link values via discovery array",
+      "Lexicographic sort via qsort",
+      "Integers for all data"
+    ],
+    "implementation_summary": "Iterative Tarjan DFS bridge detection with iterative stack to avoid recursion limits. Validates input bounds strictly. Outputs count then sorted edges.",
+    "input_parsing_and_validation": [
+      "scanf returns checked for 2 values",
+      "n range [1, 100000]",
+      "m range [0, 100000]",
+      "u, v range [0, n-1]",
+      "u != v check",
+      "NULL pointer checks for all arrays"
+    ],
+    "likely_weak_points": [
+      "Low[u] >= discovery[p] boundary equality",
+      "a > b boundary equality in output",
+      "Stack underflow if graph not connected",
+      "Memory leak if malloc fails mid-alloc",
+      "Disconnected component handling (root loop only)",
+      "Duplicate edge input (u,v) vs (v,u)"
+    ],
+    "recommended_test_dimensions": [
+      "Small disconnected graph",
+      "Large connected graph",
+      "Graph with exactly 1 bridge",
+      "Graph with many bridges",
+      "Graph with no bridges",
+      "Graph with duplicate edges",
+      "Graph with self-loops",
+      "Graph with multiple components"
+    ]
+  },
+  "submission_derived_contract_entries_removed": [
+    {
+      "entry": "Two integers n and m on the first line, followed by m lines each containing two integers u and v representing an edge. Vertices are 0-indexed. The graph is guaranteed to be connected and simple (no self-loops or duplicate edges).",
+      "field": "input_format",
+      "submission_terms": "duplicat, integer, loop, self, two"
+    },
+    {
+      "entry": "First line: integer count of bridges. Second line: each bridge on its own line, formatted as 'u v' where u < v, sorted lexicographically.",
+      "field": "output_format",
+      "submission_terms": "count, integer"
+    },
+    {
+      "entry": "Output count of bridges",
+      "field": "semantics",
+      "submission_terms": "count"
+    },
+    {
+      "entry": "Count on first line",
+      "field": "formatting",
+      "submission_terms": "count"
+    },
+    {
+      "entry": "Lexicographic sort",
+      "field": "formatting",
+      "submission_terms": "lexicographic"
+    }
+  ],
+  "submission_syntax_tree": {
+    "allocations_never_freed": [],
+    "branch_conditions": [
+      {
+        "condition": "a < b",
+        "line": 13
+      },
+      {
+        "condition": "a->u != b->u",
+        "line": 30
+      },
+      {
+        "condition": "discovery[root] != 0",
+        "line": 44
+      },
+      {
+        "condition": "edge != (-1)",
+        "line": 58
+      },
+      {
+        "condition": "id_array[edge] == parent_edge[u]",
+        "line": 60
+      },
+      {
+        "condition": "discovery[v] == 0",
+        "line": 63
+      },
+      {
+        "condition": "parent[u] != (-1)",
+        "line": 74
+      },
+      {
+        "condition": "low[u] >= discovery[p]",
+        "line": 76
+      },
+      {
+        "condition": "a > b",
+        "line": 79
+      },
+      {
+        "condition": "((((scanf(\"%d %d\", &n, &m) != 2) || (n < 1)) || (n > 100000)) || (m < 0)) || (m > 100000)",
+        "line": 100
+      },
+      {
+        "condition": "m > 0",
+        "line": 105
+      },
+      {
+        "condition": "m > 0",
+        "line": 115
+      },
+      {
+        "condition": "((((((((((head == NULL) || (to_array == NULL)) || (next_array == NULL)) || (id_array == NULL)) || (discovery == NULL)) || (low == NULL)) || (parent == NULL)) ||",
+        "line": 117
+      },
+      {
+        "condition": "(((((scanf(\"%d %d\", &u, &v) != 2) || (u < 0)) || (u >= n)) || (v < 0)) || (v >= n)) || (u == v)",
+        "line": 131
+      }
+    ],
+    "called_functions": [
+      "add_directed_edge",
+      "calloc",
+      "find_bridges",
+      "free",
+      "malloc",
+      "min_int",
+      "printf",
+      "qsort",
+      "scanf"
+    ],
+    "complexity_hint": "O(n^2) from loop nesting including called functions. This is a structural upper bound, not a proof: amortized loops (monotonic stacks or deques, two pointers) nest syntactically but run in O(n) overall.",
+    "edge_case_targets": [
+      {
+        "detail": "low[u] >= discovery[p]",
+        "kind": "loop_comparison_boundary",
+        "line": 76,
+        "suggestion": "inputs where low[u] equals discovery[p] and differs by one on each side"
+      },
+      {
+        "detail": "a > b",
+        "kind": "loop_comparison_boundary",
+        "line": 79,
+        "suggestion": "inputs where a equals b and differs by one on each side"
+      },
+      {
+        "detail": "a < b",
+        "kind": "comparison_boundary",
+        "line": 13,
+        "suggestion": "inputs where a equals b and differs by one on each side"
+      },
+      {
+        "detail": "a->u > b->u",
+        "kind": "comparison_boundary",
+        "line": 30,
+        "suggestion": "inputs where a->u equals b->u and differs by one on each side"
+      },
+      {
+        "detail": "a->u < b->u",
+        "kind": "comparison_boundary",
+        "line": 30,
+        "suggestion": "inputs where a->u equals b->u and differs by one on each side"
+      },
+      {
+        "detail": "a->v > b->v",
+        "kind": "comparison_boundary",
+        "line": 31,
+        "suggestion": "inputs where a->v equals b->v and differs by one on each side"
+      },
+      {
+        "detail": "a->v < b->v",
+        "kind": "comparison_boundary",
+        "line": 31,
+        "suggestion": "inputs where a->v equals b->v and differs by one on each side"
+      },
+      {
+        "detail": "for (root < n)",
+        "kind": "loop_bounds",
+        "line": 43,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "while (top > 0)",
+        "kind": "loop_bounds",
+        "line": 54,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "for (i < n)",
+        "kind": "loop_bounds",
+        "line": 126,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "for (edge_id < m)",
+        "kind": "loop_bounds",
+        "line": 129,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "for (i < bridge_count)",
+        "kind": "loop_bounds",
+        "line": 147,
+        "suggestion": "zero iterations (if valid), exactly one iteration, and a few iterations"
+      },
+      {
+        "detail": "discovery[root] != 0",
+        "kind": "constant_boundary",
+        "line": 44,
+        "suggestion": "values -1, 0 and 1 for the compared quantity, only those the assignment allows"
+      },
+      {
+        "detail": "top > 0",
+        "kind": "constant_boundary",
+        "line": 54,
+        "suggestion": "values -1, 0 and 1 for the compared quantity, only those the assignment allows"
+      },
+      {
+        "detail": "discovery[v] == 0",
+        "kind": "constant_boundary",
+        "line": 63,
+        "suggestion": "values -1, 0 and 1 for the compared quantity, only those the assignment allows"
+      },
+      {
+        "detail": "n < 1",
+        "kind": "validated_input_limit",
+        "line": 100,
+        "suggestion": "the valid value nearest 1 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "n > 100000",
+        "kind": "validated_input_limit",
+        "line": 100,
+        "suggestion": "the valid value nearest 100000 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "m < 0",
+        "kind": "validated_input_limit",
+        "line": 100,
+        "suggestion": "the valid value nearest 0 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "m > 100000",
+        "kind": "validated_input_limit",
+        "line": 100,
+        "suggestion": "the valid value nearest 100000 (exactly at the limit); values beyond it are invalid input, and a size limit counts only if the input stays within the generated-input length"
+      },
+      {
+        "detail": "m > 0",
+        "kind": "constant_boundary",
+        "line": 105,
+        "suggestion": "values -1, 0 and 1 for the compared quantity, only those the assignment allows"
+      }
+    ],
+    "effective_loop_depth": 2,
+    "fixed_arrays": [],
+    "functions": [
+      {
+        "calls": [],
+        "line_end": 13,
+        "line_start": 12,
+        "name": "min_int",
+        "params": [
+          "int a",
+          "int b"
+        ],
+        "recursive": false,
+        "returns": "int"
+      },
+      {
+        "calls": [],
+        "line_end": 24,
+        "line_start": 16,
+        "name": "add_directed_edge",
+        "params": [
+          "int from",
+          "int to",
+          "int edge_id",
+          "int * head",
+          "int * to_array",
+          "int * next_array",
+          "int * id_array",
+          "int * cursor"
+        ],
+        "recursive": false,
+        "returns": "void"
+      },
+      {
+        "calls": [],
+        "line_end": 31,
+        "line_start": 27,
+        "name": "compare_bridges",
+        "params": [
+          "void * lhs",
+          "void * rhs"
+        ],
+        "recursive": false,
+        "returns": "int"
+      },
+      {
+        "calls": [
+          "min_int",
+          "qsort"
+        ],
+        "line_end": 95,
+        "line_start": 34,
+        "name": "find_bridges",
+        "params": [
+          "int n",
+          "int m",
+          "int * head",
+          "int * to_array",
+          "int * next_array",
+          "int * id_array",
+          "int * discovery",
+          "int * low",
+          "int * parent",
+          "int * parent_edge",
+          "int * iterator",
+          "int * stack",
+          "Bridge * bridges",
+          "int * bridge_count"
+        ],
+        "recursive": false,
+        "returns": "void"
+      },
+      {
+        "calls": [
+          "add_directed_edge",
+          "calloc",
+          "find_bridges",
+          "free",
+          "malloc",
+          "printf",
+          "scanf"
+        ],
+        "line_end": 154,
+        "line_start": 98,
+        "name": "main",
+        "params": [],
+        "recursive": false,
+        "returns": "int"
+      }
+    ],
+    "ignored_inputs": [],
+    "input_calls": [
+      {
+        "format": "\"%d %d\"",
+        "function": "main",
+        "line": 100,
+        "loop_depth": 0,
+        "name": "scanf",
+        "result_checked": true
+      },
+      {
+        "format": "\"%d %d\"",
+        "function": "main",
+        "line": 131,
+        "loop_depth": 1,
+        "name": "scanf",
+        "result_checked": true
+      }
+    ],
+    "integer_divisions": [],
+    "loops": [
+      {
+        "condition": "root < n",
+        "depth": 1,
+        "kind": "for",
+        "line": 43
+      },
+      {
+        "condition": "top > 0",
+        "depth": 2,
+        "kind": "while",
+        "line": 54
+      },
+      {
+        "condition": "i < n",
+        "depth": 1,
+        "kind": "for",
+        "line": 126
+      },
+      {
+        "condition": "edge_id < m",
+        "depth": 1,
+        "kind": "for",
+        "line": 129
+      },
+      {
+        "condition": "i < bridge_count",
+        "depth": 1,
+        "kind": "for",
+        "line": 147
+      }
+    ],
+    "max_loop_depth": 2,
+    "narrow_accumulators": [],
+    "status": "completed",
+    "uses_after_free": []
+  },
+  "test_cases": [
+    {
+      "description": "Triangle plus one leaf edge; only the leaf connection is critical.",
+      "expected": "1\n1 3\n",
+      "id": "instructor-leetcode-sample",
+      "input": "4 4\n0 1\n1 2\n2 0\n1 3\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "memory_safety"
+      ]
+    },
+    {
+      "description": "Every edge in a path is a bridge.",
+      "expected": "3\n0 1\n1 2\n2 3\n",
+      "id": "instructor-simple-chain",
+      "input": "4 3\n0 1\n1 2\n2 3\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "description": "A cycle remains connected after removing any one edge.",
+      "expected": "0\n",
+      "id": "instructor-cycle-no-bridges",
+      "input": "4 4\n0 1\n1 2\n2 3\n3 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "description": "Two cycles joined by one connection.",
+      "expected": "1\n2 3\n",
+      "id": "instructor-two-cycles-one-bridge",
+      "input": "6 7\n0 1\n1 2\n2 0\n2 3\n3 4\n4 5\n5 3\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "description": "Two cycles share one articulation vertex; every edge is still on a cycle and none is a bridge.",
+      "expected": "0\n",
+      "id": "instructor-two-cycles-sharing-articulation",
+      "input": "5 6\n0 1\n1 2\n2 0\n2 3\n3 4\n4 2\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "logical"
+      ]
+    },
+    {
+      "description": "Minimum-size valid connected input; the only edge is a bridge.",
+      "expected": "1\n0 1\n",
+      "id": "instructor-two-vertices-one-edge",
+      "input": "2 1\n0 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "Every spoke is a bridge; output must be lexicographically sorted.",
+      "expected": "4\n0 1\n0 2\n0 3\n0 4\n",
+      "id": "instructor-star-tree",
+      "input": "5 4\n0 4\n0 2\n0 3\n0 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "A cycle attached to a two-edge tail; cycle edges are not bridges.",
+      "expected": "3\n2 3\n3 4\n4 5\n",
+      "id": "instructor-cycle-with-tail",
+      "input": "6 6\n0 1\n1 2\n2 0\n2 3\n3 4\n4 5\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "An articulation vertex can exist even though all edges in its cycle are non-bridges.",
+      "expected": "2\n2 3\n3 4\n",
+      "id": "instructor-articulation-is-not-a-bridge",
+      "input": "5 5\n0 1\n1 2\n2 0\n2 3\n3 4\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "2\n0 1\n1 2\n",
+      "expected_output_source": "instructor_reference",
+      "id": "generated-single_bridge",
+      "input": "3 2\n0 1\n1 2",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "generated"
+      ]
+    }
+  ]
+}

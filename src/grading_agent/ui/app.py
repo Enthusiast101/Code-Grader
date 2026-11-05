@@ -23,7 +23,11 @@ from grading_agent.ui.formai_tab import build_formai_tab, preview_allocation
 
 logger = logging.getLogger("grading_agent.ui")
 OCEAN_UI_CSS = """
-.gradio-container {max-width: 1480px !important; margin: 0 auto !important;}
+/* Fixed width: without width:100% the container shrinks to its content and
+   jumps wider when an uploaded file name or table appears. */
+.gradio-container {width: 100% !important; max-width: 1480px !important; margin: 0 auto !important;}
+#settings-open-button {min-height: 3.1rem;}
+#settings-done-button {margin-top: .75rem;}
 #app-header {padding: 0.5rem 0 0.2rem 0;}
 #grade-button, #generate-tests-button {min-height: 3.1rem; font-size: 1.05rem; font-weight: 600;}
 .compact-note, .compact-note p {opacity: 0.8; font-size: .9rem;}
@@ -51,6 +55,12 @@ OCEAN_UI_CSS = """
 .progress-stages li.done {opacity: .9; border-color: #059669;}
 .progress-stages li.done::before {content: "✓ "; color: #059669; font-weight: 700;}
 .progress-stages li.current {opacity: 1; font-weight: 600; border-color: var(--color-accent); color: var(--color-accent);}
+/* Result tables: honour column_widths and break long unspaced tokens
+   (hex dumps, long numeric inputs) instead of stretching the column. */
+.results-table table {table-layout: fixed; width: 100%;}
+.results-table td, .results-table th {overflow-wrap: anywhere; word-break: break-word; vertical-align: top;}
+.io-table td:nth-child(4), .io-table td:nth-child(5), .io-table td:nth-child(6) {
+  font-family: var(--font-mono); font-size: .85rem;}
 @keyframes progress-shimmer {0% {background-position: 200% 0;} 100% {background-position: -200% 0;}}
 @media (prefers-reduced-motion: reduce) {.progress-fill {animation: none; transition: none;}}
 """
@@ -1317,6 +1327,46 @@ def build_app() -> gr.Blocks:
             "Upload the C submission and the assignment rules, optionally generate extra test cases, then grade.",
             elem_id="app-header",
         )
+        # Run settings live in a right-hand drawer: it slides in from the
+        # Settings button and slides back out on "Done", keeping the main
+        # grading page uncluttered. Values persist while the drawer is closed.
+        with gr.Sidebar(label="Settings", open=False, position="right", width=440,
+                        elem_id="settings-drawer") as settings_drawer:
+            gr.Markdown("## Grading settings")
+            with gr.Accordion("Execution", open=True):
+                time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1,
+                                       label="Per-test timeout (seconds)")
+                memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
+                docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
+                run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
+            with gr.Accordion("LLM", open=True):
+                model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
+                llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature",
+                                               info="0 gives repeatable grades.")
+                llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10,
+                                           label="LLM timeout (seconds)")
+                rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS,
+                                              step=1, label="RSI iterations", info="Stops early when a pass changes nothing.")
+                max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
+                thinking_ui = gr.Checkbox(value=True, label="Enable model thinking",
+                                          info="Structured grading stages run without thinking so the JSON schema applies.")
+            with gr.Accordion("Token budgets", open=False):
+                understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64,
+                                                    label="Understanding token budget")
+                rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
+                scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
+            with gr.Accordion("Context limits", open=False):
+                source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024,
+                                            label="Maximum source characters")
+                evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512,
+                                              label="Maximum evidence characters")
+                context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED,
+                                                     label="Enable same-model compression",
+                                                     info="Used only when a prompt would not fit the context.")
+                compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS,
+                                                     step=256, label="Compression threshold")
+            settings_done_button = gr.Button("Done", variant="primary", elem_id="settings-done-button")
+
         with gr.Tab("Grade a C submission"):
             source_editor_hash = gr.State("")
             rules_editor_source_hash = gr.State("")
@@ -1348,46 +1398,6 @@ def build_app() -> gr.Blocks:
                             elem_classes=["compact-note"],
                         )
 
-            # Parameters: editable, grouped, collapsed by default.
-            with gr.Row(equal_height=False):
-                with gr.Column(scale=1, min_width=300):
-                    with gr.Accordion("Execution settings", open=False):
-                        time_limit = gr.Slider(1, settings.DOCKER_MAX_TIMEOUT_S, value=settings.DOCKER_DEFAULT_TIMEOUT_S, step=1,
-                                               label="Per-test timeout (seconds)")
-                        memory_limit = gr.Slider(128, 8192, value=512, step=128, label="Docker memory (MB)")
-                        docker_cpu = gr.Slider(0.25, 16, value=settings.DOCKER_CPU_LIMIT, step=0.25, label="Docker CPU (cores)")
-                        run_sanitizers = gr.Checkbox(value=settings.ANALYZER_RUN_SANITIZERS, label="Run ASan/UBSan")
-                with gr.Column(scale=2, min_width=300):
-                    with gr.Accordion("LLM and context options", open=False):
-                        with gr.Row():
-                            model_name_ui = gr.Textbox(value=settings.MODEL, label="LLM model identifier")
-                            llm_temperature_ui = gr.Slider(0, 1, value=settings.TEMPERATURE, step=0.05, label="LLM temperature",
-                                                           info="0 gives repeatable grades.")
-                            llm_timeout_ui = gr.Slider(10, 900, value=settings.LLAMA_REQUEST_READ_TIMEOUT_S, step=10,
-                                                       label="LLM timeout (seconds)")
-                        with gr.Row():
-                            rsi_iterations_ui = gr.Slider(1, settings.LLM_REVIEW_MAX_ITERATIONS, value=settings.LLM_REVIEW_MAX_ITERATIONS,
-                                                          step=1, label="RSI iterations", info="Stops early when a pass changes nothing.")
-                            max_findings_ui = gr.Slider(1, 50, value=settings.LLM_GLOBAL_MAX_FINDINGS, step=1, label="Maximum findings")
-                            thinking_ui = gr.Checkbox(value=True, label="Enable model thinking",
-                                                      info="Structured grading stages run without thinking so the JSON schema applies.")
-                        with gr.Row():
-                            understanding_tokens_ui = gr.Slider(64, 3072, value=settings.LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS, step=64,
-                                                                label="Understanding token budget")
-                            rsi_tokens_ui = gr.Slider(128, 4096, value=settings.LLM_GLOBAL_RSI_MAX_TOKENS, step=128, label="RSI token budget")
-                            scoring_tokens_ui = gr.Slider(64, 4096, value=settings.LLM_GLOBAL_SCORE_MAX_TOKENS, step=64, label="Scoring token budget")
-                        with gr.Row():
-                            source_chars_ui = gr.Slider(1024, 30000, value=settings.LLM_GLOBAL_SOURCE_MAX_CHARS, step=1024,
-                                                        label="Maximum source characters")
-                            evidence_chars_ui = gr.Slider(512, 12000, value=settings.LLM_MAX_EVIDENCE_CHARS, step=512,
-                                                          label="Maximum evidence characters")
-                        with gr.Row():
-                            context_compression_ui = gr.Checkbox(value=settings.LLM_CONTEXT_COMPRESSION_ENABLED,
-                                                                 label="Enable same-model compression",
-                                                                 info="Used only when a prompt would not fit the context.")
-                            compression_threshold_ui = gr.Slider(256, 20000, value=settings.LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS,
-                                                                 step=256, label="Compression threshold")
-
             # Step: optional test generation.
             with gr.Row(equal_height=False):
                 max_generated_cases = gr.Slider(
@@ -1401,6 +1411,8 @@ def build_app() -> gr.Blocks:
                     lines=2, max_lines=3, max_length=500, scale=1, min_width=300,
                 )
             with gr.Row():
+                settings_open_button = gr.Button("⚙ Settings", variant="secondary", elem_id="settings-open-button",
+                                                 scale=0, min_width=140)
                 generate_button = gr.Button("Generate Test Cases", variant="secondary", elem_id="generate-tests-button", scale=1)
                 grade_button = gr.Button("Grade Submission", variant="primary", elem_id="grade-button", interactive=True, scale=1)
             generation_progress = gr.HTML(value="", elem_classes=["progress-host"])
@@ -1417,13 +1429,16 @@ def build_app() -> gr.Blocks:
                         datatype=["str", "str", "str", "str"],
                         value=[], interactive=False, wrap=True, show_search="filter",
                         label="Metric results", max_chars=360,
+                        column_widths=["20%", "12%", "12%", "56%"], elem_classes=["results-table"],
                     )
                 with gr.Tab("Test cases"):
                     test_cases_table = gr.Dataframe(
                         headers=["Case", "Origin", "Tags", "Input", "Expected", "Actual", "Result"],
                         datatype=["str", "str", "str", "str", "str", "str", "str"],
                         value=[], interactive=False, wrap=True, show_search="filter",
-                        label="Generated and graded test cases", max_chars=1200,
+                        label="Generated and graded test cases", max_chars=220,
+                        column_widths=["7%", "10%", "13%", "22%", "20%", "20%", "8%"],
+                        elem_classes=["results-table", "io-table"],
                     )
                 with gr.Tab("Findings"):
                     findings_table = gr.Dataframe(
@@ -1431,6 +1446,7 @@ def build_app() -> gr.Blocks:
                         datatype=["str", "str", "str", "str", "str"],
                         value=[], interactive=False, wrap=True, show_search="filter",
                         label="Validated source findings", max_chars=420,
+                        column_widths=["9%", "13%", "7%", "24%", "47%"], elem_classes=["results-table"],
                     )
                 with gr.Tab("Submitted source"):
                     graded_source = gr.Code(label="Exact C source graded", language="c", interactive=False,
@@ -1483,6 +1499,11 @@ def build_app() -> gr.Blocks:
                          graded_source, report_json, report_text, grade_button, generate_button],
                 show_progress="hidden",
             )
+
+        settings_open_button.click(lambda: gr.Sidebar(open=True), outputs=settings_drawer,
+                                   queue=False, show_progress="hidden")
+        settings_done_button.click(lambda: gr.Sidebar(open=False), outputs=settings_drawer,
+                                   queue=False, show_progress="hidden")
 
         formai_controls = build_formai_tab()
         # Fill the allocation preview for the default slider value on page load.
