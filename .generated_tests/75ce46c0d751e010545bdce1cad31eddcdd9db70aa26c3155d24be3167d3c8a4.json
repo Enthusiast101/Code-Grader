@@ -1,0 +1,154 @@
+{
+  "assignment_fingerprint": "75ce46c0d751e010545bdce1cad31eddcdd9db70aa26c3155d24be3167d3c8a4",
+  "assignment_statement": "Without reading input, allocate an integer array, print exactly \"grading sample\" followed by a newline, and exit normally. Keep every allocation valid until its final access and release every successful allocation exactly once; do not read freed memory or leak allocated memory.",
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 0,
+    "requested": 3,
+    "verification_calls": 1,
+    "verified": 3
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 1,
+      "requested_test_count": 4,
+      "status": "completed",
+      "test_count": 3,
+      "verification": {
+        "comparison": "trimmed exact text with normalized line endings",
+        "method": "independent_second_llm_call",
+        "rejected": 0,
+        "requested": 3,
+        "verified": 3
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "No stdin reading",
+      "Fixed output string",
+      "Exit normally after output"
+    ],
+    "formatting": [
+      "Output must be exactly 'grading sample' followed by a newline",
+      "No extra whitespace or characters",
+      "No input validation required"
+    ],
+    "input_format": "Without reading input, allocate an integer array, print exactly \"grading sample\" followed by a newline, and exit normally. Keep every allocation valid until its final access and release every successful allocation exactly once; do not read freed memory or leak allocated memory.",
+    "output_format": "grading sample",
+    "semantics": [
+      "Program must allocate memory and use it",
+      "Program must free allocated memory",
+      "Program must not read stdin",
+      "Program must not leak memory"
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were independently rechecked by a second LLM call against the assignment specification. When available, instructor-provided examples guided input and output conventions; they are not an exhaustive oracle.",
+  "oracle_kind": "instructor-examples-plus-two-pass-llm-verification",
+  "problem_contract": {
+    "description": "Keep heap data valid until its last use and release every successful allocation exactly once. The program should print the fixed status line and exit normally.",
+    "input_range": "No input.",
+    "operand_type": "none",
+    "output_rule": "Print exactly: grading sample",
+    "sum_type": "none"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "normal",
+      "reason": "duplicate of an instructor or earlier generated input"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Without reading input, allocate an integer array, print exactly \"grading sample\" followed by a newline, and exit normally. Keep every allocation valid until its final access and release every successful allocation exactly once; do not read freed memory or leak allocated memory.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "malloc(64) allocation",
+      "NULL check on malloc result",
+      "Loop 0 to 63 with multiplication",
+      "malloc(32) allocation",
+      "NULL check on second malloc",
+      "strcpy to message buffer",
+      "printf with format specifier",
+      "free(values) after loop access"
+    ],
+    "implementation_summary": "Program allocates and initializes an integer array, prints fixed string, then accesses stale memory. No input reading occurs.",
+    "input_parsing_and_validation": [
+      "No input provided",
+      "Input range: none",
+      "Operand type: none",
+      "Output rule: Print exactly 'grading sample' followed by newline",
+      "Sum type: none"
+    ],
+    "likely_weak_points": [
+      "Accessing stale memory at index 20",
+      "Leak of allocated memory after loop",
+      "Uninitialized array elements",
+      "NULL pointer dereference on free",
+      "Buffer overflow on strcpy",
+      "Undefined behavior from volatile cast"
+    ],
+    "recommended_test_dimensions": [
+      "Test malloc failure path",
+      "Test NULL pointer dereference",
+      "Test uninitialized array access",
+      "Test buffer overflow",
+      "Test free on null pointer",
+      "Test uninitialized array access"
+    ]
+  },
+  "submission_derived_contract_entries_removed": [],
+  "test_cases": [
+    {
+      "expected": "grading sample\n",
+      "id": "instructor-normal",
+      "input": "",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "logical",
+        "memory_safety"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "grading sample\n",
+      "id": "generated-whitespace",
+      "input": "   \n  \n",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "edge",
+        "stdin-ignored",
+        "whitespace"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "grading sample\n",
+      "id": "generated-single_number",
+      "input": "42",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "edge",
+        "single_number",
+        "stdin-ignored"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "grading sample\n",
+      "id": "generated-multiple_numbers",
+      "input": "1 2 3 4 5",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "edge",
+        "multiple_numbers",
+        "stdin-ignored"
+      ]
+    }
+  ]
+}

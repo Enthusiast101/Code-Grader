@@ -77,10 +77,68 @@ def test_grading_request_uses_chat_completions_json_schema_once(monkeypatch):
     assert body["model"] == settings.runtime_value("MODEL")
     assert "grammar" not in body
     assert body["response_format"]["type"] == "json_schema"
-    assert body["response_format"]["schema"] == schema
-    assert "json_schema" not in body["response_format"]
+    assert body["response_format"]["json_schema"]["schema"] == schema
+    assert "schema" not in body["response_format"]  # top-level schema is ignored by llama-server
     assert body["chat_template_kwargs"]["enable_thinking"] is False
     assert body["reasoning_effort"] == "none"
+
+
+def test_schema_aware_json_extractor_skips_leading_nonmatching_object():
+    content = (
+        '{"stage":"verifier","status":"working"}\n'
+        '{"verifications":[{"id":"case-1","input":"","input_is_valid":true,'
+        '"expected_output":"READY\\n","reason":"No stdin required."}]}'
+    )
+    parsed = reviewer._extract_json_object(
+        content,
+        required_keys={"verifications"},
+    )
+    assert parsed is not None
+    assert "stage" not in parsed
+    assert parsed["verifications"][0]["id"] == "case-1"
+
+
+def test_truncated_json_does_not_return_nested_fragment():
+    truncated = (
+        '{"spec_summary":"x","ambiguities":[],"inferred_contract":{"input_format":"two ints",'
+        '"output_format":"one int","constraints":[],"semantics":["sum"],"formatting":[]},'
+        '"test_inputs":[{"id":"a","input":"1 2","expected_output":"3"},{"id":"b","inp'
+    )
+    assert reviewer._extract_json_object(
+        truncated,
+        required_keys={"ambiguities", "inferred_contract", "test_inputs"},
+    ) is None
+    assert reviewer._extract_json_object(truncated) is None
+
+
+def test_structured_request_selects_json_object_matching_response_schema(monkeypatch):
+    raw = '{"stage":"verifier","status":"working"}\n{"ok":true}'
+
+    def fake_post(url, *, json, timeout):
+        return _FakeResponse({
+            "choices": [{
+                "message": {"content": raw},
+                "finish_reason": "stop",
+            }]
+        })
+
+    monkeypatch.setattr(reviewer.requests, "post", fake_post)
+    monkeypatch.setattr(
+        reviewer,
+        "_fit_grading_messages",
+        lambda messages, requested: (messages, requested, {}),
+    )
+    parsed, _ = reviewer._request_json(
+        [{"role": "system", "content": "Return JSON."}],
+        max_tokens=256,
+        enable_thinking=False,
+        response_schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        },
+    )
+    assert parsed == {"ok": True}
 
 
 def test_compression_uses_same_model_native_schema_and_one_request(monkeypatch):
@@ -107,12 +165,12 @@ def test_compression_uses_same_model_native_schema_and_one_request(monkeypatch):
     assert sent[0]["model"] == settings.runtime_value("MODEL")
     assert "grammar" not in sent[0]
     assert sent[0]["response_format"]["type"] == "json_schema"
-    assert sent[0]["response_format"]["schema"] == {
+    assert sent[0]["response_format"]["json_schema"]["schema"] == {
         "type": "object", "properties": {"overall_assessment": {"type": "string"},
         "finding_descriptions": {"type": "array", "items": {"type": "string"}}},
         "required": ["overall_assessment", "finding_descriptions"],
     }
-    assert "json_schema" not in sent[0]["response_format"]
+    assert "schema" not in sent[0]["response_format"]  # top-level schema is ignored by llama-server
     assert sent[0]["chat_template_kwargs"]["enable_thinking"] is False
     assert sent[0]["reasoning_effort"] == "none"
 
@@ -145,8 +203,8 @@ def test_schema_constrained_request_disables_qwen_lazy_reasoning(monkeypatch):
     assert len(sent) == 1
     assert sent[0]["chat_template_kwargs"]["enable_thinking"] is False
     assert sent[0]["response_format"]["type"] == "json_schema"
-    assert sent[0]["response_format"]["schema"] == schema
-    assert "json_schema" not in sent[0]["response_format"]
+    assert sent[0]["response_format"]["json_schema"]["schema"] == schema
+    assert "schema" not in sent[0]["response_format"]  # top-level schema is ignored by llama-server
     assert "grammar" not in sent[0]
 
 def test_same_model_compression_runs_and_records_actual_model_call(monkeypatch):

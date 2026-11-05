@@ -1,4 +1,4 @@
-"""Calibrated score bands for 0..10 LLM ratings and 0..100 final scores."""
+"""Quality anchors for mapping metric evidence to configured point caps."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,16 +43,6 @@ SCORE_BANDS = tuple(
 BAND_BY_LABEL = {band.label: band for band in SCORE_BANDS}
 BAND_LABELS = tuple(BAND_BY_LABEL)
 
-LLM_SCORE_BANDS = tuple(
-    ScoreBand(
-        f"{lower:g}-{lower + 0.5:g}", lower, lower + 0.5,
-        lower + 0.25, _DESCRIPTORS[index],
-    )
-    for index, lower in enumerate(i * 0.5 for i in range(20))
-)
-LLM_BAND_BY_LABEL = {band.label: band for band in LLM_SCORE_BANDS}
-
-
 def score_from_band(value: Any) -> float | None:
     """Return the fixed midpoint for a recognized five-point band."""
     if not isinstance(value, str):
@@ -72,44 +62,53 @@ def band_for_score(score: float) -> str:
     return f"{lower}-{lower + 5}"
 
 
-def llm_score_from_band(value: Any) -> float | None:
-    """Return a fixed midpoint for a recognized 0..10 LLM rating band."""
-    if not isinstance(value, str):
-        return None
-    band = LLM_BAND_BY_LABEL.get(value.strip())
-    return band.midpoint if band else None
+# Few, clearly separated anchors. A small model cannot reliably tell twenty
+# near-synonymous bands ("excellent", "very excellent", "near exemplary") apart,
+# which shows up as arbitrary, ceiling-heavy scores.
+GENERIC_LEVEL_ANCHORS = (
+    ("10", "Fully meets the criterion; no defect found after checking the source and evidence."),
+    ("8", "Meets the criterion with one or two minor, low-impact issues."),
+    ("6", "Mostly meets it; at least one moderate issue a reviewer would ask to fix."),
+    ("4", "Partly meets it; a major issue or several moderate ones."),
+    ("2", "Largely unmet; only fragments satisfy the criterion."),
+    ("0", "Not met at all, demonstrated by a specific failure (give zero_score_reason)."),
+)
 
 
-def llm_band_for_score(score: float) -> str:
-    """Map a finite 0..10 LLM score to a half-point descriptor band."""
-    if isinstance(score, bool) or not isinstance(score, (int, float)):
-        raise TypeError("score must be numeric")
-    numeric = float(score)
-    if not 0.0 <= numeric <= 10.0:
-        raise ValueError("LLM score must be between 0 and 10")
-    lower = min(9.5, int(numeric * 2) / 2)
-    return f"{lower:g}-{lower + 0.5:g}"
+def rubric_prompt_block(
+    metric_rubrics: dict[str, Any] | None = None,
+    metric_caps: dict[str, float] | None = None,
+    *,
+    levels: dict[str, dict[str, str] | None] | None = None,
+) -> str:
+    """Build the rating instructions: one integer level 0-10 per metric.
 
-
-def rubric_prompt_block(metric_rubrics: dict[str, Any] | None = None) -> str:
-    """Build the calibrated scale and metric criteria for scoring prompts."""
+    ``levels`` optionally supplies metric-specific anchors (e.g. {"10": ...,
+    "6": ...}) that take precedence over the generic anchors for that metric.
+    Odd levels sit between the neighbouring anchors.
+    """
     lines = [
-        "CALIBRATED LLM METRIC RATING: rate each metric from 0 to 10, allowing decimals.",
-        "Return a numeric rating from 0 to 10; do not return a band label.",
-        "Convert the normalized rating to the metric's point cap as rating / 10 * maximum_points.",
-        "The overall grade is the sum of earned metric points and is out of 100. A metric marked diagnostic-only is excluded from that sum.",
-        "Executed correctness/logical test results and completed deterministic analyzer results override conflicting LLM ratings; retain LLM ratings separately for audit.",
-        "Missing measurements are not zeros. Never invent evidence or task requirements.",
-        "GENERAL 0-10 ANCHORS (each band is a half point):",
+        "RATING SCALE: rate each metric with one integer from 0 to 10. Python converts the level to points.",
+        "Start from 10 and deduct only for issues you can point to in the source, validated findings, or evidence.",
+        "Missing measurements are not failures. Never invent evidence or task requirements.",
+        "GENERIC LEVEL ANCHORS:",
     ]
-    lines.extend(f"{band.label}/10: {band.descriptor}" for band in LLM_SCORE_BANDS)
+    lines.extend(f"{level}: {text}" for level, text in GENERIC_LEVEL_ANCHORS)
+    if metric_caps:
+        lines.append("MAXIMUM POINTS BY METRIC (for reference only; still return 0-10 levels):")
+        lines.extend(f"{name}: {points:g} points" for name, points in metric_caps.items())
     if metric_rubrics:
-        max_points = metric_rubrics.get("max_points", {})
-        if isinstance(max_points, dict) and max_points:
-            lines.append("METRIC POINT CAPS:")
-            lines.extend(f"{name}: {points} points maximum" for name, points in max_points.items())
         criteria = metric_rubrics.get("metrics", metric_rubrics)
         if isinstance(criteria, dict) and criteria:
             lines.append("METRIC-SPECIFIC CRITERIA:")
-            lines.extend(f"{name}: {criteria[name]}" for name in sorted(criteria))
+            lines.extend(
+                f"{name}: {criteria[name]}" for name in sorted(criteria)
+                if isinstance(criteria[name], str) and criteria[name].strip()
+            )
+    specific = {name: value for name, value in (levels or {}).items() if isinstance(value, dict) and value}
+    if specific:
+        lines.append("METRIC-SPECIFIC LEVEL ANCHORS (use these instead of the generic anchors for that metric):")
+        for name in sorted(specific):
+            ordered = sorted(specific[name].items(), key=lambda item: -float(item[0]) if item[0].replace(".", "", 1).isdigit() else 0)
+            lines.append(f"{name}: " + " | ".join(f"{level} = {text}" for level, text in ordered))
     return "\n".join(lines)

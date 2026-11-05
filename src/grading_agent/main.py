@@ -217,11 +217,36 @@ def run_configured_analyzers(
         }
 
         # Generate a reproducible assignment-level suite from the natural-language
-        # problem statement before running execution analyzers. The student source
-        # is never included in test-generation prompts.
+        # problem statement before running execution analyzers, unless the UI has
+        # already generated and explicitly attached a validated suite. In the UI
+        # workflow generation is a separate user action; grading must not call
+        # the generator a second time.
         report["test_generation"] = {"status": "not_required"}
         testing_cfg = rules.get("test_generation", {})
-        if sandbox is not None and isinstance(testing_cfg, dict) and testing_cfg.get("enabled", True):
+        pre_generated_suite = (
+            testing_cfg.get("pre_generated_suite")
+            if isinstance(testing_cfg, dict) else None
+        )
+        if isinstance(pre_generated_suite, dict) and pre_generated_suite.get("status") == "completed":
+            report["test_generation"] = {
+                **pre_generated_suite,
+                "status": "completed",
+                "source": "pre_generated_by_ui",
+                "request_events": [],
+            }
+            report["test_generation"].setdefault("suite_path", None)
+            missing_bindings = [
+                str(metric.get("name", metric.get("analyzer", "unknown")))
+                for metric in enabled_metrics
+                if metric.get("analyzer") in EXECUTION_ANALYZERS
+                and not metric.get("params", {}).get("resolved_testset_path")
+            ]
+            if missing_bindings:
+                report["test_generation"].update({
+                    "status": "unavailable",
+                    "error": "The pre-generated suite is missing testset bindings for: " + ", ".join(missing_bindings),
+                })
+        elif sandbox is not None and isinstance(testing_cfg, dict) and testing_cfg.get("enabled", True):
             execution_metrics_present = any(
                 item.get("enabled", True) and item.get("analyzer") in
                 {"io_tests", "edge_case_runner", "memory_safety", "runtime_profile"}
@@ -238,13 +263,27 @@ def run_configured_analyzers(
                     if not _is_llm_server_ready():
                         generation_process = initiate_server()
 
+                    requested_test_cases = testing_cfg.get("max_cases", 12)
+                    try:
+                        requested_test_cases = max(1, int(requested_test_cases))
+                    except (TypeError, ValueError):
+                        requested_test_cases = 12
+                    # Size the single test-generation response from the requested
+                    # suite size. Invalid candidates are discarded, not replaced
+                    # through additional generation/RSI passes.
+                    generation_token_budget = max(
+                        int(settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS") or 0),
+                        min(settings.LLAMA_CONTEXT_SIZE, 2048 + requested_test_cases * 192),
+                    )
+
                     def _test_generation_request(messages, schema, stage_name):
                         parsed, _raw = _request_json(
                             messages,
-                            max_tokens=settings.runtime_value("LLM_GLOBAL_SCORE_MAX_TOKENS"),
+                            max_tokens=generation_token_budget,
                             enable_thinking=None,
                             response_schema=schema,
                             schema_name=stage_name,
+                            fit_context=True,
                         )
                         return parsed
 
@@ -254,6 +293,8 @@ def run_configured_analyzers(
                         model_id=str(settings.runtime_value("MODEL")),
                         generation_seed=settings.SEED,
                         temperature=float(settings.runtime_value("TEMPERATURE")),
+                        submission_source=source_code,
+                        submission_filename=source_filename,
                     )
                     report["test_generation"]["request_events"] = generation_request_events
                 except Exception as exc:
@@ -269,6 +310,30 @@ def run_configured_analyzers(
                     _stop_llm_server(generation_process)
         elif docker_needed and sandbox is None:
             report["test_generation"] = {"status": "unavailable", "reason": sandbox_error or "Docker sandbox unavailable."}
+
+        # Runtime profiling needs valid inputs, but it does not need expected
+        # outputs or a generated reference solution. If automatic generation
+        # fails (for example, because output formatting is ambiguous), reuse
+        # an instructor-supplied correctness/edge-case input set instead of
+        # marking runtime efficiency unmeasured.
+        runtime_metrics = [
+            item for item in enabled_metrics
+            if item.get("enabled", True) and item.get("analyzer") == "runtime_profile"
+        ]
+        reusable_input_metrics = [
+            item for analyzer in ("io_tests", "edge_case_runner", "memory_safety")
+            for item in enabled_metrics
+            if item.get("enabled", True)
+            and item.get("analyzer") == analyzer
+            and item.get("params", {}).get("resolved_testset_path")
+        ]
+        for runtime_metric in runtime_metrics:
+            runtime_params = runtime_metric.setdefault("params", {})
+            if runtime_params.get("resolved_testset_path") or not reusable_input_metrics:
+                continue
+            input_metric = reusable_input_metrics[0]
+            runtime_params["resolved_testset_path"] = input_metric["params"]["resolved_testset_path"]
+            runtime_params["runtime_input_source_metric"] = str(input_metric.get("name", input_metric.get("analyzer")))
 
         for metric in enabled_metrics:
             metric_name = metric["name"]
@@ -316,6 +381,8 @@ def run_configured_analyzers(
                         source_filename=source_filename,
                         test_case_cache=test_case_cache,
                     )
+                    if analyzer_name == "runtime_profile" and params.get("runtime_input_source_metric"):
+                        result["test_input_source_metric"] = params["runtime_input_source_metric"]
                 except Exception as exc:
                     logger.warning("Analyzer '%s' failed; continuing with remaining metrics: %s", metric_name, exc)
                     result = _unavailable_metric(f"{type(exc).__name__}: {exc}")
@@ -434,8 +501,8 @@ def _grade_with_rules_file_impl(
             report, rules, f"{type(exc).__name__}: {exc}"
         )
 
-    # Use the RSI metric score, fall back to the deterministic analyzer score,
-    # then calculate the final weighted grade in Python.
+    # Use authoritative deterministic results where available, rubric points
+    # otherwise, then calculate the consolidated point total in Python.
     apply_metric_scores(rules["metrics"], report, report["llm_rsi_evaluation"])
     report["scoring"] = calculate_overall_score(rules["metrics"], report)
     llm_result = report.get("llm_rsi_evaluation", {})

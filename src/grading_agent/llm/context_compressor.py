@@ -148,11 +148,16 @@ def _same_model_chat(
             MAX_COMPRESSION_RESPONSE_TOKENS,
             max(configured_budget, requested_budget),
         ),
-        "chat_template_kwargs": {"enable_thinking": bool(settings.runtime_value("LLAMA_REASONING_ENABLED"))},
+        # Same contract as grading requests: schema enforced from the first
+        # token, so template thinking is off for this structured request.
+        "chat_template_kwargs": {"enable_thinking": False},
+        "cache_prompt": bool(settings.LLAMA_CACHE_PROMPT),
         "messages": messages,
+        # llama-server only reads the nested json_schema.schema member for type
+        # "json_schema"; a top-level "schema" is silently ignored.
         "response_format": {
             "type": "json_schema",
-            "schema": response_schema,
+            "json_schema": {"name": "context_compression", "schema": response_schema},
         },
     }
 

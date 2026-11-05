@@ -78,12 +78,13 @@ class TestFinalUserFixes(unittest.TestCase):
 
     def test_generic_metric_rationale_is_replaced_without_discarding_score(self):
         enabled = [{"name": "syntax", "enabled": True}]
+        # Scores are 0-10 rubric levels; Python converts them to points.
         generic = {"scores": {"syntax": {
-            "score": 100,
+            "score": 10,
             "rationale": "No metric-specific defect was retained; available analyzer evidence supports this score.",
         }}}
         specific = {"scores": {"syntax": {
-            "score": 100,
+            "score": 10,
             "rationale": "GCC compiled the source with the configured C11, Wall, Wextra, and Wpedantic flags and reported no diagnostics.",
         }}}
         generic_result = reviewer._normalise_metric_scores(generic, enabled, [])
@@ -93,7 +94,7 @@ class TestFinalUserFixes(unittest.TestCase):
 
     def test_valid_llm_score_is_not_discarded_when_rationale_is_generic(self):
         parsed = {"scores": {"syntax": {
-            "score": 96,
+            "score": 9.6,
             "rationale": "No metric-specific defect was retained; available analyzer evidence supports this score.",
             "zero_score_reason": "",
             "confidence": 0.8,
@@ -159,11 +160,12 @@ class TestFinalUserFixes(unittest.TestCase):
         body = post.call_args.kwargs["json"]
         self.assertEqual(url, f"{settings.LLAMA_BASE_URL}{settings.LLAMA_API_PATH}")
         self.assertEqual(body["model"], "configured-grading-model")
-        self.assertTrue(body["chat_template_kwargs"]["enable_thinking"])
+        # Structured compression matches grading requests: schema from the first token.
+        self.assertFalse(body["chat_template_kwargs"]["enable_thinking"])
         self.assertNotIn("grammar", body)
         self.assertEqual(body["response_format"]["type"], "json_schema")
-        self.assertEqual(body["response_format"]["schema"]["type"], "object")
-        self.assertNotIn("json_schema", body["response_format"])
+        self.assertEqual(body["response_format"]["json_schema"]["schema"]["type"], "object")
+        self.assertNotIn("schema", body["response_format"])  # top-level schema is ignored by llama-server
 
     def test_managed_server_rejects_pre_json_schema_fix_build_before_start(self):
         old_version = MagicMock(returncode=0, stdout="version: 0.0.0 (build 11999, commit oldbuild)\n", stderr="")

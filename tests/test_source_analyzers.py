@@ -53,6 +53,50 @@ class SourceAnalyzerTests(unittest.TestCase):
             result = run_similarity_flag(SOURCE, corpus, flag_threshold=0.8)
             self.assertTrue(result["flagged_for_human_review"])
             self.assertEqual(result["max_similarity"], 1.0)
+            self.assertEqual(result["score"], 0.0)
+
+    def test_similarity_without_directory_is_full_marks(self):
+        for corpus in (None, "", "does/not/exist"):
+            result = run_similarity_flag(SOURCE, corpus)
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["score"], 100.0)
+            self.assertFalse(result["comparison_performed"])
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_similarity_flag(SOURCE, tmp)
+            self.assertEqual(result["score"], 100.0)
+
+    def test_similarity_score_falls_linearly_between_thresholds(self):
+        from grading_agent.analyzers.similarity import similarity_score
+
+        self.assertEqual(similarity_score(0.20, 0.35, 0.85), 100.0)
+        self.assertEqual(similarity_score(0.35, 0.35, 0.85), 100.0)
+        self.assertEqual(similarity_score(0.60, 0.35, 0.85), 50.0)
+        self.assertEqual(similarity_score(0.85, 0.35, 0.85), 0.0)
+        self.assertEqual(similarity_score(1.00, 0.35, 0.85), 0.0)
+
+    def test_similarity_reports_pairwise_matrix_and_skips_self(self):
+        other = "int main(void) { int x; for (x = 0; x < 3; x++) { } return x; }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus = Path(tmp)
+            (corpus / "submission.c").write_text(SOURCE, encoding="utf-8")  # the graded file itself
+            (corpus / "a.c").write_text(other, encoding="utf-8")
+            (corpus / "b.c").write_text(other.replace("x", "y"), encoding="utf-8")
+            result = run_similarity_flag(SOURCE, corpus, submission_name="submission.c")
+            self.assertEqual(result["self_matches_excluded"], ["submission.c"])
+            self.assertEqual(result["pairwise_files"], ["a.c", "b.c"])
+            self.assertEqual(result["pairwise_matrix"][0][1], 1.0)
+            self.assertEqual(result["cohort_flagged_pairs"][0]["files"], ["a.c", "b.c"])
+
+    def test_leetcode_examples_score_as_documented(self):
+        root = Path(__file__).resolve().parents[1] / "examples" / "leetcode"
+        expected = {"0042-trapping-rain-water": 0.0, "0200-number-of-islands": 100.0}
+        for folder, score in expected.items():
+            source = (root / folder / "submission.c").read_text(encoding="utf-8")
+            result = run_similarity_flag(source, root / folder / "submissions")
+            self.assertEqual(result["score"], score, folder)
+        merge = root / "0056-merge-intervals"
+        partial = run_similarity_flag((merge / "submission.c").read_text(encoding="utf-8"), merge / "submissions")
+        self.assertTrue(0.0 < partial["score"] < 100.0)
 
 
 class OverallScoringTests(unittest.TestCase):

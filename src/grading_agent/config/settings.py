@@ -65,6 +65,7 @@ _RUNTIME_OVERRIDE_KEYS = {
     "TEMPERATURE",
     "LLAMA_REQUEST_TIMEOUT",
     "LLM_REVIEW_MAX_ITERATIONS",
+    "LLM_RSI_STOP_ON_CONVERGENCE",
     "LLM_PROGRAM_UNDERSTANDING_MAX_TOKENS",
     "LLM_GLOBAL_RSI_MAX_TOKENS",
     "LLM_GLOBAL_SCORE_MAX_TOKENS",
@@ -157,6 +158,10 @@ def _resolve_model_from_env(value: str | None) -> str:
 MODEL = _resolve_model_from_env(os.getenv("LLAMA_MODEL"))
 TEMPERATURE = _env_float("LLAMA_TEMPERATURE", 0.0)
 SEED = _env_int("LLAMA_SEED", 42)
+# Reuse of the server's KV cache across requests changes batch boundaries and
+# therefore logits, so identical requests can decode differently even at
+# temperature 0. Disabled by default: grading must be repeatable.
+LLAMA_CACHE_PROMPT = _env_bool("LLAMA_CACHE_PROMPT", False)
 MAX_TOKENS = _env_int("LLAMA_MAX_TOKENS", 3072)
 LLAMA_CONTEXT_SIZE = _env_int("LLAMA_CONTEXT_SIZE", 8192)
 LLAMA_REASONING_ENABLED = _env_bool("LLAMA_REASONING_ENABLED", True)
@@ -211,6 +216,9 @@ LLM_CONTEXT_COMPRESSION_THRESHOLD_CHARS = _env_int("LLM_CONTEXT_COMPRESSION_THRE
 LLM_CONTEXT_COMPRESSION_MAX_TOKENS = _env_int("LLM_CONTEXT_COMPRESSION_MAX_TOKENS", 1536)
 LLM_RETRY_ATTEMPTS = 1  # Legacy audit paths also make one request; no repair retries.
 LLM_REVIEW_MAX_ITERATIONS = _env_int("LLM_REVIEW_MAX_ITERATIONS", 3)
+# Stop RSI early when a pass reproduces the previous findings exactly (a fixed
+# point at temperature 0). Set false to always run every configured pass.
+LLM_RSI_STOP_ON_CONVERGENCE = _env_bool("LLM_RSI_STOP_ON_CONVERGENCE", True)
 LLM_DEFAULT_MAX_FINDINGS = _env_int("LLM_DEFAULT_MAX_FINDINGS", 30)
 LLM_FINDING_RECOVERY_ENABLED = _env_bool("LLM_FINDING_RECOVERY_ENABLED", False)
 LLM_FINDING_EXCERPT_CONTEXT_LINES = _env_int("LLM_FINDING_EXCERPT_CONTEXT_LINES", 4)
@@ -317,8 +325,13 @@ ANALYZER_LONG_LINE_PENALTY = _env_float("ANALYZER_LONG_LINE_PENALTY", 1.0)
 ANALYZER_SINGLE_CHAR_IDENTIFIER_PENALTY = _env_float("ANALYZER_SINGLE_CHAR_IDENTIFIER_PENALTY", 1.0)
 ANALYZER_MISSING_COMMENT_PENALTY = _env_float("ANALYZER_MISSING_COMMENT_PENALTY", 5.0)
 ANALYZER_SIMILARITY_THRESHOLD = _env_float("ANALYZER_SIMILARITY_THRESHOLD", 0.85)
+# Highest similarity that still earns full originality credit; credit falls
+# linearly to zero at ANALYZER_SIMILARITY_THRESHOLD.
+ANALYZER_SIMILARITY_LOW_THRESHOLD = _env_float("ANALYZER_SIMILARITY_LOW_THRESHOLD", 0.35)
 ANALYZER_SIMILARITY_MAX_FILES = _env_int("ANALYZER_SIMILARITY_MAX_FILES", 5000)
-ANALYZER_SIMILARITY_SHINGLE_SIZE = _env_int("ANALYZER_SIMILARITY_SHINGLE_SIZE", 5)
+# 8-token shingles keep independent solutions to the same task below ~0.2 while
+# renamed or reformatted copies still match at 1.0 (calibrated on examples/leetcode).
+ANALYZER_SIMILARITY_SHINGLE_SIZE = _env_int("ANALYZER_SIMILARITY_SHINGLE_SIZE", 8)
 ANALYZER_SIMILARITY_MIN_SHINGLE_SIZE = 2
 ANALYZER_SIMILARITY_MAX_FILE_BYTES = _env_int("ANALYZER_SIMILARITY_MAX_FILE_BYTES", 2_000_000)
 

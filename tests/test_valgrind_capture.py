@@ -45,6 +45,32 @@ class ValgrindCaptureTests(unittest.TestCase):
         # The analyzer no longer tries Docker's archive API to obtain a log.
         self.assertEqual(sandbox.read_file.call_count, 0)
 
+    def _run_with_valgrind_outcomes(self, outcomes):
+        sandbox = Mock()
+        sandbox.write_file.return_value = None
+        sandbox.run.side_effect = [
+            {"exit_code": 0, "output": "", "timed_out": False, "output_may_be_truncated": False},
+            {"exit_code": 0, "output": "", "timed_out": False, "output_may_be_truncated": False},
+            *outcomes,
+        ]
+        cases = [{"id": f"case-{i}", "input": "", "expected": ""} for i in range(len(outcomes))]
+        return run_memory_safety(sandbox, "int main(void) { return 0; }", cases, run_sanitizers=False)
+
+    def test_valgrind_timeout_on_one_case_is_excluded_not_inconclusive(self):
+        timeout = {"exit_code": 124, "output": "", "timed_out": True, "output_may_be_truncated": False}
+        clean = {"exit_code": 0, "output": CLEAN_VALGRIND_LOG, "timed_out": False, "output_may_be_truncated": False}
+        result = self._run_with_valgrind_outcomes([clean, timeout])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["runtime_tools"]["valgrind_score"], 100.0)
+        self.assertEqual(result["tests_excluded_timeout"], ["case-1"])
+        self.assertEqual(result["tests_checked"], 1)
+
+    def test_valgrind_with_every_case_timed_out_stays_inconclusive(self):
+        timeout = {"exit_code": 124, "output": "", "timed_out": True, "output_may_be_truncated": False}
+        result = self._run_with_valgrind_outcomes([timeout, dict(timeout)])
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertIsNone(result["runtime_tools"]["valgrind_score"])
+
 
 if __name__ == "__main__":
     unittest.main()

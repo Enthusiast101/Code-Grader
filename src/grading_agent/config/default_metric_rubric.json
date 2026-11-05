@@ -1,24 +1,91 @@
 {
-  "version": "1.0",
+  "version": "2.1",
   "scale": {
     "minimum": 0,
-    "maximum": 10,
-    "step": 0.5,
-    "bands": "0-0.5, 0.5-1, ..., 9.5-10",
-    "applies_to": "LLM rating for each metric",
-    "final_grade_scale": "0-100",
-    "llm_value": "primary_when_validated_except_test_defined_metrics",
-    "final_grade_authority": "executed_correctness_logical_tests_then_validated_llm_then_completed_analyzer_fallback"
+    "maximum": 100,
+    "unit": "earned metric points",
+    "metric_max_points": {
+      "correctness": 20,
+      "syntax": 10,
+      "structure": 10,
+      "modularity": 10,
+      "complexity": 10,
+      "logical": 10,
+      "similarity": 10,
+      "memory_safety": 10,
+      "readability": 10
+    },
+    "final_grade_scale": "sum of earned points out of 100",
+    "llm_value": "integer level 0-10 per model-rated metric, converted to points by Python",
+    "final_grade_authority": "executed_tests_and_completed_authoritative_analyzers_then_validated_llm_levels"
   },
   "metrics": {
-    "correctness": "Score the executed configured assignment tests as passed cases divided by executed valid cases. Never count unexecuted tests as passes or failures. Failed cases must show input, oracle expected output, actual output and exit/timeout state. Use source findings to explain failures, not to replace the observed pass rate. If no tests ran, assess from the actionable assignment contract and validated evidence; otherwise leave unmeasured.",
-    "logical": "Score executed assignment-specific invariant and edge/property tests as passed cases divided by executed valid cases. Explain the invariant each case targets; do not double-count correctness cases unless the instructor separates these metrics. Use source findings to explain failures, not to replace the observed pass rate. If no tests ran, assess only from explicit requirements and validated evidence; otherwise leave unmeasured.",
+    "correctness": {
+      "criterion": "Score the executed configured assignment tests as passed cases divided by executed valid cases. Never count unexecuted tests as passes or failures. Failed cases must show input, oracle expected output, actual output and exit/timeout state. Use source findings to explain failures, not to replace the observed pass rate. If no tests ran, assess from the actionable assignment contract and validated evidence; otherwise leave unmeasured.",
+      "levels": {
+        "10": "Traced behaviour satisfies every stated requirement for all valid inputs in the contract.",
+        "6": "Correct for typical inputs but fails a stated boundary, special case, or output-format rule.",
+        "2": "The core required result is computed or printed incorrectly.",
+        "0": "Does not produce the required output for any valid input."
+      }
+    },
+    "logical": {
+      "criterion": "Score executed assignment-specific invariant and edge/property tests as passed cases divided by executed valid cases. Explain the invariant each case targets; do not double-count correctness cases unless the instructor separates these metrics. Use source findings to explain failures, not to replace the observed pass rate. If no tests ran, assess only from explicit requirements and validated evidence; otherwise leave unmeasured.",
+      "levels": {
+        "10": "The algorithm and every stated invariant hold on all traced paths, including boundaries.",
+        "6": "Sound approach with one logic error on a boundary or special case.",
+        "2": "The algorithm or calculation is wrong for the main case.",
+        "0": "No coherent logic for the required computation."
+      }
+    },
     "syntax": "Use the pinned compiler, language standard and exact flags. Compile errors fail; warnings follow explicit configured deductions. Never infer compilation from source inspection.",
-    "structure": "Use pinned static-analysis diagnostics and explicit instructor thresholds, with source locations and severities.",
-    "modularity": "Apply only the instructor's decomposition contract. Do not assume helper functions are mandatory unless the task/rubric says so.",
-    "complexity": "Assess asymptotic time and space against the required bound using algorithm and input constraints. Cyclomatic complexity and function length are not Big-O. Return inconclusive if the bound cannot be established from source and task constraints.",
-    "memory_safety": "Every enabled check must complete. Distinguish actual defects from tool failures and incomplete executions. Tool failure is unmeasured, not clean.",
-    "readability": "Use explicit criteria for names, comments where useful, formatting, decomposition and maintainability. Avoid personal style penalties without instructor criteria.",
-    "originality": "Token and structural similarity are review signals, not proof of plagiarism. No punitive deduction without explicit instructor policy and human review."
+    "structure": {
+      "criterion": "Use pinned static-analysis diagnostics and explicit instructor thresholds, with source locations and severities.",
+      "levels": {
+        "10": "No static-analysis findings; control flow is direct with no unreachable code, duplicated blocks, or nesting beyond configured thresholds.",
+        "8": "One minor structural issue, such as a low-severity analyzer note or a slightly redundant branch.",
+        "6": "One moderate structural issue: duplicated logic, an over-nested block, or an analyzer warning.",
+        "3": "Several structural defects or an analyzer error that obscures control flow.",
+        "0": "Control flow cannot be followed or contains a confirmed structural error."
+      }
+    },
+    "modularity": {
+      "criterion": "Apply only the instructor's decomposition contract. Do not assume helper functions are mandatory unless the task/rubric says so.",
+      "levels": {
+        "10": "Satisfies the instructor's decomposition contract; with no contract, one coherent function is acceptable.",
+        "6": "Contract partly met: a required helper is missing or one function mixes several required responsibilities.",
+        "2": "Contract largely unmet.",
+        "0": "Ignores an explicit decomposition requirement entirely."
+      }
+    },
+    "complexity": {
+      "criterion": "Assess asymptotic time and space against the required bound using algorithm and input constraints. Cyclomatic complexity and function length are not Big-O. Return inconclusive if the bound cannot be established from source and task constraints.",
+      "levels": {
+        "10": "Asymptotic time and space meet the required bound (or the straightforward bound for the task when none is stated).",
+        "7": "Meets the bound, with avoidable extra passes or memory that matter at the stated input limits.",
+        "3": "Exceeds the required bound by a polynomial factor (for example O(n^2) where O(n) is required).",
+        "0": "Cannot finish within limits for the stated input sizes (for example exponential where polynomial is required)."
+      }
+    },
+    "similarity": "Measured, not estimated: the submission is compared with every other C file in the configured comparison directory using normalized token shingles (identifiers and formatting ignored). Without a directory, similarity earns full marks. Otherwise credit is full at or below the low threshold and falls linearly to zero at the review threshold. High similarity is a signal for instructor review, not proof of plagiarism.",
+    "memory_safety": {
+      "criterion": "Every enabled check must complete. Distinguish actual defects from tool failures and incomplete executions. Tool failure is unmeasured, not clean.",
+      "levels": {
+        "10": "Every allocation is checked, released exactly once, and never accessed after release or out of bounds on any traced path.",
+        "6": "A leak or unchecked allocation on an error path only; no invalid access.",
+        "3": "A leak on the normal path, or an unchecked allocation that is dereferenced.",
+        "0": "A traced invalid access: use-after-free, double free, or out-of-bounds read or write."
+      }
+    },
+    "readability": {
+      "criterion": "Use explicit criteria for names, comments where useful, formatting, decomposition and maintainability. Avoid personal style penalties without instructor criteria.",
+      "levels": {
+        "10": "Consistent indentation and formatting; identifiers convey purpose; non-obvious logic is explained.",
+        "8": "Readable with one or two small inconsistencies.",
+        "5": "Several inconsistencies or unclear identifiers that slow a reader down.",
+        "2": "Formatting or identifiers make the logic hard to follow.",
+        "0": "Unreadable without reformatting."
+      }
+    }
   }
 }

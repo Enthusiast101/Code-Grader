@@ -246,8 +246,16 @@ def run_memory_safety(
             "raw_log": raw_log,
         })
 
-    vg_complete = len(vg_results) == len(test_cases) and all(not item["analysis_error"] for item in vg_results)
-    vg_score = (100.0 * sum(item["memory_safe"] for item in vg_results) / len(test_cases)) if vg_complete else None
+    # A run that exceeds the time limit under Valgrind (typically a
+    # performance-scale input; Memcheck slows programs 20-50x) is a tool-speed
+    # limit, not memory evidence. Score the runs that completed and list the
+    # excluded ones. Any other inconclusive run (no parseable log, truncated
+    # output) still makes the component inconclusive.
+    vg_timeouts = [item for item in vg_results if item["timed_out"]]
+    vg_completed = [item for item in vg_results if not item["analysis_error"]]
+    vg_other_failures = [item for item in vg_results if item["analysis_error"] and not item["timed_out"]]
+    vg_complete = bool(vg_completed) and not vg_other_failures
+    vg_score = (100.0 * sum(item["memory_safe"] for item in vg_completed) / len(vg_completed)) if vg_complete else None
 
     sanitizer_results: list[dict[str, Any]] = []
     sanitizer_complete = True
@@ -277,7 +285,9 @@ def run_memory_safety(
                 sanitizer_error = address_issue or undefined_issue
                 timed_out = bool(run["timed_out"])
                 inconclusive = timed_out or run.get("output_may_be_truncated", False) or (run["exit_code"] != 0 and not sanitizer_error)
-                if inconclusive:
+                # Timeouts are excluded from scoring (see Valgrind above);
+                # other inconclusive runs make the component inconclusive.
+                if inconclusive and not timed_out:
                     sanitizer_complete = False
                 sanitizer_results.append({
                     "test_id": case.get("id", index), "description": case.get("description", ""),
@@ -293,8 +303,12 @@ def run_memory_safety(
                 sanitizer_status = "inconclusive"
 
     sanitizer_score = None
-    if run_sanitizers and sanitizer_complete and len(sanitizer_results) == len(test_cases):
-        sanitizer_score = 100.0 * sum(item.get("clean", False) for item in sanitizer_results) / len(test_cases)
+    sanitizer_scored = [item for item in sanitizer_results if "test_id" in item and not item.get("timed_out")]
+    sanitizer_timeouts = [item for item in sanitizer_results if item.get("timed_out")]
+    if run_sanitizers and sanitizer_complete and sanitizer_scored and len(sanitizer_results) == len(test_cases):
+        sanitizer_score = 100.0 * sum(item.get("clean", False) for item in sanitizer_scored) / len(sanitizer_scored)
+    elif run_sanitizers and sanitizer_complete and not sanitizer_scored and sanitizer_results:
+        sanitizer_status = "inconclusive"
 
     # The instructor's configured runtime component weight applies to
     # Valgrind, preserving the rules.json contract. ASan/UBSan runs as
@@ -311,9 +325,10 @@ def run_memory_safety(
         "analyzer": "memory_safety", "status": "completed" if runtime_tools_complete else "inconclusive",
         "score": round(runtime_tools_score, 2) if runtime_tools_score is not None else None,
         "score_scale": "0-100",
-        "compiled": True, "tests_total": len(test_cases), "tests_checked": len(vg_results),
+        "compiled": True, "tests_total": len(test_cases), "tests_checked": len(vg_completed),
         "gcc_analyzer": gcc_analyzer,
-        "tests_clean": sum(item["memory_safe"] for item in vg_results),
+        "tests_clean": sum(item["memory_safe"] for item in vg_completed),
+        "tests_excluded_timeout": [str(item["test_id"]) for item in vg_timeouts],
         "memory_safe": runtime_tools_complete and runtime_tools_score == 100.0,
         "analysis_error": not runtime_tools_complete,
         "runtime_tools": {
@@ -326,9 +341,13 @@ def run_memory_safety(
             "asan_ubsan_status": sanitizer_status,
             "valgrind_results": vg_results,
             "asan_ubsan_results": sanitizer_results,
+            "valgrind_excluded_timeouts": [str(item["test_id"]) for item in vg_timeouts],
+            "asan_ubsan_excluded_timeouts": [str(item.get("test_id")) for item in sanitizer_timeouts],
             "scoring_note": (
                 "The runtime-tools component is capped at the lower completed Valgrind or ASan/UBSan score; "
-                "ASan/UBSan findings therefore reduce the score, while unavailable sanitizer runs are reported separately."
+                "ASan/UBSan findings therefore reduce the score, while unavailable sanitizer runs are reported separately. "
+                "Runs that exceeded the time limit under a memory tool (performance-scale inputs) are excluded "
+                "from that tool's score and listed; at least one completed run is required."
             ),
         },
         # Backward-compatible field for existing memory scoring helper.

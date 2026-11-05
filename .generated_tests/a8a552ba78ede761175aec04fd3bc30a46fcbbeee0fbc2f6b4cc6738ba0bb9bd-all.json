@@ -1,0 +1,85 @@
+[
+  {
+    "expected": "grading sample\n",
+    "id": "instructor-normal",
+    "input": "",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "logical",
+      "memory_safety"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-whitespace",
+    "input": "   \n  \n  ",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored",
+      "whitespace"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-single_number",
+    "input": "42",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "single_number",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-multiple_numbers",
+    "input": "1 2 3 4 5",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "multiple_numbers",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-plain_text",
+    "input": "Hello World",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "plain_text",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-long_line",
+    "input": "This is a very long line that exceeds typical buffer sizes and should be handled gracefully without crashing or reading from stdin.",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "long_line",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-special_chars",
+    "input": "Tab\\nTab\\nTab",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "special_chars",
+      "stdin-ignored"
+    ]
+  }
+]

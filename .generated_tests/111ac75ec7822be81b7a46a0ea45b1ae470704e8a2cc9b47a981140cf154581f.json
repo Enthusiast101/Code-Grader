@@ -1,0 +1,330 @@
+{
+  "assignment_fingerprint": "111ac75ec7822be81b7a46a0ea45b1ae470704e8a2cc9b47a981140cf154581f",
+  "assignment_statement": "Read n (1 <= n <= 20000), followed by n signed 32-bit integers. Print the length of the longest strictly increasing subsequence followed by a newline. A subsequence preserves input order but need not be contiguous; equal values cannot extend it. Use O(n log n) time and O(n) auxiliary memory.",
+  "expected_output_oracle": {
+    "attempts": 1,
+    "instructor_cases_mismatched": 0,
+    "instructor_cases_passed": 9,
+    "instructor_cases_unrunnable": 0,
+    "kind": "llm_reference",
+    "program_sha256": "2961229e79ae04fffc22e845224659e4507c9eafa4267f7e0535a564ca89595b",
+    "trusted": true,
+    "validated_against_instructor_cases": 9
+  },
+  "expected_output_verification": {
+    "comparison": "trimmed exact text with normalized line endings",
+    "method": "independent_second_llm_call",
+    "rejected": 0,
+    "requested": 7,
+    "verification_calls": 0,
+    "verified": 7
+  },
+  "generation_ambiguities": [],
+  "generation_passes": [
+    {
+      "mode": "generate_then_independently_verify",
+      "pass": 1,
+      "rejected_test_count": 7,
+      "requested_test_count": 17,
+      "status": "completed",
+      "test_count": 7,
+      "verification": {
+        "comparison": "expected output computed by executing the reference program",
+        "method": "llm_reference",
+        "rejected": 0,
+        "requested": 7,
+        "verified": 7
+      }
+    }
+  ],
+  "inferred_contract": {
+    "constraints": [
+      "n must be between 1 and 20000 inclusive.",
+      "Each integer must be a signed 32-bit integer."
+    ],
+    "formatting": [
+      "Output ends with a newline character.",
+      "No trailing spaces allowed after the newline."
+    ],
+    "input_format": "First line contains integer n (1 <= n <= 20000). Second line contains n space-separated signed 32-bit integers.",
+    "output_format": "One integer: length of the longest strictly increasing subsequence; newline terminated.",
+    "semantics": [
+      "Strictly increasing means each subsequent element must be greater than the previous one.",
+      "Subsequence preserves relative order but does not require contiguity.",
+      "Equal values cannot extend the subsequence.",
+      "Time complexity must be O(n log n) for n up to 20000.",
+      "Memory usage must be O(n)."
+    ]
+  },
+  "model_id": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "oracle_caveat": "Generated expected outputs were computed by running a model-written reference program that first reproduced all 9 instructor test case(s).",
+  "oracle_kind": "llm-reference-program-validated-on-instructor-cases",
+  "problem_contract": {
+    "description": "Return the length of the longest strictly increasing subsequence. Equal adjacent or earlier values cannot extend a strictly increasing subsequence. n is as large as 20,000, so O(n log n) time is required.",
+    "input_range": "1 <= n <= 20000; each array value is a signed 32-bit integer.",
+    "operand_type": "signed 64-bit integers where applicable",
+    "output_rule": "One integer: length of the longest strictly increasing subsequence; newline terminated.",
+    "sum_type": "signed 64-bit integer where applicable"
+  },
+  "rejected_generated_cases": [
+    {
+      "id": "n_20000_three",
+      "reason": "duplicate generated input"
+    },
+    {
+      "id": "n_20000_large",
+      "reason": "duplicate generated input"
+    },
+    {
+      "id": "n_20000_increasing",
+      "reason": "input declares 20000 values but supplies 100"
+    },
+    {
+      "id": "n_20000_decreasing",
+      "reason": "input declares 20000 values but supplies 100"
+    },
+    {
+      "id": "n_20000_zigzag",
+      "reason": "input declares 20000 values but supplies 192"
+    },
+    {
+      "id": "n_20000_mixed",
+      "reason": "input declares 20000 values but supplies 200"
+    },
+    {
+      "id": "n_20000_negative",
+      "reason": "input declares 20000 values but supplies 10"
+    }
+  ],
+  "schema_version": 3,
+  "spec_summary": "Read n (1 <= n <= 20000), followed by n signed 32-bit integers. Print the length of the longest strictly increasing subsequence followed by a newline. A subsequence preserves input order but need not be contiguous; equal values cannot extend it. Use O(n log n) time and O(n) auxiliary memory.",
+  "submission_analysis": {
+    "control_flow_and_data_types": [
+      "Uses signed 32-bit integers for input values.",
+      "Uses signed 64-bit integers for best length (though n limits it to 20000).",
+      "Iterates i from 0 to n-1 to initialize dp[i] = 1.",
+      "Iterates j from 0 to i-1 to update dp[i] based on strictly increasing condition.",
+      "Updates best variable with maximum dp[i] found.",
+      "Uses free() to release heap memory on error paths.",
+      "Returns 1 on any validation failure or memory allocation failure."
+    ],
+    "implementation_summary": "The program reads n and n signed 32-bit integers, then computes the length of the longest strictly increasing subsequence using dynamic programming. It initializes dp[i] to 1 and iterates to find the maximum dp[j] + 1 where values[j] < values[i].",
+    "input_parsing_and_validation": [
+      "Validates n is within [1, 20000] via scanf return check.",
+      "Allocates memory for values and dp arrays.",
+      "Checks for allocation failure and frees allocated memory on error.",
+      "Reads n integers into values array, validating each read returns 1.",
+      "Handles EOF or read failures by freeing allocated memory and returning 1.",
+      "Prints result followed by newline.",
+      "Free-returns allocated memory on exit."
+    ],
+    "likely_weak_points": [
+      "Does not check if n is 0 before allocating arrays (though range check covers it).",
+      "Does not verify values[i] fits in signed 32-bit range during read.",
+      "Does not handle negative values correctly if they break the strictly increasing logic unexpectedly.",
+      "Does not check for duplicate values in the input sequence.",
+      "Does not verify that dp[i] is initialized to 1 before the inner loop.",
+      "Does not validate that n is at least 1 before allocating arrays."
+    ],
+    "recommended_test_dimensions": [
+      "n = 1 with a single value.",
+      "n = 2 with equal adjacent values.",
+      "n = 2 with strictly increasing values.",
+      "n = 20000 with all values equal.",
+      "n = 20000 with all values strictly decreasing.",
+      "n = 20000 with all values forming a strictly increasing sequence.",
+      "n = 20000 with values forming a strictly decreasing sequence.",
+      "n = 20000 with values forming a zigzag pattern."
+    ]
+  },
+  "submission_derived_contract_entries_removed": [
+    {
+      "entry": "Single integer representing the length of the longest strictly increasing subsequence, followed by a newline.",
+      "field": "output_format",
+      "submission_terms": "singl"
+    },
+    {
+      "entry": "Output must be a non-negative integer.",
+      "field": "constraints",
+      "submission_terms": "negativ"
+    },
+    {
+      "entry": "Input must be terminated by EOF after the n integers.",
+      "field": "constraints",
+      "submission_terms": "eof"
+    },
+    {
+      "entry": "Input values are space-separated on a single line.",
+      "field": "formatting",
+      "submission_terms": "singl"
+    }
+  ],
+  "test_cases": [
+    {
+      "expected": "4\n",
+      "id": "instructor-classic-example",
+      "input": "8\n10 9 2 5 3 7 101 18\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness",
+        "memory_safety"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-all-equal-strictness",
+      "input": "4\n1 1 1 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-strictly-decreasing",
+      "input": "5\n5 4 3 2 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "5\n",
+      "id": "instructor-strictly-increasing",
+      "input": "5\n1 2 3 4 5\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "4\n",
+      "id": "instructor-negative-values",
+      "input": "5\n-3 -2 -5 -1 0\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "correctness"
+      ]
+    },
+    {
+      "expected": "3\n",
+      "id": "instructor-duplicate-inside-lis",
+      "input": "4\n1 2 2 3\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "1\n",
+      "id": "instructor-single-element",
+      "input": "1\n42\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "3\n",
+      "id": "instructor-integer-extremes",
+      "input": "5\n-2147483648 0 2147483647 -1 1\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "expected": "3\n",
+      "id": "instructor-repeated-negative",
+      "input": "6\n-5 -5 -4 -4 -3 -3\n",
+      "origin": "instructor",
+      "origin_metrics": [
+        "logical"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-single_element",
+      "input": "1\n100",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "small"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-all_equal",
+      "input": "3\n5 5 5",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "equal"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-strictly_decreasing",
+      "input": "3\n3 2 1",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "decreasing"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "3\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-strictly_increasing",
+      "input": "3\n1 2 3",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "increasing"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-n_20000_single",
+      "input": "1\n-42",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "negative"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "2\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-n_20000_two",
+      "input": "2\n10 20",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "small"
+      ]
+    },
+    {
+      "description": "",
+      "expected": "1\n",
+      "expected_output_source": "llm_reference",
+      "id": "generated-n_20000_zero",
+      "input": "1\n0",
+      "origin": "llm_generated_independently_verified",
+      "tags": [
+        "boundary",
+        "zero"
+      ]
+    }
+  ]
+}

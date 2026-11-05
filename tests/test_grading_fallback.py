@@ -126,5 +126,78 @@ class GradingFlowTests(unittest.TestCase):
         self.assertEqual(report["scoring"]["score"], 85.0)
 
 
+    def test_pre_generated_suite_is_used_without_running_generator_again(self):
+        import sys
+        import types
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "main.c"
+            source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+            rules_path = root / "rules.json"
+            rules_path.write_text("{}\n", encoding="utf-8")
+            suite_path = root / "suite.json"
+            suite_path.write_text(json.dumps({"test_cases": []}), encoding="utf-8")
+            testset_path = root / "all_cases.json"
+            testset_path.write_text(json.dumps([{"id": "all-1", "input": "", "expected": ""}]), encoding="utf-8")
+
+            class FakeSandbox:
+                image = "test-image"
+
+                def __init__(self, **_kwargs):
+                    pass
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+            sandbox_module = types.ModuleType("grading_agent.sandbox.docker_sandbox")
+            sandbox_module.DockerSandbox = FakeSandbox
+            metrics = [{
+                "name": "correctness", "analyzer": "io_tests", "enabled": True,
+                "weight": 1.0, "params": {"resolved_testset_path": str(testset_path)},
+            }]
+            rules = {
+                "problem": "Read input and print it.",
+                "time_limit_s": 2,
+                "memory_limit_mb": 256,
+                "submission": {"resolved_source_path": str(source)},
+                "rules_path": str(rules_path),
+                "project_root": str(root),
+                "metrics": metrics,
+                "test_generation": {
+                    "enabled": True,
+                    "pre_generated_suite": {
+                        "status": "completed",
+                        "suite_path": str(suite_path),
+                        "metric_testset_paths": {"correctness": str(testset_path)},
+                        "instructor_test_count": 1,
+                        "generated_test_count": 12,
+                        "requested_generated_test_count": 12,
+                        "total_test_count": 13,
+                    },
+                },
+            }
+
+            with patch.dict(sys.modules, {"grading_agent.sandbox.docker_sandbox": sandbox_module}), \
+                 patch("grading_agent.main._collect_tool_versions", return_value={"gcc": "fake"}), \
+                 patch("grading_agent.main.run_preflight", return_value={
+                     "status": "passed", "compiled": True, "smoke_tested": False,
+                 }), \
+                 patch("grading_agent.main.run_analyzer", return_value={
+                     "status": "completed", "score": 100.0, "results": [],
+                 }) as analyzer, \
+                 patch("grading_agent.testing.test_generation.prepare_assignment_test_suite", side_effect=AssertionError("grading must not regenerate")):
+                report = run_configured_analyzers(rules)
+
+        self.assertEqual(report["test_generation"]["status"], "completed")
+        self.assertEqual(report["test_generation"]["source"], "pre_generated_by_ui")
+        self.assertEqual(report["test_generation"]["generated_test_count"], 12)
+        analyzer.assert_called_once()
+        self.assertEqual(analyzer.call_args.kwargs["metric"]["params"]["resolved_testset_path"], str(testset_path))
+
+
 if __name__ == "__main__":
     unittest.main()

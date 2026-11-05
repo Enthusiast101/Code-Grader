@@ -18,7 +18,7 @@ These five small assignments are deliberately supplied with **buggy starter C pr
 - `testcases.json`: normal correctness tests.
 - `edge_cases.json`: boundary and corner tests.
 - `memory_cases.json`: inputs used by memory-safety checks.
-- `runtime_cases.json`: included for the brute-force example only.
+- `runtime_cases.json`: a large input for the brute-force example; the complexity metric covers scaling now that runtime efficiency is no longer graded.
 - `instructor_expected_findings.json`: hidden instructor oracle with expected defect category, line, and excerpt. Do not pass this file to the LLM.
 
 ## Use

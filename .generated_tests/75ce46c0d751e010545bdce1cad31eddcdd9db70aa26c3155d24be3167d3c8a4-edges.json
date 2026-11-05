@@ -1,0 +1,49 @@
+[
+  {
+    "expected": "grading sample\n",
+    "id": "instructor-normal",
+    "input": "",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "logical",
+      "memory_safety"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-whitespace",
+    "input": "   \n  \n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored",
+      "whitespace"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-single_number",
+    "input": "42",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "single_number",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-multiple_numbers",
+    "input": "1 2 3 4 5",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "multiple_numbers",
+      "stdin-ignored"
+    ]
+  }
+]

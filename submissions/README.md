@@ -1,3 +1,3 @@
-# Similarity corpus
+# Similarity comparison folder
 
-Place authorized prior student submissions or instructor-provided reference C files here (or in subdirectories). Do not add the current submission itself. Similarity results are review flags, not findings of misconduct. The `originality` metric is disabled in the example `rules.json` until this corpus contains comparable files; enable it only after adjusting all enabled top-level weights to sum to 1.0.
+Place authorized prior or classmate C submissions here (or in subdirectories). The `similarity` metric compares the graded submission with every `.c` file in the configured `corpus_dir`; the example assignment rules point at this folder. While it holds no C files, similarity is graded at full marks. The graded submission itself is never compared with itself. Similarity results are review flags, not findings of misconduct.

@@ -1,0 +1,134 @@
+{
+  "problem": "Read n (1 <= n <= 10000), then n closed intervals as pairs 'start end' (0 <= start <= end <= 10000) in any order. Merge all overlapping intervals; intervals that share an endpoint overlap. Print the number of merged intervals, then each merged interval 'start end' on its own line in increasing order of start.",
+  "problem_contract": {
+    "description": "Merge overlapping closed intervals; [a,b] and [b,c] merge into [a,c].",
+    "input_range": "1 <= n <= 10000; 0 <= start <= end <= 10000",
+    "output_rule": "First line m; then m lines 'start end' sorted by start.",
+    "required_time_complexity": "O(n log n)"
+  },
+  "time_limit_s": 2,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": "examples/leetcode/0056-merge-intervals/submission.c"
+  },
+  "reference_solution": "examples/leetcode/0056-merge-intervals/reference_solution.c",
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0056-merge-intervals/testcases.json"
+      },
+      "max_points": 20,
+      "grade_contribution": true
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "expect_helpers": true,
+        "min_functions": 2
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0056-merge-intervals/edge_cases.json"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 12,
+        "max_function_length": 80,
+        "required": "O(n log n)"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": "examples/leetcode/0056-merge-intervals/memory_cases.json",
+        "run_sanitizers": true
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "similarity",
+      "analyzer": "similarity_flag",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "corpus_dir": "examples/leetcode/0056-merge-intervals/submissions",
+        "low_threshold": 0.35,
+        "flag_threshold": 0.85,
+        "shingle_size": 8,
+        "max_files": 5000
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    }
+  ],
+  "llm_review": {
+    "max_iterations": 3
+  }
+}

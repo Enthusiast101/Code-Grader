@@ -58,12 +58,27 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                       f"Status: {generation.get('status', 'unknown')}"])
         if generation.get("source"):
             lines.append(f"Suite source: {generation['source']}")
+        if generation.get("reference_solution_source"):
+            lines.append(f"Expected-output oracle: {generation['reference_solution_source']}")
         total = generation.get("total_test_count")
         if isinstance(total, int):
             instructor = generation.get("instructor_test_count", 0)
             edge = generation.get("edge_test_count", 0)
-            generated_count = max(0, total - instructor) if isinstance(instructor, int) else total
-            lines.append(f"Cases: {total} total ({generated_count} generated, {instructor} instructor); {edge} edge cases")
+            generated_count = generation.get("generated_test_count")
+            if not isinstance(generated_count, int):
+                generated_count = max(0, total - instructor) if isinstance(instructor, int) else total
+            requested = generation.get("requested_generated_test_count")
+            target = f"/{requested} requested" if isinstance(requested, int) else ""
+            lines.append(f"Cases: {total} total ({generated_count}{target} generated, {instructor} instructor); {edge} edge cases")
+        rejected_candidates = generation.get("rejected_generated_test_count", 0)
+        if isinstance(rejected_candidates, int) and rejected_candidates:
+            lines.append(f"Rejected invalid LLM candidates and replaced them: {rejected_candidates}")
+        error = generation.get("error") or generation.get("reason")
+        if error:
+            lines.append("Generation note: " + str(error)[:1_000])
+        ambiguities = generation.get("unresolved_ambiguities", [])
+        if isinstance(ambiguities, list) and ambiguities:
+            lines.append("Oracle note: " + "; ".join(str(item) for item in ambiguities[:5]))
         generation_events = generation.get("request_events", [])
         if isinstance(generation_events, list) and generation_events:
             lines.append(f"Generation requests: {len(generation_events)}")
@@ -76,7 +91,7 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         detail = generation.get("error") or generation.get("reason")
         if detail:
             lines.append(f"Reason: {detail}")
-    lines.extend(["", "METRIC RESULTS", "-" * 72])
+    lines.extend(["", "METRIC POINTS", "-" * 72])
 
     provenance = report.get("rules_provenance", {})
     if isinstance(provenance, dict) and provenance:
@@ -118,11 +133,7 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
             score_text = f"{float(score) * max_points / 100.0:.2f}/{max_points:g}"
         else:
             score_text = f"N/A (max {max_points:g})"
-        lines.append(f"{name:22s} weight={metric['weight']:.3f}  score={score_text:12s} status={status}")
-        llm_rating = result.get("llm_score_10")
-        if isinstance(llm_rating, (int, float)) and not isinstance(llm_rating, bool):
-            rating_label = "LLM metric rating" if result.get("score_origin") == "llm" else "LLM proposed rating (not used for score)"
-            lines.append(f"  {rating_label}: {float(llm_rating):.2f}/10")
+        lines.append(f"{name:22s} points={score_text:12s} status={status}")
         rationale = compact_rationale(result.get("score_rationale", ""), max_words=60, max_chars=420)
         if rationale:
             lines.append(f"  Assessment: {rationale}")
@@ -137,8 +148,6 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                 lines.append("  Evidence used: " + "; ".join(str(item) for item in available))
             if missing:
                 lines.append("  Evidence missing: " + "; ".join(str(item) for item in missing))
-        if result.get("unvalidated_llm_proposal") is not None:
-            lines.append(f"  Unvalidated LLM proposal: {result['unvalidated_llm_proposal']:.2f}/10 (not used for score)")
         if name == "correctness":
             tests_total = result.get("tests_total", 0)
             if tests_total:
@@ -162,6 +171,11 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
             if isinstance(gcc_audit, dict):
                 lines.append(f"  GCC -fanalyzer status/findings: {gcc_audit.get('status', 'unknown')} / {len(gcc_audit.get('findings', []))}")
         elif name == "runtime_efficiency":
+            input_source = result.get("test_input_source_metric")
+            if input_source:
+                lines.append(
+                    f"  Profile inputs: reused the configured {input_source} test inputs; expected outputs were not used for timing."
+                )
             if result.get("compile_elapsed_ms") is not None:
                 lines.append(f"  Compile duration: {result['compile_elapsed_ms']:.3f} ms ({result.get('compile_status', 'unknown')})")
             for label, key in (("Average runtime", "mean_runtime_ms"), ("Median runtime", "median_runtime_ms"), ("Maximum runtime", "max_runtime_ms")):
@@ -186,8 +200,12 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                 stream = result.get(key)
                 if isinstance(stream, str) and stream:
                     lines.append(f"  Compiler {label}: {stream[:1_000]}")
-        elif name == "originality":
-            lines.append(f"  Similarity flagged for review: {result.get('flagged_for_human_review', 'N/A')}")
+        elif name in {"originality", "similarity"} or result.get("analyzer") == "similarity_flag":
+            lines.append(f"  {result.get('summary', 'Similarity result unavailable.')}")
+            for row in (result.get("per_file_similarity") or [])[:10]:
+                lines.append(f"    {row.get('similarity', 0):.2f}  {row.get('file')}")
+            for pair in (result.get("cohort_flagged_pairs") or [])[:10]:
+                lines.append(f"  Cohort pair above threshold: {pair['files'][0]} <-> {pair['files'][1]} ({pair['similarity']:.2f})")
 
     failures: list[str] = []
     for metric_name in ("correctness", "logical"):
@@ -204,14 +222,8 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         lines.append(f"Final grade: {scoring.get('score'):.2f}/100")
         for item in scoring.get("contributions", []):
             lines.append(
-                f"  {item['metric']}: {item.get('points_awarded', item['score']):.2f}/{item.get('max_points', 100):g} "
-                f"(normalized {item['score']:.2f}/100 × {item['weight']:.3f}) = {item['contribution']:.2f} "
-                f"[{item.get('score_origin', 'unknown')}; {item.get('evidence_class', 'unknown')}]"
+                f"  {item['metric']}: {item.get('points_awarded', 0.0):.2f}/{item.get('max_points', 100):g} points"
             )
-        contributions = scoring.get("contributions", [])
-        if isinstance(contributions, list) and contributions:
-            contribution_total = sum(float(item.get("contribution", 0.0)) for item in contributions)
-            lines.append(f"  Weighted points sum: {contribution_total:.2f}; enabled weights sum: {scoring.get('weights_sum', 'unknown')}")
     else:
         final_score = scoring.get("score")
         lines.append(f"Final grade: {float(final_score):.2f}/100" if isinstance(final_score, (int, float)) else "Final grade: N/A — required grading evidence is incomplete.")
@@ -245,14 +257,6 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
                     f"  RSI pass {iteration.get('iteration')}: failed; "
                     f"{iteration.get('error', 'no valid response')}"
                 )
-        if rsi.get("missing_metrics"):
-            lines.append("LLM scores missing: " + ", ".join(rsi["missing_metrics"]))
-        metric_scoring = rsi.get("metric_scoring", {})
-        if isinstance(metric_scoring, dict) and metric_scoring:
-            lines.append(
-                "Separate metric-scoring stage: "
-                + str(metric_scoring.get("status", "unknown"))
-            )
 
     understanding_meta = report.get("program_understanding_metadata", {})
     if not understanding_meta and isinstance(rsi_summary, dict):
@@ -377,15 +381,7 @@ def _render_text_report_impl(report: dict[str, Any]) -> str:
         llm_metric_items = rsi.get("metrics", [])
         llm_metric_items = [item for item in llm_metric_items if isinstance(item, dict)] if isinstance(llm_metric_items, list) else []
         if llm_metric_items:
-            lines.extend(["", "LLM EVIDENCE-BASED RSI", "-" * 72])
-            for item in llm_metric_items:
-                proposed = item.get("score")
-                scale = item.get("score_scale", "0-10" if item.get("origin", "llm") == "llm" else "0-100")
-                if isinstance(proposed, (int, float)) and not isinstance(proposed, bool):
-                    divisor = 10.0 if scale == "0-10" else 100.0
-                    lines.append(f"{item.get('name', 'unknown')}: {float(proposed):.2f}/{divisor:g} (LLM proposal)")
-                    if item.get("rationale"):
-                        lines.append("  Assessment: " + compact_rationale(item["rationale"], max_words=45, max_chars=300))
+            lines.extend(["", "Metric assessments are consolidated into the point totals above."])
         if rsi.get("llm_calls") is not None:
             lines.append(
                 f"LLM calls: {rsi.get('llm_calls')} "

@@ -1,0 +1,58 @@
+[
+  {
+    "expected": "4\n",
+    "id": "instructor-negative-values",
+    "input": "5\n-3 -2 -5 -1 0\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-duplicate-inside-lis",
+    "input": "4\n1 2 2 3\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "1\n",
+    "id": "instructor-single-element",
+    "input": "1\n42\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-integer-extremes",
+    "input": "5\n-2147483648 0 2147483647 -1 1\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "expected": "3\n",
+    "id": "instructor-repeated-negative",
+    "input": "6\n-5 -5 -4 -4 -3 -3\n",
+    "origin": "instructor",
+    "origin_metrics": [
+      "logical"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "1\n",
+    "id": "generated-single_element",
+    "input": "1\n100",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "boundary",
+      "n=1"
+    ]
+  }
+]

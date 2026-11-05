@@ -14,6 +14,7 @@
     "language": "c",
     "source_file": "examples/leetcode/1192-critical-connections/submission.c"
   },
+  "reference_solution": "examples/leetcode/1192-critical-connections/reference_solution.c",
   "metrics": [
     {
       "name": "correctness",
@@ -22,7 +23,9 @@
       "enabled": true,
       "params": {
         "testset_path": "examples/leetcode/1192-critical-connections/testcases.json"
-      }
+      },
+      "max_points": 20,
+      "grade_contribution": true
     },
     {
       "name": "syntax",
@@ -37,7 +40,9 @@
           "-Wpedantic"
         ],
         "warning_penalty": 5
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "structure",
@@ -46,7 +51,9 @@
       "enabled": true,
       "params": {
         "timeout_s": 15
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "modularity",
@@ -56,7 +63,9 @@
       "params": {
         "expect_helpers": true,
         "min_functions": 3
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "logical",
@@ -65,7 +74,9 @@
       "enabled": true,
       "params": {
         "testset_path": "examples/leetcode/1192-critical-connections/edge_cases.json"
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "complexity",
@@ -76,7 +87,9 @@
         "max_cyclomatic": 12,
         "max_function_length": 80,
         "required": "O(V + E)"
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "memory_safety",
@@ -86,7 +99,9 @@
       "params": {
         "testset_path": "examples/leetcode/1192-critical-connections/memory_cases.json",
         "run_sanitizers": true
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
       "name": "readability",
@@ -95,19 +110,24 @@
       "enabled": true,
       "params": {
         "max_line_length": 100
-      }
+      },
+      "max_points": 10,
+      "grade_contribution": true
     },
     {
-      "name": "originality",
+      "name": "similarity",
       "analyzer": "similarity_flag",
       "weight": 0.1,
       "enabled": true,
       "params": {
         "corpus_dir": "examples/leetcode/1192-critical-connections/originality_corpus",
+        "low_threshold": 0.35,
         "flag_threshold": 0.85,
-        "max_files": 5000,
-        "shingle_size": 5
-      }
+        "shingle_size": 8,
+        "max_files": 5000
+      },
+      "max_points": 10,
+      "grade_contribution": true
     }
   ],
   "llm_review": {

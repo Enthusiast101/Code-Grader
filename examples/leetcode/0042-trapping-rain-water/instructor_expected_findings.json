@@ -1,0 +1,15 @@
+{
+  "file_name": "submission.c",
+  "expected_findings": [
+    {
+      "category": "integer-overflow",
+      "severity": "high",
+      "anchor": "int total = 0;",
+      "line": 12,
+      "source_excerpt": "int total = 0;",
+      "description": "The total is accumulated in a 32-bit int and printed with %d. With heights up to 10^6 and n up to 20000 the answer reaches about 2*10^10, so large inputs overflow (edge case tall-walls-overflow)."
+    }
+  ],
+  "similarity_expectation": "submissions/student_alex.c is the same program with renamed identifiers and comments: normalized similarity 1.0, similarity metric 0/10.",
+  "note": "Instructor-side regression oracle. Do not upload this file or expose it to the grading LLM."
+}

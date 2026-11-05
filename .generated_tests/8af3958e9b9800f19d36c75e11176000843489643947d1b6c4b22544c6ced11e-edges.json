@@ -1,0 +1,123 @@
+[
+  {
+    "expected": "grading sample\n",
+    "id": "instructor-normal",
+    "input": "",
+    "origin": "instructor",
+    "origin_metrics": [
+      "correctness",
+      "logical",
+      "memory_safety"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-whitespace_only",
+    "input": "   \n  \n  ",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-single_number",
+    "input": "42",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-multiple_numbers",
+    "input": "1 2 3 4 5",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-plain_text",
+    "input": "Hello World",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-long_line",
+    "input": "This is a very long line that exceeds typical buffer sizes and should be handled gracefully without causing a crash or undefined behavior.",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-special_chars",
+    "input": "Tab\\n\\t\\r\\n",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-unicode",
+    "input": "日本語",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-numeric_only",
+    "input": "0 0 0 0 0",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-negative_numbers",
+    "input": "-1 -2 -3 -4 -5",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  },
+  {
+    "description": "",
+    "expected": "grading sample\n",
+    "id": "generated-mixed_signs",
+    "input": "10 -5 20 -15 5",
+    "origin": "llm_generated_independently_verified",
+    "tags": [
+      "edge",
+      "stdin-ignored"
+    ]
+  }
+]
