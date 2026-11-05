@@ -1,0 +1,272 @@
+{
+  "problem": "Read an integer N (1 <= N <= 1000), followed by N signed 32-bit integers. Accumulate their sum in a signed 64-bit integer, divide using floating-point arithmetic, and print the arithmetic mean with exactly two digits after the decimal point followed by a newline.",
+  "problem_contract": {
+    "description": "Compute the arithmetic mean without truncating fractional results. Use a floating-point division after accumulating safely.",
+    "operand_type": "signed integers",
+    "sum_type": "64-bit signed integer",
+    "input_range": "1 <= N <= 1000; each value fits in signed 32-bit integer",
+    "output_rule": "Print the arithmetic mean with exactly two digits after the decimal point."
+  },
+  "time_limit_s": 2.0,
+  "memory_limit_mb": 256,
+  "submission": {
+    "language": "c",
+    "source_file": ".gradio_runs\\7beed4db2727\\submission.c"
+  },
+  "metrics": [
+    {
+      "name": "correctness",
+      "analyzer": "io_tests",
+      "weight": 0.2,
+      "enabled": true,
+      "params": {
+        "testset_path": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-all.json"
+      },
+      "max_points": 20,
+      "grade_contribution": true
+    },
+    {
+      "name": "syntax",
+      "analyzer": "compiler_diagnostics",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "flags": [
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "warning_penalty": 5
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "structure",
+      "analyzer": "static_analysis",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "timeout_s": 15
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "modularity",
+      "analyzer": "modularity",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "expect_helpers": false,
+        "min_functions": 1
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "complexity",
+      "analyzer": "complexity_estimator",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_cyclomatic": 8,
+        "max_function_length": 40
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "logical",
+      "analyzer": "edge_case_runner",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-edges.json"
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "similarity",
+      "analyzer": "similarity_flag",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "corpus_dir": "submissions",
+        "low_threshold": 0.35,
+        "flag_threshold": 0.85,
+        "shingle_size": 8,
+        "max_files": 5000
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "memory_safety",
+      "analyzer": "memory_safety",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "testset_path": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-all.json",
+        "run_sanitizers": true
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    },
+    {
+      "name": "readability",
+      "analyzer": "readability",
+      "weight": 0.1,
+      "enabled": true,
+      "params": {
+        "max_line_length": 100
+      },
+      "max_points": 10,
+      "grade_contribution": true
+    }
+  ],
+  "test_generation": {
+    "enabled": true,
+    "max_cases": 20,
+    "additional_focus": "",
+    "pre_generated_suite": {
+      "status": "completed",
+      "assignment_fingerprint": "50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d",
+      "suite_path": "C:\\Applications\\Programming\\Research\\Code-Grader\\.generated_tests\\50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d.json",
+      "metric_testset_paths": {
+        "correctness": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-all.json",
+        "logical": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-edges.json",
+        "memory_safety": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-all.json"
+      },
+      "instructor_test_count": 4,
+      "generated_test_count": 20,
+      "requested_generated_test_count": 20,
+      "total_test_count": 24,
+      "edge_test_count": 6,
+      "expected_output_verification": {
+        "comparison": "trimmed exact text with normalized line endings",
+        "method": "independent_second_llm_call",
+        "rejected": 0,
+        "requested": 20,
+        "verification_calls": 0,
+        "verified": 20
+      },
+      "oracle_kind": "llm-reference-program-validated-on-instructor-cases",
+      "oracle_caveat": "Generated expected outputs were computed by running a model-written reference program that first reproduced all 4 instructor test case(s).",
+      "source_analysis": {
+        "control_flow_and_data_types": [
+          "Input validation via scanf return check and range comparison",
+          "Loop structure: for (int i = 0; i < count; ++i)",
+          "Data types: int for count, int32_t for values, int64_t for sum",
+          "Output format: %.2f with newline",
+          "Early return on any scanf failure or invalid count",
+          "No dynamic memory allocation or free operations",
+          "No recursive function calls"
+        ],
+        "implementation_summary": "Main function reads count (1-1000), validates input, then reads N signed 32-bit integers into a 64-bit accumulator, computes floating-point mean, and prints formatted result.",
+        "input_parsing_and_validation": [
+          "scanf(\"%d\", &count) returns 1 or fails",
+          "count < 1 or count > 1000 triggers early exit",
+          "scanf(\"%\" SCNd32, &value) returns 1 or fails per loop",
+          "Loop condition i < count ensures iteration count matches count variable",
+          "Accumulator uses int64_t to prevent overflow during sum",
+          "Division uses double cast for floating-point arithmetic"
+        ],
+        "likely_weak_points": [
+          "Input validation only checks count range, not actual value count",
+          "scanf return check is present but relies on strict format specifier",
+          "No validation that all N values were successfully read",
+          "No check for negative values within 32-bit signed range",
+          "No handling of non-numeric input between scanf calls",
+          "No assertion that sum fits within int64_t bounds for large inputs"
+        ],
+        "recommended_test_dimensions": [
+          "Set count = 1 with value = 1000000000",
+          "Set count = 1000 with all values = 2147483647",
+          "Set count = 1000 with all values = -2147483648",
+          "Set count = 1000 with mixed positive/negative values",
+          "Set count = 1000 with all values = 0",
+          "Set count = 1000 with all values = 1",
+          "Set count = 1000 with all values = -1",
+          "Set count = 1000 with all values = 127483647"
+        ]
+      }
+    }
+  },
+  "_run_metadata": {
+    "selection": {
+      "selected_from": "edited Gradio rules editor",
+      "uploaded_file_name": "rules.json",
+      "uploaded_file_sha256": "75983248ca597843bb2541b162236bf729a113c5b9bcc1d20080bd400cb59eec",
+      "editor_base_sha256": "75983248ca597843bb2541b162236bf729a113c5b9bcc1d20080bd400cb59eec",
+      "selected_rules_sha256": "20b39da408b57ae9db3d7357a6c38f183c61143417a5004d6cbad930c57f0d4c",
+      "editor_was_stale": false
+    },
+    "metric_profile_migration": null,
+    "generated_test_suite": {
+      "status": "completed",
+      "assignment_fingerprint": "50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d",
+      "suite_path": "C:\\Applications\\Programming\\Research\\Code-Grader\\.generated_tests\\50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d.json",
+      "metric_testset_paths": {
+        "correctness": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-all.json",
+        "logical": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-edges.json",
+        "memory_safety": ".generated_tests/50b83f14428ae3b2040578ecfe0dd0e9b19eff1701fab99e428710c5a8691e9d-all.json"
+      },
+      "instructor_test_count": 4,
+      "generated_test_count": 20,
+      "requested_generated_test_count": 20,
+      "total_test_count": 24,
+      "edge_test_count": 6,
+      "expected_output_verification": {
+        "comparison": "trimmed exact text with normalized line endings",
+        "method": "independent_second_llm_call",
+        "rejected": 0,
+        "requested": 20,
+        "verification_calls": 0,
+        "verified": 20
+      },
+      "oracle_kind": "llm-reference-program-validated-on-instructor-cases",
+      "oracle_caveat": "Generated expected outputs were computed by running a model-written reference program that first reproduced all 4 instructor test case(s).",
+      "source_analysis": {
+        "control_flow_and_data_types": [
+          "Input validation via scanf return check and range comparison",
+          "Loop structure: for (int i = 0; i < count; ++i)",
+          "Data types: int for count, int32_t for values, int64_t for sum",
+          "Output format: %.2f with newline",
+          "Early return on any scanf failure or invalid count",
+          "No dynamic memory allocation or free operations",
+          "No recursive function calls"
+        ],
+        "implementation_summary": "Main function reads count (1-1000), validates input, then reads N signed 32-bit integers into a 64-bit accumulator, computes floating-point mean, and prints formatted result.",
+        "input_parsing_and_validation": [
+          "scanf(\"%d\", &count) returns 1 or fails",
+          "count < 1 or count > 1000 triggers early exit",
+          "scanf(\"%\" SCNd32, &value) returns 1 or fails per loop",
+          "Loop condition i < count ensures iteration count matches count variable",
+          "Accumulator uses int64_t to prevent overflow during sum",
+          "Division uses double cast for floating-point arithmetic"
+        ],
+        "likely_weak_points": [
+          "Input validation only checks count range, not actual value count",
+          "scanf return check is present but relies on strict format specifier",
+          "No validation that all N values were successfully read",
+          "No check for negative values within 32-bit signed range",
+          "No handling of non-numeric input between scanf calls",
+          "No assertion that sum fits within int64_t bounds for large inputs"
+        ],
+        "recommended_test_dimensions": [
+          "Set count = 1 with value = 1000000000",
+          "Set count = 1000 with all values = 2147483647",
+          "Set count = 1000 with all values = -2147483648",
+          "Set count = 1000 with mixed positive/negative values",
+          "Set count = 1000 with all values = 0",
+          "Set count = 1000 with all values = 1",
+          "Set count = 1000 with all values = -1",
+          "Set count = 1000 with all values = 127483647"
+        ]
+      }
+    }
+  }
+}
