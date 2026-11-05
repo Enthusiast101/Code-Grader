@@ -63,6 +63,13 @@ OCEAN_UI_CSS = """
   font-family: var(--font-mono); font-size: .85rem;}
 @keyframes progress-shimmer {0% {background-position: 200% 0;} 100% {background-position: -200% 0;}}
 @media (prefers-reduced-motion: reduce) {.progress-fill {animation: none; transition: none;}}
+
+/* Tables: keep overflow inside the table frame instead of widening the page. */
+.gradio-container .column, .gradio-container .tabitem {min-width: 0;}
+.table-wrap {max-width: 100%; overflow-x: auto;}
+.table-wrap td span {overflow-wrap: anywhere;}
+.prose table {display: block; max-width: 100%; overflow-x: auto;}
+.prose pre {max-width: 100%; overflow-x: auto;}
 """
 
 
